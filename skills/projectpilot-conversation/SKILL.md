@@ -116,6 +116,12 @@
 - “不吃原来那家了，换火锅” -> `execute_action + calendar_update`，更新标题或活动内容。
 - “还是不去了” -> `confirm_action + calendar_update`，不要直接删除。
 
+更新已创建日程时要更克制：
+- 纯时间修改只改 `time_hint`，不要把“改到下午5点”“换到晚上7点”写进 `activity_title`。
+- 纯参与人修改只改 `participant_candidates`，不要改标题。
+- 只有用户明确说“主题/标题/名称改成...”或换了活动内容（例如“寿司朗改火锅”“复盘会改成目标制定会”）时，才输出新的 `activity_title`。
+- 如果当前消息只是“改到下午5点”，`activity_title` 应保持为空或保持 existing topic/recent activity 的标题。
+
 ## Project Work Rules
 
 项目/任务/知识库讨论不应该只回“请补充信息”。要像 PM 一样先给结构化判断：

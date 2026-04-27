@@ -3131,6 +3131,14 @@ function toUnixSeconds(value: string) {
 }
 
 function extractCalendarCreateIds(result: unknown) {
+  const matched = findCalendarEventRecord(result, "");
+  if (matched?.eventId) {
+    return {
+      calendarId: matched.calendarId || "primary",
+      eventId: matched.eventId,
+    };
+  }
+
   const calendarId =
     findStringDeep(result, ["calendar_id", "calendarId", "organizer_calendar_id", "organizerCalendarId"]) ||
     "primary";
@@ -3138,10 +3146,66 @@ function extractCalendarCreateIds(result: unknown) {
   return { calendarId, eventId };
 }
 
+function parseLarkCliError(error: unknown) {
+  const record = error as { stderr?: string; stdout?: string; message?: string };
+  const candidates = [record?.stderr, record?.stdout, record?.message, String(error)].filter(
+    (value): value is string => Boolean(value),
+  );
+
+  for (const candidate of candidates) {
+    const parsed = safeJsonObject(candidate.trim());
+    if (parsed) {
+      const rawError = parsed.error as Record<string, unknown> | undefined;
+      return {
+        code: getString(rawError?.code) || (typeof rawError?.code === "number" ? String(rawError.code) : undefined),
+        message: getString(rawError?.message),
+        logId:
+          rawError?.detail && typeof rawError.detail === "object"
+            ? getString((rawError.detail as Record<string, unknown>).log_id)
+            : undefined,
+      };
+    }
+
+    const jsonMatch = candidate.match(/\{\s*"ok"\s*:\s*false[\s\S]*\}\s*$/);
+    if (jsonMatch) {
+      const parsedTail = safeJsonObject(jsonMatch[0]);
+      const rawError = parsedTail?.error as Record<string, unknown> | undefined;
+      if (rawError) {
+        return {
+          code: getString(rawError.code) || (typeof rawError.code === "number" ? String(rawError.code) : undefined),
+          message: getString(rawError.message),
+          logId:
+            rawError.detail && typeof rawError.detail === "object"
+              ? getString((rawError.detail as Record<string, unknown>).log_id)
+              : undefined,
+        };
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function isDeletedCalendarEventError(error: unknown) {
+  const parsed = parseLarkCliError(error);
+  return parsed?.code === "193003" || /event is deleted/i.test(parsed?.message || "");
+}
+
 function sanitizeError(error: unknown) {
+  const parsed = parseLarkCliError(error);
+  if (parsed?.message || parsed?.code) {
+    const code = parsed.code ? `code ${parsed.code}` : "API error";
+    const message = parsed.message?.replace(/^API error:\s*/i, "") || "飞书接口返回错误";
+    const logId = parsed.logId ? `，log_id=${parsed.logId}` : "";
+    return `飞书返回 ${code}：${message}${logId}`;
+  }
+
   const raw = error instanceof Error ? error.message : String(error);
   return raw
     .replace(/(app_secret|access_token|refresh_token|Authorization)["':=\s]+[^"',\s}]+/gi, "$1=***")
+    .replace(/Command failed:[^\n]+/g, "Command failed")
+    .replace(/--data\s+\{[\s\S]*?\}\s+--as\s+\w+/g, "--data ***")
+    .replace(/--params\s+\{[\s\S]*?\}\s+--data/g, "--params *** --data")
     .slice(0, 700);
 }
 
@@ -3190,7 +3254,15 @@ async function createCalendarEventFromText(
     }
 
     const raw = await runLarkCli(args, "user");
-    const { calendarId, eventId } = extractCalendarCreateIds(raw);
+    const rawIds = extractCalendarCreateIds(raw);
+    const resolvedIds = await lookupCalendarEventByTimeTitle(
+      intent.summary,
+      intent.start,
+      intent.end,
+      rawIds.calendarId,
+    );
+    const calendarId = resolvedIds?.calendarId || rawIds.calendarId;
+    const eventId = resolvedIds?.eventId || rawIds.eventId;
     return {
       reply: formatCalendarResult(intent),
       intent,
@@ -3199,7 +3271,7 @@ async function createCalendarEventFromText(
       raw,
     };
   } catch (error) {
-    console.error("创建日程失败:", error);
+    console.error("创建日程失败:", sanitizeError(error));
     return {
       reply: `我收到了创建日程请求，但飞书日历创建失败：${sanitizeError(error)}`,
     };
@@ -3971,28 +4043,55 @@ function findCalendarEventRecord(
   return undefined;
 }
 
-async function hydrateRecentCalendarIds(recent: RecentActivity) {
-  if (recent.eventId || !recent.start || !recent.end) {
+function getAgendaWindow(start: string, end: string) {
+  const windowStart = new Date(start);
+  windowStart.setHours(0, 0, 0, 0);
+  const windowEnd = new Date(end);
+  windowEnd.setHours(0, 0, 0, 0);
+  windowEnd.setDate(windowEnd.getDate() + 1);
+  return {
+    start: toLocalIso(windowStart),
+    end: toLocalIso(windowEnd),
+  };
+}
+
+async function lookupCalendarEventByTimeTitle(
+  title: string,
+  start: string,
+  end: string,
+  calendarId = "primary",
+) {
+  const window = getAgendaWindow(start, end);
+  const agenda = await runLarkCli(
+    [
+      "calendar",
+      "+agenda",
+      "--calendar-id",
+      calendarId || "primary",
+      "--start",
+      window.start,
+      "--end",
+      window.end,
+      "--format",
+      "json",
+    ],
+    "user",
+  );
+  return findCalendarEventRecord(agenda, title);
+}
+
+async function hydrateRecentCalendarIds(recent: RecentActivity, force = false) {
+  if ((!force && recent.eventId) || !recent.start || !recent.end) {
     return;
   }
 
   try {
-    const agenda = await runLarkCli(
-      [
-        "calendar",
-        "+agenda",
-        "--calendar-id",
-        recent.calendarId || "primary",
-        "--start",
-        recent.start,
-        "--end",
-        recent.end,
-        "--format",
-        "json",
-      ],
-      "user",
+    const found = await lookupCalendarEventByTimeTitle(
+      recent.title,
+      recent.start,
+      recent.end,
+      recent.calendarId || "primary",
     );
-    const found = findCalendarEventRecord(agenda, recent.title);
     if (found?.eventId) {
       recent.eventId = found.eventId;
       recent.calendarId = found.calendarId || recent.calendarId || "primary";
@@ -4007,31 +4106,50 @@ async function patchRecentCalendarEventFields(
   recent: RecentActivity,
   data: Record<string, unknown>,
 ) {
-  await hydrateRecentCalendarIds(recent);
+  await hydrateRecentCalendarIds(recent, true);
 
   if (!recent.eventId) {
     return "我理解你想改这个日程，但刚才创建返回里没有拿到 event_id，暂时没法安全定位到要更新的日程。你可以先在日历卡片里手动改一下时间。";
   }
 
-  await runLarkCli(
-    [
-      "calendar",
-      "events",
-      "patch",
-      "--params",
-      JSON.stringify({
-        calendar_id: recent.calendarId || "primary",
-        event_id: recent.eventId,
-        user_id_type: "open_id",
-      }),
-      "--data",
-      JSON.stringify({
-        ...data,
-        need_notification: true,
-      }),
-    ],
-    "user",
-  );
+  const patchOnce = () =>
+    runLarkCli(
+      [
+        "calendar",
+        "events",
+        "patch",
+        "--params",
+        JSON.stringify({
+          calendar_id: recent.calendarId || "primary",
+          event_id: recent.eventId,
+          user_id_type: "open_id",
+        }),
+        "--data",
+        JSON.stringify({
+          ...data,
+          need_notification: true,
+        }),
+      ],
+      "user",
+    );
+
+  try {
+    await patchOnce();
+  } catch (error) {
+    if (!isDeletedCalendarEventError(error)) {
+      throw error;
+    }
+
+    console.warn("缓存的日程 ID 已失效，尝试重新定位:", sanitizeError(error));
+    const staleEventId = recent.eventId;
+    recent.eventId = undefined;
+    await hydrateRecentCalendarIds(recent, true);
+    if (!recent.eventId || recent.eventId === staleEventId) {
+      return "我找到了这条安排，但飞书返回原日程已失效。你可以在日历里手动确认一下，或者重新发一句完整安排，我再创建新的。";
+    }
+
+    await patchOnce();
+  }
 
   return undefined;
 }
@@ -4041,12 +4159,24 @@ function getRecentActivityTitleUpdate(
   decision: IntentDecision,
   recent: RecentActivity,
 ) {
-  if (!/(?:改|换|不.*了|别.*了|不要.*了)/.test(event.text)) {
+  const text = stripBotMentions(event.text);
+  const explicitTitleChange = /(标题|主题|名称|改名|叫做|叫成|改成|改为|换成|换)/.test(text);
+  const hasNewActivitySemantics = hasActivityKeyword(text) || hasMeetingKeyword(text);
+  const pureTimeChange =
+    isTimeSupplement(text) &&
+    !hasNewActivitySemantics &&
+    !/(标题|主题|名称|改名|叫做|叫成)/.test(text);
+  if (pureTimeChange) {
     return undefined;
   }
 
-  const nextTitle = normalizeActivityTitle(decision.activityTitle, event.text);
-  if (nextTitle && nextTitle !== recent.title) {
+  if (!/(?:改|换|不.*了|别.*了|不要.*了)/.test(text) && !explicitTitleChange) {
+    return undefined;
+  }
+
+  const nextTitle = normalizeActivityTitle(decision.activityTitle, text);
+  const titleLooksLikeTime = isTimeSupplement(nextTitle) && !hasActivityKeyword(nextTitle) && !hasMeetingKeyword(nextTitle);
+  if (nextTitle && nextTitle !== recent.title && !titleLooksLikeTime) {
     return nextTitle;
   }
 
@@ -4098,8 +4228,9 @@ async function applyRecentActivityUpdate(
   try {
     failure = await patchRecentCalendarEventFields(recent, patchData);
   } catch (error) {
-    console.error("更新日程失败:", error);
-    return `我理解你想改这个日程，但飞书日历更新失败：${sanitizeError(error)}`;
+    const safeError = sanitizeError(error);
+    console.error("更新日程失败:", safeError);
+    return `我理解你想改这个日程，但飞书日历更新失败：${safeError}`;
   }
   if (failure) {
     return failure;
