@@ -19,6 +19,7 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+.agents/
 .claude/
 .trae/
 
