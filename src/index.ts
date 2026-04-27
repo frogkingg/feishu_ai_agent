@@ -59,7 +59,7 @@ const EVENT_TYPES = [MESSAGE_EVENT_TYPE, CARD_ACTION_EVENT_TYPE].join(",");
 const RESTART_BASE_DELAY_MS = 2_000;
 const RESTART_MAX_DELAY_MS = 30_000;
 const LARK_BIN = process.env.LARK_CLI_BIN || "lark-cli";
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 20_000);
+const DEFAULT_LLM_TIMEOUT_MS = Math.max(Number(process.env.LLM_TIMEOUT_MS || 35_000), 30_000);
 const LLM_MAX_REPLY_CHARS = Number(process.env.LLM_MAX_REPLY_CHARS || 1_800);
 const POLL_INTERVAL_MS = Number(process.env.LARK_POLL_INTERVAL_MS || 5_000);
 const DEFAULT_EVENT_DURATION_MINUTES = 30;
@@ -87,6 +87,8 @@ const PROJECTPILOT_SKILL_PATH =
   process.env.PROJECTPILOT_SKILL_PATH || join(process.cwd(), "skills/projectpilot-conversation/SKILL.md");
 const RUNTIME_DIR = join(process.cwd(), ".runtime");
 const RECENT_ACTIVITY_STORE_PATH = join(RUNTIME_DIR, "recent-activities.json");
+
+type LlmRole = "chat" | "router" | "tool";
 
 let listener: ChildProcess | undefined;
 let restartCount = 0;
@@ -165,14 +167,37 @@ async function ensureLarkCliReady() {
   }
 }
 
-function getLlmConfig() {
-  const apiKey = process.env.OPENAI_API_KEY || process.env.LLM_API_KEY;
+function getRoleEnv(role: LlmRole, name: "API_KEY" | "API_URL" | "BASE_URL" | "MODEL") {
+  const upperRole = role.toUpperCase();
+  return (
+    process.env[`PROJECTPILOT_${upperRole}_${name}`] ||
+    process.env[`OPENAI_${upperRole}_${name}`] ||
+    process.env[`LLM_${upperRole}_${name}`]
+  );
+}
+
+function getLlmTimeoutMs(role: LlmRole) {
+  const upperRole = role.toUpperCase();
+  const raw =
+    process.env[`PROJECTPILOT_${upperRole}_TIMEOUT_MS`] ||
+    process.env[`LLM_${upperRole}_TIMEOUT_MS`];
+  const parsed = raw ? Number(raw) : undefined;
+  if (parsed && Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+
+  return role === "router" ? 12_000 : DEFAULT_LLM_TIMEOUT_MS;
+}
+
+function getLlmConfig(role: LlmRole = "tool") {
+  const apiKey = getRoleEnv(role, "API_KEY") || process.env.OPENAI_API_KEY || process.env.LLM_API_KEY;
   if (!apiKey) {
     return undefined;
   }
 
-  const apiUrl = process.env.OPENAI_API_URL || process.env.LLM_API_URL;
+  const apiUrl = getRoleEnv(role, "API_URL") || process.env.OPENAI_API_URL || process.env.LLM_API_URL;
   const baseUrl = (
+    getRoleEnv(role, "BASE_URL") ||
     process.env.OPENAI_BASE_URL ||
     process.env.LLM_BASE_URL ||
     "https://api.openai.com/v1"
@@ -181,7 +206,7 @@ function getLlmConfig() {
   return {
     apiKey,
     apiUrl: apiUrl || `${baseUrl}/chat/completions`,
-    model: process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-4o-mini",
+    model: getRoleEnv(role, "MODEL") || process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-4o-mini",
   };
 }
 
@@ -245,13 +270,13 @@ function buildCommsContextPayload(
 }
 
 async function callLlm(event: NormalizedMessageEvent, context?: ChatContext) {
-  const config = getLlmConfig();
+  const config = getLlmConfig("chat");
   if (!config) {
     return undefined;
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), getLlmTimeoutMs("chat"));
 
   try {
     const response = await fetch(config.apiUrl, {
@@ -317,14 +342,15 @@ function extractJsonObject(content: string) {
 
 async function callStructuredLlm(
   messages: Array<{ role: "system" | "user"; content: string }>,
+  role: LlmRole = "tool",
 ): Promise<Record<string, unknown> | undefined> {
-  const config = getLlmConfig();
+  const config = getLlmConfig(role);
   if (!config) {
     return undefined;
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), getLlmTimeoutMs(role));
 
   try {
     const requestBody = {
@@ -643,6 +669,18 @@ interface ConversationTopic {
   eventId?: string;
 }
 
+interface CalendarLineDraft {
+  shouldTrack: boolean;
+  topicId?: string;
+  status?: TopicStatus;
+  title?: string;
+  timeHint?: string;
+  locationHint?: string;
+  participantCandidates: ParticipantCandidate[];
+  evidenceTexts: string[];
+  messageIds: string[];
+}
+
 interface PendingActivity {
   id: string;
   topicId?: string;
@@ -945,13 +983,19 @@ function detectSafetyLabel(event: NormalizedMessageEvent): SafetyLabel {
 }
 
 function hasActivityKeyword(text: string) {
-  return /(烧烤|聚餐|约饭|吃饭|火锅|团建|出去玩|唱歌|咖啡|看电影|喝酒|夜宵|午饭|晚饭|活动|小聚|寿司|寿司朗|日料|烤肉|牛排|牛扒|餐厅|饭店|自助|小龙虾|披萨|汉堡|拉面|居酒屋|海底捞|吃(?!吗|不|没|了|吧|嘛|么)[^，,。；;\n？?]{1,20})/.test(
+  return /(烧烤|聚餐|约饭|吃饭|火锅|团建|出去玩|唱歌|咖啡|看电影|喝酒|夜宵|午饭|晚饭|活动|小聚|寿司|寿司朗|日料|烤肉|牛排|牛扒|餐厅|饭店|自助|小龙虾|披萨|汉堡|拉面|居酒屋|海底捞|肯德基|KFC|疯狂星期二|银行|取钱|取款|出发|吃(?!吗|不|没|了|吧|嘛|么)[^，,。；;\n？?]{1,20})/.test(
+    text,
+  );
+}
+
+function hasMeetingKeyword(text: string) {
+  return /(会议|开会|例会|周会|总结会|复盘|评审|同步|对齐|OKR|目标制定|目标制订|绩效复盘|会)/i.test(
     text,
   );
 }
 
 function hasGroupPlanningCue(text: string) {
-  return /(一起|我们|他们|她们|大家|全员|全部人|所有人|要不要|去不去|想去|约|安排|明天|今晚|晚上|周末|下周|改天|几点|什么时候|拉上|带上)/.test(
+  return /(一起|我们|咱们|他们|她们|大家|全员|全部人|所有人|群内|群里|小伙伴|同学|团队|统一|参加|参会|定在|定到|要不要|去不去|想去|约|安排|明天|今晚|晚上|周末|下周|改天|几点|什么时候|拉上|带上)/.test(
     text,
   );
 }
@@ -977,11 +1021,22 @@ function hasConstructiveWorkCue(text: string) {
 }
 
 function isSocialScheduleCandidate(text: string) {
-  if (!hasActivityKeyword(text) || isNegativeActivityMessage(text)) {
+  if ((!hasActivityKeyword(text) && !isMeetingScheduleCandidate(text)) || isNegativeActivityMessage(text)) {
     return false;
   }
 
   return hasGroupPlanningCue(text);
+}
+
+function isMeetingScheduleCandidate(text: string) {
+  if (!hasMeetingKeyword(text) || isNegativeActivityMessage(text)) {
+    return false;
+  }
+
+  const hasTime = isTimeSupplement(text);
+  const hasPeople = /(我们|咱们|大家|全员|全部人|所有人|群内|群里|小伙伴|同学|团队|参会|参加|统一)/.test(text);
+  const hasDecision = /(定在|定到|安排|参加|开|召开|进入会议|准时|统一)/.test(text);
+  return hasTime && (hasPeople || hasDecision);
 }
 
 function isTentativeSocialCandidate(event: NormalizedMessageEvent, text: string) {
@@ -997,8 +1052,17 @@ function isTentativeSocialCandidate(event: NormalizedMessageEvent, text: string)
 }
 
 function extractLocationHint(text: string) {
-  const match = text.match(/(?:在|去)([^，,。；;\n]{2,40}?)(?:吃|聚|集合|见|吧|$)/);
-  return match?.[1]?.trim();
+  const eatMatch = text.match(/吃([^，,。；;\n？?]{2,20}?)(?:吧|$|，|,|。|；|;)/);
+  if (eatMatch) {
+    return eatMatch[1].trim();
+  }
+
+  const gotoMatch = text.match(/(?:去|到|在)([^，,。；;\n？?]{2,40}?)(?:吃|聚|开|参加|集合|见|取|办理|办|吧|$|，|,|。|；|;)/);
+  if (gotoMatch) {
+    return gotoMatch[1].replace(/^吃/, "").trim();
+  }
+
+  return undefined;
 }
 
 function hasActivityDetail(text: string) {
@@ -1283,11 +1347,14 @@ function getTopic(chatId?: string, topicId?: string) {
 }
 
 function hasSameActivityKind(title: string, text: string) {
-  if (/(聚餐|吃饭|烧烤|火锅|海底捞|寿司|日料|烤肉|饭)/.test(title)) {
-    return /(聚餐|吃饭|烧烤|火锅|海底捞|寿司|日料|烤肉|饭|参加|参与人)/.test(text);
+  if (/(聚餐|吃饭|烧烤|火锅|海底捞|寿司|日料|烤肉|饭|肯德基|KFC)/i.test(title)) {
+    return /(聚餐|吃饭|烧烤|火锅|海底捞|寿司|日料|烤肉|饭|肯德基|KFC|疯狂星期二|参加|参与人)/i.test(text);
   }
-  if (/(会议|会|同步|复盘|评审)/.test(title)) {
-    return /(会议|开会|同步|复盘|评审|主题|参会|参与人)/.test(text);
+  if (/(会议|会|同步|复盘|评审|OKR|目标)/i.test(title)) {
+    return /(会议|开会|同步|复盘|评审|OKR|目标|主题|参会|参与人)/i.test(text);
+  }
+  if (/(银行|取款|取钱|办事|行程)/.test(title)) {
+    return /(银行|取款|取钱|办事|出发|行程|参与人|同行)/.test(text);
   }
   return title.length > 1 && text.includes(title);
 }
@@ -1306,7 +1373,7 @@ function looksLikeNewCalendarTopic(text: string) {
   return (
     !/(不对|改到|改成|改为|换到|换成|挪到|提前|推迟|加上|带上|拉上|去掉|别拉|取消)/.test(text) &&
     (isCalendarCreateIntent(text) ||
-      (isTimeSupplement(text) && /(会议|开会|聚餐|吃饭|团建|活动|复盘|评审|同步)/.test(text)))
+      (isTimeSupplement(text) && /(会议|开会|聚餐|吃饭|团建|活动|复盘|评审|同步|OKR|目标|银行|取款|取钱)/i.test(text)))
   );
 }
 
@@ -1316,7 +1383,12 @@ function isActivityReference(text: string, activity: { title: string; locationHi
     (activity.locationHint ? text.includes(activity.locationHint) : false) ||
     /(?:这个|刚才|刚刚|那个).{0,10}(日程|安排|聚餐|吃饭|会议|活动|时间|地点|参与人|人员)/.test(text);
   const sameStarter = Boolean(activity.sourceSenderId && event.senderId === activity.sourceSenderId);
-  return directObject || (sameStarter && hasSameActivityKind(activity.title, text));
+  const sameStarterTimeAdjustment =
+    sameStarter &&
+    isTimeSupplement(text) &&
+    /(时间|定|改|不如|晚上|下午|上午|下班后|疯狂星期二)/.test(text) &&
+    !looksLikeNewCalendarTopic(text);
+  return directObject || sameStarterTimeAdjustment || (sameStarter && hasSameActivityKind(activity.title, text));
 }
 
 function isRecentActivityFollowup(
@@ -1464,6 +1536,335 @@ function getRelevantContextMessages(context: ChatContext, topic?: ConversationTo
   return [...related, ...context.messages.slice(-5)].slice(-10);
 }
 
+function getLatestCalendarTopic(chatId?: string) {
+  return getTopics(chatId)
+    .filter((topic) => topic.kind === "calendar" && topic.status !== "closed")
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+}
+
+function isCalendarLineCommand(text: string) {
+  const stripped = stripBotMentions(text);
+  return /(整理成.{0,8}(日程|日历|会议|行程)|把(它|这个|刚才|刚刚|上面|前面)?.{0,18}(整理|转成|变成|安排).{0,18}(日程|日历|会议|行程)|创建日程|新建日程|建个日程|拉个日程|安排个?日历|日历行程|给.{0,20}安排.{0,8}(日程|日历|行程)|排个日程)/.test(
+    stripped,
+  );
+}
+
+function hasCalendarLineEntity(text: string) {
+  return (
+    hasActivityKeyword(text) ||
+    hasMeetingKeyword(text) ||
+    /(流程|银行|取钱|取款|出发|拜访|客户|办理|办事|面试|复盘|目标|OKR|汇丰)/i.test(text)
+  );
+}
+
+function isCalendarLineSeed(text: string) {
+  const stripped = stripBotMentions(text);
+  if (!stripped || isNegativeActivityMessage(stripped)) {
+    return false;
+  }
+
+  const hasTimeOrDecision = isTimeSupplement(stripped) || /(定在|定到|安排|出发|准时|参加|统一)/.test(stripped);
+  const hasPeopleOrAction =
+    hasGroupPlanningCue(stripped) ||
+    /(我和|给我和|一起|参加|去|开|定|出发|办理|取|约|聚|吃|会议|会)/.test(stripped);
+
+  return Boolean(hasCalendarLineEntity(stripped) && hasTimeOrDecision && hasPeopleOrAction);
+}
+
+function isCalendarLineSupplement(text: string) {
+  return (
+    isTimeSupplement(text) ||
+    Boolean(extractLocationHint(text)) ||
+    isParticipantAdjustment(text) ||
+    /(时间|地点|改到|改成|改为|换成|不如|定在|定到|出发|疯狂星期二|下班后|参加|参与人|同行)/.test(text)
+  );
+}
+
+function findCalendarLineForMessage(event: NormalizedMessageEvent, text = event.text) {
+  const related = getRelatedTopic(event, text);
+  if (related?.kind === "calendar") {
+    return related;
+  }
+
+  const latest = getLatestCalendarTopic(event.chatId);
+  if (!latest) {
+    return undefined;
+  }
+
+  if (isActivityReference(text, latest, event)) {
+    return latest;
+  }
+
+  const currentTime = event.createTime || Date.now();
+  const closeEnough = currentTime - latest.updatedAt <= CONTEXT_WINDOW_MS;
+  if (closeEnough && (isCalendarLineCommand(text) || isCalendarLineSupplement(text))) {
+    return latest;
+  }
+
+  return undefined;
+}
+
+function buildCalendarLineSourceText(topic: ConversationTopic, currentText?: string) {
+  return [...topic.evidenceTexts, currentText]
+    .map((text) => text?.trim())
+    .filter((text): text is string => Boolean(text))
+    .filter((text, index, all) => all.indexOf(text) === index)
+    .join("\n");
+}
+
+function normalizeTopicStatus(value: unknown): TopicStatus | undefined {
+  const allowed: TopicStatus[] = ["observing", "proposed", "confirming", "committed", "updating", "closed"];
+  return allowed.includes(value as TopicStatus) ? (value as TopicStatus) : undefined;
+}
+
+async function compactCalendarLineWithModel(
+  event: NormalizedMessageEvent,
+  context: ChatContext,
+  existing: ConversationTopic | undefined,
+  members: ChatMember[],
+  memberLookupIncomplete: boolean,
+): Promise<CalendarLineDraft | undefined> {
+  const currentText = stripBotMentions(event.text);
+  const recentContext = context.messages.slice(-CONTEXT_MAX_MESSAGES).map((message) => ({
+    message_id: message.messageId,
+    sender_id: message.senderId,
+    sender_name: message.senderName,
+    text: message.text,
+    create_time: new Date(message.createTime).toISOString(),
+  }));
+  const raw = await callStructuredLlm(
+    [
+      {
+        role: "system",
+        content: [
+          "你是 ProjectPilot 的 Topic Router，只负责把群聊压缩成话题线路，不负责决定和执行工具。",
+          "一条线路是一个可持续推进的话题，例如一次聚餐、一次会议、一次外出办事、一个项目风险。群里可以同时有多条线路。",
+          "你的输出必须是 JSON 对象。不要聊天，不要解释。",
+          "只在当前消息确实承接或产生一条日程/会议/行程线路时 should_track=true；闲聊、玩笑、辱骂、单独情绪表达必须 false。",
+          "压缩时保留可作为证据的原文片段，不要把别的话题混进来。不要把旧聚餐和新会议合并。",
+          "参与人只能从 chat_members 中选择，不能凭空编人；如果文本说全部人/大家/群内小伙伴，优先选择非机器人群成员。",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          current_date: new Date().toISOString(),
+          current_message: {
+            message_id: event.messageId,
+            sender_id: event.senderId,
+            sender_name: event.senderName,
+            text: currentText,
+          },
+          existing_topic: existing
+            ? {
+                topic_id: existing.id,
+                status: existing.status,
+                title: existing.title,
+                evidence_texts: existing.evidenceTexts,
+                message_ids: existing.messageIds,
+                time_hint: existing.timeHint || "",
+                location_hint: existing.locationHint || "",
+                participant_candidates: existing.participantCandidates.map((participant) => ({
+                  open_id: participant.openId,
+                  name: participant.name,
+                })),
+              }
+            : null,
+          recent_context: recentContext,
+          chat_members: members.map((member) => ({ open_id: member.openId, name: member.name })),
+          member_lookup_incomplete: memberLookupIncomplete,
+          output_schema: {
+            should_track: "boolean",
+            topic_id: "existing topic id if continuing, otherwise empty",
+            status: "observing | proposed | confirming | updating",
+            title: "short clean title, grounded in current/recent messages",
+            time_hint: "natural language time hint if any",
+            location_hint: "location if any",
+            participant_candidates: [
+              { open_id: "must be one of chat_members.open_id", name: "member name", reason: "short" },
+            ],
+            evidence_texts: ["source snippets from current/recent messages"],
+            message_ids: ["message ids used as evidence"],
+          },
+        }),
+      },
+    ],
+    "router",
+  );
+
+  if (!raw) {
+    return undefined;
+  }
+
+  const shouldTrack =
+    typeof raw.should_track === "boolean"
+      ? raw.should_track
+      : raw.shouldTrack === true;
+  const evidenceTexts =
+    normalizeStringArray(raw.evidence_texts).length > 0
+      ? normalizeStringArray(raw.evidence_texts)
+      : normalizeStringArray(raw.evidenceTexts);
+  const messageIds =
+    normalizeStringArray(raw.message_ids).length > 0
+      ? normalizeStringArray(raw.message_ids)
+      : normalizeStringArray(raw.messageIds);
+  const combinedText = [existing ? buildCalendarLineSourceText(existing) : "", currentText, ...evidenceTexts]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    shouldTrack,
+    topicId: getString(raw.topic_id) || getString(raw.topicId) || existing?.id,
+    status: normalizeTopicStatus(getString(raw.status)),
+    title: normalizeActivityTitle(getString(raw.title), combinedText),
+    timeHint: getString(raw.time_hint) || getString(raw.timeHint),
+    locationHint: getString(raw.location_hint) || getString(raw.locationHint),
+    participantCandidates: filterParticipantCandidates(raw.participant_candidates, members),
+    evidenceTexts,
+    messageIds,
+  };
+}
+
+function hasCreatableCalendarTime(text: string) {
+  const source = `创建日程「测试」 ${text}`;
+  try {
+    return Boolean(parseCalendarIntent(source));
+  } catch (error) {
+    if (error instanceof Error && error.message === "missing_explicit_time") {
+      return Boolean(parseApproximateCalendarIntent(source));
+    }
+    return false;
+  }
+}
+
+async function rememberCalendarLine(event: NormalizedMessageEvent, context: ChatContext) {
+  if (!event.chatId || !event.text.trim()) {
+    return undefined;
+  }
+
+  const existing = findCalendarLineForMessage(event);
+  if (!existing && !isCalendarLineSeed(event.text)) {
+    return undefined;
+  }
+
+  const combinedText = existing ? buildCalendarLineSourceText(existing, event.text) : event.text;
+  const { members, incomplete } = await getChatMembers(event.chatId, context, event);
+  let draft: CalendarLineDraft | undefined;
+  try {
+    draft = await compactCalendarLineWithModel(event, context, existing, members, incomplete);
+  } catch (error) {
+    console.warn("话题线路压缩失败，使用本地归线结果:", sanitizeError(error));
+  }
+
+  if (draft && !draft.shouldTrack) {
+    if (!existing) {
+      return undefined;
+    }
+    draft = undefined;
+  }
+
+  const participants = uniqueByOpenId([
+    ...(existing?.participantCandidates || []),
+    ...(draft?.participantCandidates || []),
+    ...fallbackParticipantCandidates(
+      { ...event, text: combinedText },
+      context,
+      members,
+    ),
+  ]);
+  const activity = {
+    topicId: draft?.topicId || existing?.id,
+    chatId: event.chatId,
+    title: draft?.title || existing?.title || normalizeActivityTitle(undefined, combinedText),
+    sourceText: existing?.sourceText || event.text,
+    sourceMessageId: existing?.sourceMessageId || event.messageId,
+    sourceSenderId: existing?.sourceSenderId || event.senderId,
+    timeHint: draft?.timeHint || inferTimeHint(event.text) || existing?.timeHint || inferTimeHint(combinedText),
+    locationHint:
+      draft?.locationHint || extractLocationHint(event.text) || existing?.locationHint || extractLocationHint(combinedText),
+    participantCandidates: participants,
+  };
+  const status: TopicStatus =
+    draft?.status ||
+    (existing?.status === "committed" ? "updating" : isCalendarLineCommand(event.text) ? "confirming" : "observing");
+  const topic = createOrUpdateTopicFromActivity(event, activity, status);
+  if (draft?.evidenceTexts.length || draft?.messageIds.length) {
+    topic.evidenceTexts = [
+      ...new Set([...topic.evidenceTexts, ...draft.evidenceTexts.filter(Boolean)]),
+    ].slice(-12);
+    topic.messageIds = [...new Set([...topic.messageIds, ...draft.messageIds.filter(Boolean)])].slice(-20);
+    setTopic(topic);
+  }
+  console.log(
+    `更新话题线路: topic=${topic.id} title=${topic.title} status=${topic.status} time=${topic.timeHint || "(none)"}`,
+  );
+  return topic;
+}
+
+async function routeCalendarLineCommand(
+  event: NormalizedMessageEvent,
+  context: ChatContext,
+  touchedTopic?: ConversationTopic,
+): Promise<BotAction | undefined> {
+  if (!event.chatId || !isCalendarLineCommand(event.text)) {
+    return undefined;
+  }
+
+  const topic = touchedTopic || findCalendarLineForMessage(event);
+  if (!topic) {
+    if (isDirectMention(event) || isPrivateChat(event)) {
+      return {
+        type: "text",
+        content:
+          "可以，我能帮你整理成日程。但我还没定位到前面是哪条安排，直接把活动、时间、参与人发我一句就行。",
+      };
+    }
+    return undefined;
+  }
+
+  const sourceText = buildCalendarLineSourceText(topic, event.text);
+  const { members, incomplete } = await getChatMembers(event.chatId, context, event);
+  const lineEvent = { ...event, text: sourceText };
+  const participantCandidates = uniqueByOpenId([
+    ...topic.participantCandidates,
+    ...fallbackParticipantCandidates(lineEvent, context, members),
+    ...inferParticipantCandidatesFromMembers(lineEvent, context, members),
+  ]);
+  const timeHint = inferTimeHint(sourceText) || topic.timeHint;
+  const missingFields = hasCreatableCalendarTime(sourceText) ? [] : ["大概时间"];
+  const decision: IntentDecision = {
+    intent: "social_schedule_candidate",
+    confidence: 0.84,
+    responseMode: "confirm_action",
+    toolIntent: "calendar_create",
+    topicAction: "update_topic",
+    topicId: topic.id,
+    grounding: {
+      messageIds: [...new Set([...topic.messageIds, event.messageId].filter(Boolean) as string[])],
+      evidenceTexts: buildCalendarLineSourceText(topic, event.text).split("\n").slice(-8),
+    },
+    safetyLabel: detectSafetyLabel(event) === "normal" ? "normal" : "ambiguous",
+    activityTitle: topic.title,
+    timeHint,
+    participantCandidates,
+    missingFields,
+    shouldAskConfirmation: true,
+    requiresConfirmation: true,
+    memberLookupIncomplete: incomplete,
+  };
+  const pendingEvent = { ...event, text: sourceText };
+  const pendingActivity = createPendingActivity(pendingEvent, decision);
+  pendingActivity.locationHint = topic.locationHint || extractLocationHint(sourceText);
+  pendingActivity.sourceText = sourceText;
+  pendingActivities.set(event.chatId, pendingActivity);
+
+  return {
+    type: "card",
+    card: buildActivityCard(pendingActivity),
+    fallbackText: buildActivityFallbackText(pendingActivity),
+  };
+}
+
 function rememberTentativeActivity(
   event: NormalizedMessageEvent,
   context: ChatContext,
@@ -1547,6 +1948,22 @@ function inferActivityTitle(text: string) {
     return quoted[1].trim();
   }
 
+  if (/(OKR|目标制定|目标制订|绩效复盘)/i.test(text)) {
+    return "OKR 复盘与目标制定";
+  }
+  if (/(复盘|总结会|总结会议)/.test(text)) {
+    return "复盘总结会";
+  }
+  if (/(评审|review)/i.test(text)) {
+    return "评审会";
+  }
+  if (/(同步|对齐)/.test(text)) {
+    return "同步会";
+  }
+  if (/(会议|开会|周会|例会)/.test(text)) {
+    return "会议";
+  }
+
   if (text.includes("烧烤")) {
     return "烧烤聚餐";
   }
@@ -1564,6 +1981,13 @@ function inferActivityTitle(text: string) {
   }
   if (text.includes("咖啡")) {
     return "咖啡小聚";
+  }
+  if (/(肯德基|KFC|疯狂星期二)/i.test(text)) {
+    return "肯德基聚餐";
+  }
+  if (/(银行|取钱|取款)/.test(text)) {
+    const bank = text.match(/([\u4e00-\u9fa5A-Za-z0-9]{2,20}?银行)/)?.[1];
+    return bank ? `${bank}取款` : "银行办事";
   }
   if (/(聚餐|约饭|吃饭|午饭|晚饭|夜宵)/.test(text)) {
     return "团队聚餐";
@@ -1587,6 +2011,9 @@ function escapeRegExp(value: string) {
 const SPECIFIC_ACTIVITY_TITLE_TOKENS = [
   "寿司朗",
   "海底捞",
+  "肯德基",
+  "KFC",
+  "疯狂星期二",
   "烧烤",
   "火锅",
   "烤肉",
@@ -1604,6 +2031,8 @@ const SPECIFIC_ACTIVITY_TITLE_TOKENS = [
   "唱歌",
   "KTV",
   "T2",
+  "银行",
+  "汇丰银行",
 ];
 
 function isUngroundedActivityTitle(title: string, sourceText: string) {
@@ -1628,8 +2057,11 @@ function normalizeActivityTitle(title: string | undefined, sourceText: string) {
     if (/寿司朗/.test(cleaned) && !/(聚餐|吃饭|小聚)/.test(cleaned)) {
       return "寿司朗聚餐";
     }
+    if (/(肯德基|KFC|疯狂星期二)/i.test(cleaned) && !/(聚餐|吃饭|小聚)/.test(cleaned)) {
+      return "肯德基聚餐";
+    }
     if (/(烧烤|火锅|烤肉|日料|牛排|牛扒|小龙虾|披萨|汉堡|拉面|海底捞)/.test(cleaned) && !/(聚餐|吃饭|小聚)/.test(cleaned)) {
-      return `${cleaned}聚餐`;
+      return `${cleaned.replace(/^吃/, "")}聚餐`;
     }
     return cleaned;
   }
@@ -2648,7 +3080,10 @@ function parseApproximateCalendarIntent(text: string, now = new Date()): Calenda
     [/(晚上|今晚|明晚)/, 19, 21, "晚上"],
   ];
   const matchedRange = ranges.find(([pattern]) => pattern.test(normalizedText));
-  const [, startHour, endHour, label] = matchedRange || [/./, 9, 18, "当天"];
+  if (!matchedRange) {
+    return undefined;
+  }
+  const [, startHour, endHour, label] = matchedRange;
   const start = new Date(baseDate);
   start.setHours(startHour, 0, 0, 0);
   const end = new Date(baseDate);
@@ -4171,6 +4606,12 @@ async function routeMessage(event: NormalizedMessageEvent) {
   }
 
   const context = getRecentContext(event);
+  const touchedTopic = await rememberCalendarLine(event, context);
+  const lineCommandAction = await routeCalendarLineCommand(event, context, touchedTopic);
+  if (lineCommandAction) {
+    return lineCommandAction;
+  }
+
   const tentativeAction = await routeTentativeActivity(event, context);
   if (tentativeAction) {
     return tentativeAction;

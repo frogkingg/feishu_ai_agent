@@ -82,8 +82,8 @@ MVP 先用 `lark-cli` 和 TypeScript 运行时串联能力。MCP 可以作为后
 
 ```text
 Message Gate
--> Topic Router
--> Specialist Skill
+-> Topic Router / Line Compactor
+-> Tool Decision Specialist
 -> Tool Guard
 -> Feishu Action
 ```
@@ -91,8 +91,8 @@ Message Gate
 | 阶段 | 职责 |
 | --- | --- |
 | Message Gate | 判断是否需要处理：未 @ 默认静默，@ 必须进入自然回复或动作判断 |
-| Topic Router | 判断当前消息属于新 topic、已有 topic 更新，还是普通聊天 |
-| Specialist Skill | 按场景处理：日程、任务、项目、风险、自然对话分别走更窄的 Skill |
+| Topic Router / Line Compactor | 把群聊压缩成多条 topic line，判断当前消息属于新 topic、已有 topic 更新，还是普通聊天 |
+| Tool Decision Specialist | 只看单条干净 topic line 和当前指令，判断是否需要调用日程、任务、文档等工具 |
 | Tool Guard | 校验 grounding evidence、权限、确认状态、幂等和安全边界 |
 | Feishu Action | 真正调用飞书 API / `lark-cli`，并把结果回写 topic |
 
@@ -116,6 +116,16 @@ Topic 状态：
 - 更新时间、过期时间和最后一次确认状态。
 
 这样可以避免“新总结会议”被误判成“旧聚餐更新”，也能防止玩笑、吐槽或反讽触发真实工具调用。
+
+### 双模型/三模型分层
+
+运行时支持把模型按职责拆开：
+
+- `ROUTER`：便宜、快、JSON 稳，负责话题线路压缩和归类。
+- `TOOL`：最强、最稳，负责是否调用工具、工具参数、grounding 和安全标签。
+- `CHAT`：更会自然表达，负责被 @ 后的同事式聊天、追问和建议。
+
+默认三者都回退到 `OPENAI_*` 配置；需要分开时使用 `PROJECTPILOT_ROUTER_*`、`PROJECTPILOT_TOOL_*`、`PROJECTPILOT_CHAT_*`。这让 ProjectPilot 不再把“聊天上下文压缩”和“真实工具调用判断”塞给同一个模型一次性完成。
 
 ## 设计参考
 

@@ -113,6 +113,27 @@ OPENAI_API_URL=https://api.deepseek.com/chat/completions
 OPENAI_MODEL=deepseek-v4-pro
 ```
 
+如果要按职责拆模型，可以继续使用 OpenAI-compatible 形态：
+
+```bash
+# 话题线路压缩：快、便宜、JSON 稳
+PROJECTPILOT_ROUTER_API_KEY=...
+PROJECTPILOT_ROUTER_API_URL=https://api.deepseek.com/chat/completions
+PROJECTPILOT_ROUTER_MODEL=deepseek-v4-pro
+
+# 工具判断：最强模型，负责是否调用工具和参数安全
+PROJECTPILOT_TOOL_API_KEY=...
+PROJECTPILOT_TOOL_API_URL=https://api.deepseek.com/chat/completions
+PROJECTPILOT_TOOL_MODEL=deepseek-v4-pro
+
+# 自然对话：被 @ 后像同事一样回复
+PROJECTPILOT_CHAT_API_KEY=...
+PROJECTPILOT_CHAT_API_URL=https://api.deepseek.com/chat/completions
+PROJECTPILOT_CHAT_MODEL=deepseek-v4-pro
+```
+
+未配置某个角色时会自动回退到 `OPENAI_API_KEY` / `OPENAI_API_URL` / `OPENAI_MODEL`。
+
 结构化路由请求使用 JSON Output：
 
 ```json
