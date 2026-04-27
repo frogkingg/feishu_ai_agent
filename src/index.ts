@@ -449,6 +449,14 @@ interface CardActionEvent {
   operatorId?: string;
 }
 
+const KNOWN_CARD_ACTIONS = new Set([
+  "create_schedule",
+  "adjust_participants",
+  "dismiss_candidate",
+  "cancel_candidate",
+  "keep_candidate",
+]);
+
 function normalizeContent(content: unknown): string {
   if (typeof content !== "string") {
     return "";
@@ -1378,6 +1386,109 @@ function normalizeEvent(raw: IncomingMessageEvent): NormalizedMessageEvent | und
   };
 }
 
+function safeJsonObject(value: string) {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function stringifyForDebug(value: unknown) {
+  try {
+    return JSON.stringify(value).slice(0, 2_000);
+  } catch {
+    return String(value).slice(0, 2_000);
+  }
+}
+
+function findStringDeep(value: unknown, keys: string[], depth = 0): string | undefined {
+  if (depth > 8 || value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const parsed = safeJsonObject(value);
+    return parsed ? findStringDeep(parsed, keys, depth + 1) : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringDeep(item, keys, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const raw = record[key];
+    if (typeof raw === "string" && raw.trim()) {
+      return raw.trim();
+    }
+  }
+
+  for (const raw of Object.values(record)) {
+    const found = findStringDeep(raw, keys, depth + 1);
+    if (found) {
+      return found;
+    }
+  }
+
+  return undefined;
+}
+
+function findCardActionDeep(value: unknown, depth = 0): string | undefined {
+  if (depth > 8 || value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    if (KNOWN_CARD_ACTIONS.has(value)) {
+      return value;
+    }
+
+    const parsed = safeJsonObject(value);
+    return parsed ? findCardActionDeep(parsed, depth + 1) : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findCardActionDeep(item, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const directAction = getString(record.action) || getString(record.action_id);
+  if (directAction && KNOWN_CARD_ACTIONS.has(directAction)) {
+    return directAction;
+  }
+
+  for (const raw of Object.values(record)) {
+    const found = findCardActionDeep(raw, depth + 1);
+    if (found) {
+      return found;
+    }
+  }
+
+  return undefined;
+}
+
 function normalizeCardAction(raw: IncomingMessageEvent): CardActionEvent | undefined {
   const type = raw.type || raw.header?.event_type;
   if (type !== CARD_ACTION_EVENT_TYPE) {
@@ -1387,26 +1498,37 @@ function normalizeCardAction(raw: IncomingMessageEvent): CardActionEvent | undef
   const actionValue = raw.event?.action?.value;
   const value =
     typeof actionValue === "string"
-      ? (JSON.parse(actionValue) as Record<string, unknown>)
+      ? safeJsonObject(actionValue) || {}
       : actionValue && typeof actionValue === "object"
         ? (actionValue as Record<string, unknown>)
         : {};
+  const rawRecord = raw as Record<string, unknown>;
+  const action = getString(value.action) || findCardActionDeep(raw);
+  const candidateId =
+    getString(value.candidate_id) ||
+    getString(value.candidateId) ||
+    findStringDeep(raw, ["candidate_id", "candidateId"]);
 
   return {
     type,
-    action: getString(value.action),
-    candidateId: getString(value.candidate_id) || getString(value.candidateId),
+    action,
+    candidateId,
     chatId:
       raw.event?.context?.open_chat_id ||
-      getString((raw as Record<string, unknown>).open_chat_id) ||
+      getString(rawRecord.open_chat_id) ||
+      findStringDeep(raw, ["open_chat_id", "chat_id"]) ||
       raw.chat_id,
     messageId:
       raw.event?.context?.open_message_id ||
-      getString((raw as Record<string, unknown>).open_message_id) ||
+      getString(rawRecord.open_message_id) ||
+      findStringDeep(raw, ["open_message_id", "message_id"]) ||
       raw.message_id,
     operatorId:
       raw.event?.operator?.open_id ||
-      getString((raw as Record<string, unknown>).open_id) ||
+      raw.event?.operator?.user_id ||
+      getString(rawRecord.operator_id) ||
+      getString(rawRecord.open_id) ||
+      findStringDeep(raw, ["operator_id", "open_id", "user_id"]) ||
       raw.sender_id,
   };
 }
@@ -1454,6 +1576,9 @@ async function handleCardAction(raw: IncomingMessageEvent) {
   console.log(
     `收到卡片回调: action=${cardEvent.action || "(none)"} candidate=${cardEvent.candidateId || "(none)"}`,
   );
+  if (!cardEvent.action || !cardEvent.candidateId) {
+    console.warn("卡片回调字段未完整解析，原始事件片段:", stringifyForDebug(raw));
+  }
 
   const pending = getPendingByCardAction(cardEvent);
   if (!pending) {
