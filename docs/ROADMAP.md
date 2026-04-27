@@ -1,5 +1,18 @@
 # 路线图
 
+## P0.5：群聊 Agent 稳定性修复
+
+目标：先把 ProjectPilot 调整成可靠的状态化 PM 同事 Agent，解决上下文污染、状态误承接和工具误触发。
+
+- [ ] Topic Store：按 `chat_id` 管理多个 topic，而不是全局 pending/recent activity
+- [ ] Topic 状态机：支持 `observing / proposed / confirming / committed / updating / closed`
+- [ ] 两段式路由：先 Router 判断 topic 和动作，再交给日程/任务/项目/聊天 Specialist Skill
+- [ ] 短上下文切片：只把当前 topic 的证据和相关消息给模型
+- [ ] 时间解析剥离：用确定性解析层处理上海时区时间，避免下午时间被转成凌晨
+- [ ] 工具安全闸：飞书写入必须有 grounding evidence，玩笑/辱骂/反讽不能触发工具
+- [ ] DeepSeek V4-Pro 切换验证：结构化路由使用 JSON Output，必要时再接 strict tool calls
+- [ ] 群聊 smoke test：覆盖聚餐、会议、改参与人、普通吐槽、@ 自然聊天
+
 ## P0：跑通项目推进闭环
 
 目标：能在 Demo 中展示 ProjectPilot 如何从项目输入到任务和知识库更新。

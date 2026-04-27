@@ -53,6 +53,42 @@ ProjectPilot 的第一层目标不是“猜命令”，而是像 PM 同事一样
 
 其中 `response_mode` 决定 ProjectPilot 是否说话以及怎么说，`tool_intent` 只决定代码层接哪个安全工具。不要把聊天语气、业务判断、CLI 参数拼接混成同一个规则。
 
+## 上下文治理 v2
+
+新增能力时不要只继续加 Prompt。群聊里的“明天吃饭”“这周五开会”“你明天不用来了”“666”可能同时出现，如果都放进同一个长上下文，模型很容易串话、误承接、误触发工具。
+
+新能力必须先定义：
+
+- `topic`：这条消息是在开启新话题、更新已有话题，还是普通聊天。
+- `state`：话题处于 `observing / proposed / confirming / committed / updating / closed` 哪个阶段。
+- `grounding`：工具动作依赖哪些原文证据，例如 `message_id`、时间文本、地点文本、参与人文本。
+- `confirmation`：哪些写入必须等卡片或文本确认。
+
+推荐 Router 输出草案：
+
+```json
+{
+  "response_mode": "silent | chat | suggest | confirm_action | execute_action",
+  "topic_action": "none | create_topic | update_topic | close_topic",
+  "topic_id": "",
+  "tool_intent": "none | calendar_create | calendar_update | task_create | project_intake | doc_update | risk_check",
+  "grounding": {
+    "message_ids": [],
+    "evidence_texts": []
+  },
+  "safety_label": "normal | joke | insult | hypothetical | ambiguous",
+  "assistant_reply": "",
+  "requires_confirmation": true
+}
+```
+
+执行原则：
+
+- 状态机优先于长上下文：只给模型当前 topic 的短上下文和必要证据。
+- 工具调用必须有 grounding evidence；没有证据时只能追问或建议，不能写入。
+- 未 `@` 默认静默；`@` 必须自然回复，但玩笑、辱骂、反讽不能触发飞书工具。
+- 普通聊天、项目建议、日程创建、任务沉淀要拆成 Router + Specialist Skill，不再由一个大 Skill 兼顾所有场景。
+
 ## 新能力交付流程
 
 ```text

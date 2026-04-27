@@ -75,3 +75,49 @@ Agent 编排层
 ## 运行策略
 
 MVP 先用 `lark-cli` 和 TypeScript 运行时串联能力。MCP 可以作为后续界面层或补充能力，不作为当前 Demo 的主路径。
+
+## Agent Runtime vNext
+
+群聊 Agent 不能继续依赖“最近几十条消息 + 一个大 Skill”来判断所有事情。下一版运行时采用状态化工作流，把每个逐渐成形的安排、会议、任务或项目讨论拆成独立 topic，再让模型只看与当前 topic 有关的短上下文。
+
+```text
+Message Gate
+-> Topic Router
+-> Specialist Skill
+-> Tool Guard
+-> Feishu Action
+```
+
+| 阶段 | 职责 |
+| --- | --- |
+| Message Gate | 判断是否需要处理：未 @ 默认静默，@ 必须进入自然回复或动作判断 |
+| Topic Router | 判断当前消息属于新 topic、已有 topic 更新，还是普通聊天 |
+| Specialist Skill | 按场景处理：日程、任务、项目、风险、自然对话分别走更窄的 Skill |
+| Tool Guard | 校验 grounding evidence、权限、确认状态、幂等和安全边界 |
+| Feishu Action | 真正调用飞书 API / `lark-cli`，并把结果回写 topic |
+
+Topic 状态：
+
+| 状态 | 含义 |
+| --- | --- |
+| `observing` | 未 @ 的早期讨论，只观察，不打扰 |
+| `proposed` | 已形成候选事项，但还缺共识或关键字段 |
+| `confirming` | 已准备好卡片/文本确认，等待用户确认写入 |
+| `committed` | 已创建飞书日程、任务、文档或项目记录 |
+| `updating` | 正在修改已存在的飞书对象 |
+| `closed` | 已取消、过期或完成，不再承接短句 |
+
+每个 topic 至少绑定：
+
+- 来源消息和 `message_id`。
+- grounding evidence：标题、时间、地点、参与人、用户明确指令。
+- 参与人候选及其证据来源。
+- 飞书对象 ID，例如 calendar `event_id`。
+- 更新时间、过期时间和最后一次确认状态。
+
+这样可以避免“新总结会议”被误判成“旧聚餐更新”，也能防止玩笑、吐槽或反讽触发真实工具调用。
+
+## 设计参考
+
+- Anthropic 的 [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) 强调用 routing、prompt chaining、tool interface 和 human checkpoints 组合出可靠 Agent，而不是把所有复杂度塞进一个 Prompt。
+- LangGraph 的 [Durable Execution](https://docs.langchain.com/oss/javascript/langgraph/durable-execution) 提供了 thread/checkpoint/human-in-the-loop 的状态化工作流思路；本项目先用轻量 Topic Store 借鉴该模式，不直接引入重框架。

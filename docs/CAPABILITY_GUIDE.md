@@ -101,3 +101,37 @@
 2. 所有写入动作都要能说明写到了哪里，以及失败后如何恢复。
 3. P0 先保证可演示闭环，P1 再扩展监听、身份映射和自动化程度。
 4. 任何主动分发都需要有来源链接，避免生成内容变成不可追溯的口头通知。
+
+## LLM / DeepSeek 能力策略
+
+第一版推荐使用 DeepSeek V4-Pro 承担结构化路由和高价值同事式回复，稳定性优先于最低成本。
+
+推荐 `.env` 配置：
+
+```bash
+OPENAI_API_URL=https://api.deepseek.com/chat/completions
+OPENAI_MODEL=deepseek-v4-pro
+```
+
+结构化路由请求使用 JSON Output：
+
+```json
+{
+  "response_format": {
+    "type": "json_object"
+  }
+}
+```
+
+注意：
+
+- Prompt 中必须包含 `json` 字样和目标 JSON 示例，避免模型返回非 JSON 文本。
+- 路由输出只表达判断，不直接执行工具。
+- 如果后续接入 strict tool calls，再切到 `https://api.deepseek.com/beta/chat/completions`，并为每个工具定义严格 JSON Schema。
+- `deepseek-chat` / `deepseek-reasoner` 是兼容名，后续优先使用明确模型名 `deepseek-v4-pro`。
+
+设计参考：
+
+- [DeepSeek Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing)
+- [DeepSeek JSON Output](https://api-docs.deepseek.com/guides/json_mode)
+- [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)
