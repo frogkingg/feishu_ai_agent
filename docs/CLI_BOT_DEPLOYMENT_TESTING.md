@@ -101,18 +101,18 @@ lark-cli event +subscribe --event-types im.message.receive_v1 --compact --quiet 
 
 在测试群里发一条消息，终端应该能看到 compact JSON 事件。
 
-## 6. 启动机器人
+## 6. 把这台电脑作为本地服务器
 
 开发调试：
 
 ```bash
-npm start
+npm run dev
 ```
 
-后台运行：
+常驻运行使用 macOS LaunchAgent。它会开机登录后自动启动，进程异常退出后自动拉起：
 
 ```bash
-npm run bot:daemon
+npm run bot:install
 npm run bot:status
 npm run bot:log
 ```
@@ -122,6 +122,29 @@ npm run bot:log
 ```bash
 npm run bot:stop
 ```
+
+完整诊断：
+
+```bash
+npm run bot:doctor
+```
+
+当前本地部署模型：
+
+```text
+飞书群聊
+-> lark-cli 长连接事件订阅 / 轮询兜底
+-> 本机 LaunchAgent 常驻 ProjectPilot
+-> Agent 判断意图
+-> bot 身份回复群聊 / user 身份创建日程
+```
+
+本机部署的边界：
+
+- 电脑需要保持登录、联网，尽量不要进入深度睡眠。
+- `lark-cli` 配置和 user 授权仍在本机系统 Keychain 中。
+- `bot` 身份负责群聊监听和回复，`user` 身份负责个人日历等用户资源。
+- 迁移到服务器时，需要把 user OAuth token 存储和刷新机制从本机 Keychain 中抽出来。
 
 ## 7. Smoke Test
 
@@ -152,7 +175,7 @@ lark-cli event +subscribe --event-types im.message.receive_v1 --compact --quiet 
 ### 测试 4：机器人能回复
 
 ```bash
-npm start
+npm run bot:install
 ```
 
 在测试群发：
@@ -193,6 +216,34 @@ npm start
 机器人启动时会先忽略历史消息，只处理后续新消息。
 
 ## 9. 常见问题
+
+### 重启电脑后是否还在线
+
+运行：
+
+```bash
+npm run bot:status
+```
+
+预期能看到 `node .../dist/index.js` 和 `lark-cli event +subscribe` 两类进程。
+
+如果没有进程，执行：
+
+```bash
+npm run bot:install
+```
+
+### 诊断顺序
+
+优先按这个顺序看：
+
+```bash
+npm run bot:doctor
+npm run bot:status
+npm run bot:log
+```
+
+`bot:doctor` 会检查构建、CLI 配置、LaunchAgent 状态和最近日志。
 
 ### Bot 收不到消息
 

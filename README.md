@@ -75,9 +75,10 @@ npm run bot:stop
 2. [系统架构](docs/ARCHITECTURE.md)
 3. [团队协作指南](docs/COLLABORATION.md)
 4. [飞书 CLI 机器人部署与测试](docs/CLI_BOT_DEPLOYMENT_TESTING.md)
-5. [能力调用指引](docs/CAPABILITY_GUIDE.md)
-6. [Skill 编写规范](docs/SKILL_AUTHORING.md)
-7. [路线图](docs/ROADMAP.md)
+5. [本机协同部署方案](docs/LOCAL_COLLABORATION_DEPLOYMENT.md)
+6. [能力调用指引](docs/CAPABILITY_GUIDE.md)
+7. [Skill 编写规范](docs/SKILL_AUTHORING.md)
+8. [路线图](docs/ROADMAP.md)
 
 ## 贡献方式
 

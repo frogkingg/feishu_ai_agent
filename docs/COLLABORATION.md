@@ -20,6 +20,24 @@
 | `demo/<short-name>` | 演示脚本、固定数据、路演流程 |
 | `fix/<short-name>` | 修 bug 或补配置 |
 
+## 本机生产环境协同
+
+当前先把一台电脑作为本地生产环境运行机器人。GitHub 仓库作为唯一代码源，本机只负责拉取稳定版本、保管 `.env` 和飞书本地授权、运行 LaunchAgent。
+
+专门协同仓库：
+
+- https://github.com/frogkingg/feishu_ai_agent
+
+协同规则：
+
+1. 团队成员通过分支和 PR 改代码，不直接在生产机器上手改运行文件。
+2. 合并到 `main` 后，由生产值守同学在本机执行 `npm run deploy:local` 或 `npm run bot:install`。
+3. 本机 `.env`、`.runtime/`、LaunchAgent 状态和 Keychain 授权不进仓库。
+4. 每次涉及飞书写入能力的 PR，都要说明写入对象、身份类型和回滚方式。
+5. 如果机器人异常，先跑 `npm run bot:doctor`，再决定是重启、补权限还是回滚。
+
+详细部署说明见：[`docs/LOCAL_COLLABORATION_DEPLOYMENT.md`](LOCAL_COLLABORATION_DEPLOYMENT.md)。
+
 ## Issue 使用方式
 
 优先用仓库里的模板建 Issue：
@@ -55,6 +73,7 @@
 | `docs/CAPABILITY_GUIDE.md` | 飞书/LLM/本地能力边界 |
 | `docs/SKILL_AUTHORING.md` | Skill 编写规范 |
 | `docs/CLI_BOT_DEPLOYMENT_TESTING.md` | CLI 机器人部署、权限和测试 |
+| `docs/LOCAL_COLLABORATION_DEPLOYMENT.md` | 本机生产环境、GitHub 协作和迁云前部署流程 |
 | `docs/ROADMAP.md` | P0/P1/P2 任务拆分 |
 
 ## 新增能力流程

@@ -41,6 +41,8 @@ const LARK_BIN = process.env.LARK_CLI_BIN || "lark-cli";
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 20_000);
 const LLM_MAX_REPLY_CHARS = Number(process.env.LLM_MAX_REPLY_CHARS || 1_800);
 const POLL_INTERVAL_MS = Number(process.env.LARK_POLL_INTERVAL_MS || 5_000);
+const DEFAULT_EVENT_DURATION_MINUTES = 30;
+const CHINA_TZ_OFFSET = "+08:00";
 
 let listener: ChildProcess | undefined;
 let restartCount = 0;
@@ -209,6 +211,12 @@ async function sendMessage(event: NormalizedMessageEvent, content: string) {
   ]);
 }
 
+interface CalendarIntent {
+  summary: string;
+  start: string;
+  end: string;
+}
+
 interface NormalizedMessageEvent {
   type: string;
   messageId?: string;
@@ -242,6 +250,207 @@ function normalizeContent(content: unknown): string {
   }
 
   return trimmed;
+}
+
+function isCalendarCreateIntent(text: string) {
+  return /(创建|新建|安排|预约|约).{0,12}(日程|日历|会议|会)/i.test(text);
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function toLocalIso(date: Date) {
+  return [
+    date.getFullYear(),
+    "-",
+    pad2(date.getMonth() + 1),
+    "-",
+    pad2(date.getDate()),
+    "T",
+    pad2(date.getHours()),
+    ":",
+    pad2(date.getMinutes()),
+    CHINA_TZ_OFFSET,
+  ].join("");
+}
+
+function normalizeHour(hour: number, period?: string) {
+  if (!period) {
+    return hour;
+  }
+
+  if ((period.includes("下午") || period.includes("晚上") || period.includes("今晚")) && hour < 12) {
+    return hour + 12;
+  }
+
+  if (period.includes("中午") && hour < 11) {
+    return hour + 12;
+  }
+
+  return hour;
+}
+
+function resolveBaseDate(text: string, now = new Date()) {
+  const base = new Date(now);
+  base.setHours(0, 0, 0, 0);
+
+  if (text.includes("后天")) {
+    base.setDate(base.getDate() + 2);
+    return base;
+  }
+
+  if (text.includes("明天") || text.includes("明日")) {
+    base.setDate(base.getDate() + 1);
+    return base;
+  }
+
+  const fullDate = text.match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?/);
+  if (fullDate) {
+    return new Date(Number(fullDate[1]), Number(fullDate[2]) - 1, Number(fullDate[3]));
+  }
+
+  const monthDate = text.match(/(\d{1,2})月(\d{1,2})日?/);
+  if (monthDate) {
+    return new Date(now.getFullYear(), Number(monthDate[1]) - 1, Number(monthDate[2]));
+  }
+
+  return base;
+}
+
+function parseDurationMinutes(text: string) {
+  const hourMatch = text.match(/(\d+(?:\.\d+)?)\s*(小时|h)/i);
+  if (hourMatch) {
+    return Math.round(Number(hourMatch[1]) * 60);
+  }
+
+  const minuteMatch = text.match(/(\d+)\s*(分钟|分|min)/i);
+  if (minuteMatch) {
+    return Number(minuteMatch[1]);
+  }
+
+  return DEFAULT_EVENT_DURATION_MINUTES;
+}
+
+function extractSummary(text: string) {
+  const quoted = text.match(/[「“"]([^」”"]{2,60})[」”"]/);
+  if (quoted) {
+    return quoted[1].trim();
+  }
+
+  const titled = text.match(/(?:标题|主题|名称)[:：\s]+([^，,。；;\n]{2,60})/);
+  if (titled) {
+    return titled[1].trim();
+  }
+
+  const cleaned = text
+    .replace(/(今天|今日|明天|明日|后天)/g, "")
+    .replace(/\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?/g, "")
+    .replace(/\d{1,2}月\d{1,2}日?/g, "")
+    .replace(/(上午|早上|中午|下午|晚上|今晚)?\s*\d{1,2}([:：点]\d{0,2})?\s*(分)?\s*(到|至|-|~|—)\s*(上午|早上|中午|下午|晚上)?\s*\d{1,2}([:：点]\d{0,2})?\s*(分)?/g, "")
+    .replace(/(上午|早上|中午|下午|晚上|今晚)?\s*\d{1,2}([:：点]\d{0,2})?\s*(分)?/g, "")
+    .replace(/\d+(?:\.\d+)?\s*(小时|h|分钟|分|min)/gi, "")
+    .replace(/(帮我|帮我们|请|麻烦|创建|新建|安排|预约|约一个|约个|约|日程|日历|会议|开会)/g, "")
+    .replace(/[，,。；;：:]/g, " ")
+    .trim();
+
+  return cleaned || "会议";
+}
+
+function parseCalendarIntent(text: string, now = new Date()): CalendarIntent | undefined {
+  if (!isCalendarCreateIntent(text)) {
+    return undefined;
+  }
+
+  const rangeMatch = text.match(
+    /(上午|早上|中午|下午|晚上|今晚)?\s*(\d{1,2})(?:[:：点](\d{1,2})?)?\s*(?:分)?\s*(?:到|至|-|~|—)\s*(上午|早上|中午|下午|晚上)?\s*(\d{1,2})(?:[:：点](\d{1,2})?)?\s*(?:分)?/,
+  );
+  const singleMatch = text.match(/(上午|早上|中午|下午|晚上|今晚)?\s*(\d{1,2})(?:[:：点](\d{1,2})?)\s*(?:分)?/);
+
+  if (!rangeMatch && !singleMatch) {
+    throw new Error("missing_explicit_time");
+  }
+
+  const baseDate = resolveBaseDate(text, now);
+  const period = rangeMatch?.[1] || singleMatch?.[1];
+  const startHour = normalizeHour(Number(rangeMatch?.[2] || singleMatch?.[2]), period);
+  const startMinute = Number(rangeMatch?.[3] || singleMatch?.[3] || 0);
+  const start = new Date(baseDate);
+  start.setHours(startHour, startMinute, 0, 0);
+
+  let end: Date;
+  if (rangeMatch) {
+    const endPeriod = rangeMatch[4] || period;
+    const endHour = normalizeHour(Number(rangeMatch[5]), endPeriod);
+    const endMinute = Number(rangeMatch[6] || 0);
+    end = new Date(baseDate);
+    end.setHours(endHour, endMinute, 0, 0);
+    if (end <= start) {
+      end.setDate(end.getDate() + 1);
+    }
+  } else {
+    end = new Date(start.getTime() + parseDurationMinutes(text) * 60_000);
+  }
+
+  if (!/(今天|今日|明天|明日|后天|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}月\d{1,2}日?)/.test(text) && start <= now) {
+    start.setDate(start.getDate() + 1);
+    end.setDate(end.getDate() + 1);
+  }
+
+  return {
+    summary: extractSummary(text),
+    start: toLocalIso(start),
+    end: toLocalIso(end),
+  };
+}
+
+function formatCalendarResult(intent: CalendarIntent) {
+  return `已创建日程：${intent.summary}\n时间：${intent.start} - ${intent.end}`;
+}
+
+function sanitizeError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw
+    .replace(/(app_secret|access_token|refresh_token|Authorization)["':=\s]+[^"',\s}]+/gi, "$1=***")
+    .slice(0, 700);
+}
+
+async function createCalendarEventFromText(text: string) {
+  let intent: CalendarIntent | undefined;
+  try {
+    intent = parseCalendarIntent(text);
+  } catch (error) {
+    if (error instanceof Error && error.message === "missing_explicit_time") {
+      return "我可以创建日程了。基础版本请给我一个明确开始时间，例如：明天下午3点创建日程「项目同步会」。";
+    }
+    throw error;
+  }
+
+  if (!intent) {
+    return undefined;
+  }
+
+  try {
+    await runLarkCli(
+      [
+        "calendar",
+        "+create",
+        "--summary",
+        intent.summary,
+        "--start",
+        intent.start,
+        "--end",
+        intent.end,
+        "--description",
+        `由 ProjectPilot 从群聊指令创建：${text}`,
+      ],
+      "user",
+    );
+    return formatCalendarResult(intent);
+  } catch (error) {
+    console.error("创建日程失败:", error);
+    return `我收到了创建日程请求，但飞书日历创建失败：${sanitizeError(error)}`;
+  }
 }
 
 function normalizeEvent(raw: IncomingMessageEvent): NormalizedMessageEvent | undefined {
@@ -289,6 +498,11 @@ async function buildReply(event: NormalizedMessageEvent) {
 
   if (text.includes("在吗") || text.includes("在线") || text.includes("ping")) {
     return "我在，监听进程正常收到你的消息。";
+  }
+
+  const calendarReply = await createCalendarEventFromText(text);
+  if (calendarReply) {
+    return calendarReply;
   }
 
   try {
