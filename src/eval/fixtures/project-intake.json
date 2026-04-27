@@ -11,6 +11,12 @@
       "intent": "project_intake",
       "action": "project_create",
       "requiresConfirmation": true,
+      "expectedPatch": {
+        "projectDraft": {
+          "name": "OpenClaw 飞书项目领航员 Demo",
+          "goal": "周五前展示群聊自动拆任务、识别风险、沉淀会议结论"
+        }
+      },
       "shouldNot": ["calendar_create"]
     }
   },
@@ -24,7 +30,13 @@
     "expected": {
       "primaryDomain": "project",
       "intent": "project_intake",
-      "action": "project_create"
+      "action": "project_create",
+      "expectedPatch": {
+        "projectDraft": {
+          "name": "支付改造项目",
+          "goal": "六月前完成灰度"
+        }
+      }
     }
   },
   {

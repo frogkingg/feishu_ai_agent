@@ -13,6 +13,20 @@ interface EvalCase {
   messages: Array<{ text: string }>;
   expected: Record<string, unknown> & {
     shouldNot?: string[];
+    expectedPatch?: {
+      projectDraft?: {
+        name?: string;
+        goal?: string;
+      };
+      tasks?: Array<{
+        title?: string;
+        ownerName?: string | null;
+      }>;
+      risks?: Array<{
+        description?: string;
+        severity?: string;
+      }>;
+    };
   };
 }
 
@@ -66,6 +80,67 @@ function mismatch(expectedKey: string, expected: unknown, actual: unknown) {
   return expected === actual ? undefined : `${expectedKey}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`;
 }
 
+function includesMismatch(label: string, expected: string | undefined, actual: string | undefined) {
+  if (expected === undefined) {
+    return undefined;
+  }
+  return actual?.includes(expected) ? undefined : `${label}: expected ${JSON.stringify(actual)} to include ${JSON.stringify(expected)}`;
+}
+
+function patchMismatches(expected: EvalCase["expected"]["expectedPatch"], patch: ReturnType<typeof createProjectPatchHeuristically> | undefined) {
+  if (!expected) {
+    return [];
+  }
+  const failures: string[] = [];
+  if (!patch) {
+    return ["expectedPatch: no patch was produced"];
+  }
+
+  const projectNameMismatch = includesMismatch("projectDraft.name", expected.projectDraft?.name, patch.projectDraft?.name);
+  const projectGoalMismatch = includesMismatch("projectDraft.goal", expected.projectDraft?.goal, patch.projectDraft?.goal);
+  if (projectNameMismatch) failures.push(projectNameMismatch);
+  if (projectGoalMismatch) failures.push(projectGoalMismatch);
+
+  expected.tasks?.forEach((expectedTask, index) => {
+    const actualTask = patch.tasks?.[index];
+    if (!actualTask) {
+      failures.push(`tasks[${index}]: missing`);
+      return;
+    }
+    const titleMismatch = includesMismatch(`tasks[${index}].title`, expectedTask.title, actualTask.title);
+    if (titleMismatch) failures.push(titleMismatch);
+    if (expectedTask.ownerName !== undefined) {
+      const expectedOwner = expectedTask.ownerName === null ? undefined : expectedTask.ownerName;
+      if (actualTask.ownerName !== expectedOwner) {
+        failures.push(
+          `tasks[${index}].ownerName: expected ${JSON.stringify(expectedOwner)}, got ${JSON.stringify(actualTask.ownerName)}`,
+        );
+      }
+    }
+  });
+
+  expected.risks?.forEach((expectedRisk, index) => {
+    const actualRisk = patch.risks?.[index];
+    if (!actualRisk) {
+      failures.push(`risks[${index}]: missing`);
+      return;
+    }
+    const descriptionMismatch = includesMismatch(
+      `risks[${index}].description`,
+      expectedRisk.description,
+      actualRisk.description,
+    );
+    if (descriptionMismatch) failures.push(descriptionMismatch);
+    if (expectedRisk.severity !== undefined && actualRisk.severity !== expectedRisk.severity) {
+      failures.push(
+        `risks[${index}].severity: expected ${JSON.stringify(expectedRisk.severity)}, got ${JSON.stringify(actualRisk.severity)}`,
+      );
+    }
+  });
+
+  return failures;
+}
+
 async function runCase(testCase: EvalCase, caseIndex: number) {
   const activeProject = testCase.context?.activeProject ? makeActiveProject(testCase.context.activeProject) : undefined;
   const activeProjectSummary = activeProject ? summarizeProjectForPrompt(activeProject) : "";
@@ -95,6 +170,7 @@ async function runCase(testCase: EvalCase, caseIndex: number) {
     mismatch("action", testCase.expected.action, actual.action),
     mismatch("requiresConfirmation", testCase.expected.requiresConfirmation, actual.requiresConfirmation),
     mismatch("taskCount", testCase.expected.taskCount, actual.taskCount),
+    ...patchMismatches(testCase.expected.expectedPatch, patch),
   ].filter(Boolean) as string[];
 
   const actualValues = Object.values(actual).filter(Boolean).map(String);

@@ -5145,22 +5145,32 @@ async function routeMessage(event: NormalizedMessageEvent) {
 
   if (route.primaryDomain === "task") {
     const result = await handleTaskWorkflow({ event, route, context, activeProject, activeProjectSummary });
+    if (gate.reason === "high_value_signal" && !activeProject && result.status === "failed") {
+      return { type: "silent", reason: "未 @ 且没有 active project，跳过任务失败回复" } satisfies BotAction;
+    }
     return { type: "text", content: result.reply } satisfies BotAction;
   }
 
   if (route.primaryDomain === "risk") {
     const result = await handleRiskWorkflow({ event, route, context, activeProject, activeProjectSummary });
+    if (gate.reason === "high_value_signal" && !activeProject && result.status === "failed") {
+      return { type: "silent", reason: "未 @ 且没有 active project，跳过风险失败回复" } satisfies BotAction;
+    }
     return { type: "text", content: result.reply } satisfies BotAction;
   }
 
   if (route.primaryDomain === "decision") {
     const result = await handleDecisionWorkflow({ event, route, context, activeProject, activeProjectSummary });
+    if (gate.reason === "high_value_signal" && !activeProject && result.status === "failed") {
+      return { type: "silent", reason: "未 @ 且没有 active project，跳过决策失败回复" } satisfies BotAction;
+    }
     return { type: "text", content: result.reply } satisfies BotAction;
   }
 
   if (route.primaryDomain === "calendar") {
-    if (!shouldEnterCalendarWorkflow(event, route)) {
-      return { type: "silent", reason: "非显式日程意图，阻止进入 calendar workflow" } satisfies BotAction;
+    const calendarGate = shouldEnterCalendarWorkflow(event, route);
+    if (!calendarGate.shouldEnter) {
+      return { type: "silent", reason: calendarGate.reason } satisfies BotAction;
     }
     return routeLegacyCalendarMessage(event, context);
   }

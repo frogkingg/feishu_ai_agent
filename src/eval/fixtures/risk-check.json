@@ -10,6 +10,14 @@
       "primaryDomain": "risk",
       "intent": "risk_check",
       "safetyLabel": "normal",
+      "expectedPatch": {
+        "risks": [
+          {
+            "description": "这个节点下周五前可能来不及",
+            "severity": "medium"
+          }
+        ]
+      },
       "shouldNot": ["hypothetical", "calendar_create"]
     }
   },
@@ -23,7 +31,15 @@
     "expected": {
       "primaryDomain": "risk",
       "safetyLabel": "normal",
-      "action": "risk_create"
+      "action": "risk_create",
+      "expectedPatch": {
+        "risks": [
+          {
+            "description": "飞书卡片回调还不稳定",
+            "severity": "medium"
+          }
+        ]
+      }
     }
   },
   {

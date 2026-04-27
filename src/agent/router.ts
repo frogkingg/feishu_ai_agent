@@ -44,7 +44,7 @@ export function isPrivateChatLike(event: NormalizedMessageEvent) {
 
 export function stripBotMentions(text: string) {
   return botNames()
-    .reduce((current, name) => current.replace(new RegExp(`@?${escapeRegExp(name)}`, "gi"), ""), text)
+    .reduce((current, name) => current.replace(new RegExp(`@\\s*${escapeRegExp(name)}`, "gi"), ""), text)
     .replace(/@\S+/g, "")
     .trim();
 }
@@ -71,7 +71,7 @@ export function detectSafetyLabelByHardRule(text: string): SafetyLabel | undefin
 }
 
 export function hasHighValueProjectSignal(text: string) {
-  return /(owner|负责人|没人负责|没定|阻塞|卡住|风险|延期|来不及|不稳定|拆一下|拆任务|待办|任务|action items?|结论|决策|纪要|复盘|推进|项目|需求|PRD|Demo|文档|知识库)/i.test(
+  return /(风险|延期|来不及|阻塞|卡住|不稳定|owner\s*(还)?没定|owner\s*(也)?还没定|owner\s*没定|没人负责|刚才结论|action items?|决策|纪要)/i.test(
     text,
   );
 }

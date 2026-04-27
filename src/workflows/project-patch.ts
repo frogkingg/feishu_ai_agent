@@ -43,7 +43,7 @@ function extractProjectName(text: string) {
 }
 
 function extractGoal(text: string) {
-  return text.match(/目标[是：:]\s*([^。；;\n]+)/)?.[1]?.trim();
+  return text.match(/目标[是：:]\s*([^，,。；;\n]+)/)?.[1]?.trim();
 }
 
 function extractMembers(text: string) {
@@ -71,12 +71,52 @@ function extractDue(segment: string) {
   return segment.match(/(今天|今晚|明早|明天|明晚|后天|周[一二三四五六日天]|下周[一二三四五六日天]?|周五前|下周五前|晚上|上午|下午)/)?.[1];
 }
 
+const PSEUDO_OWNERS = new Set([
+  "我",
+  "我们",
+  "大家",
+  "今天",
+  "今晚",
+  "明早",
+  "明天",
+  "明晚",
+  "后天",
+  "上午",
+  "下午",
+  "晚上",
+  "一起",
+]);
+
+function isPseudoOwner(value?: string) {
+  return !value || PSEUDO_OWNERS.has(value) || /^(今天|今晚|明早|明天|明晚|后天|上午|下午|晚上|一起)/.test(value);
+}
+
+function normalizeOwnerName(value?: string) {
+  const owner = value?.trim().replace(/(今天|今晚|明早|明天|明晚|后天|上午|下午|晚上|一起)+$/g, "");
+  return isPseudoOwner(owner) ? undefined : owner;
+}
+
 function extractOwner(segment: string) {
-  const names = segment.match(/^([A-Za-z][\w-]*|[\u4e00-\u9fa5]{2,4})(?:\s*\+\s*([A-Za-z][\w-]*|[\u4e00-\u9fa5]{2,4}))?/);
-  if (!names) {
+  const explicitOwner = segment.match(
+    /(?:owner\s*(?:是|=|：|:)?|负责人\s*(?:是|=|：|:)?)([A-Za-z][\w-]*|[\u4e00-\u9fa5]{2,4})/i,
+  );
+  const explicitOwnerName = normalizeOwnerName(explicitOwner?.[1]);
+  if (explicitOwnerName) {
+    return explicitOwnerName;
+  }
+
+  const responsible = segment.match(
+    /^([A-Za-z][\w-]*|[\u4e00-\u9fa5]{2,4})(?:\s*\+\s*([A-Za-z][\w-]*|[\u4e00-\u9fa5]{2,4}))?.{0,18}(?:负责|跟进|来做|处理|整理|打通|验收)/,
+  );
+  if (!responsible) {
     return undefined;
   }
-  return names[2] ? `${names[1]} + ${names[2]}` : names[1];
+  const first = normalizeOwnerName(responsible[1]);
+  const second = normalizeOwnerName(responsible[2]);
+  if (first && second) {
+    return `${first} + ${second}`;
+  }
+  return first;
 }
 
 function stripTaskPrefix(segment: string, owner?: string) {
@@ -88,6 +128,7 @@ function stripTaskPrefix(segment: string, owner?: string) {
   }
   title = title.replace(/^(今天|今晚|明早|明天|明晚|后天|晚上|上午|下午|先|一起)+/g, "");
   title = title.replace(/^(先|一起|把|将)/, "");
+  title = title.replace(/^(负责|跟进|来做|处理|整理|打通|完成|验收)\s*/, "");
   return title.trim() || segment;
 }
 

@@ -14,7 +14,23 @@
       "intent": "task_extract",
       "action": "task_create",
       "taskCount": 3,
-      "requiresConfirmation": true
+      "requiresConfirmation": true,
+      "expectedPatch": {
+        "tasks": [
+          {
+            "title": "消息入口",
+            "ownerName": "Henry"
+          },
+          {
+            "title": "演示脚本",
+            "ownerName": "七月"
+          },
+          {
+            "title": "联调",
+            "ownerName": null
+          }
+        ]
+      }
     }
   },
   {
@@ -48,7 +64,19 @@
       "primaryDomain": "task",
       "intent": "task_extract",
       "action": "task_create",
-      "taskCount": 2
+      "taskCount": 2,
+      "expectedPatch": {
+        "tasks": [
+          {
+            "title": "机器人入口",
+            "ownerName": "Henry"
+          },
+          {
+            "title": "演示脚本",
+            "ownerName": "七月"
+          }
+        ]
+      }
     }
   },
   {
@@ -64,7 +92,41 @@
     "expected": {
       "primaryDomain": "task",
       "intent": "task_extract",
+      "expectedPatch": {
+        "tasks": [
+          {
+            "title": "PRD",
+            "ownerName": null
+          }
+        ]
+      },
       "shouldNot": ["calendar_create", "calendar_update"]
+    }
+  },
+  {
+    "name": "morning_together_no_owner",
+    "context": {
+      "activeProject": "OpenClaw 飞书项目领航员 Demo"
+    },
+    "messages": [
+      {
+        "text": "明早一起联调"
+      }
+    ],
+    "expected": {
+      "primaryDomain": "task",
+      "intent": "task_extract",
+      "action": "task_create",
+      "taskCount": 1,
+      "expectedPatch": {
+        "tasks": [
+          {
+            "title": "联调",
+            "ownerName": null
+          }
+        ]
+      },
+      "shouldNot": ["calendar_create"]
     }
   }
 ]
