@@ -780,7 +780,7 @@ function hasActivityKeyword(text: string) {
 }
 
 function hasGroupPlanningCue(text: string) {
-  return /(一起|我们|大家|全员|所有人|要不要|去不去|想去|约|安排|明天|今晚|晚上|周末|下周|改天|几点|什么时候|拉上|带上)/.test(
+  return /(一起|我们|他们|她们|大家|全员|全部人|所有人|要不要|去不去|想去|约|安排|明天|今晚|晚上|周末|下周|改天|几点|什么时候|拉上|带上)/.test(
     text,
   );
 }
@@ -1001,7 +1001,7 @@ function rememberTentativeActivity(
     sourceSenderId: existing?.sourceSenderId || event.senderId,
     createdAt: existing?.createdAt || Date.now(),
     updatedAt: Date.now(),
-    title: existing?.title || decision?.activityTitle || inferActivityTitle(event.text),
+    title: existing?.title || normalizeActivityTitle(decision?.activityTitle, event.text),
     timeHint,
     locationHint,
     detailTexts: detailTexts.slice(-8),
@@ -1079,6 +1079,40 @@ function inferActivityTitle(text: string) {
   return extractSummary(text);
 }
 
+function stripBotMentions(text: string) {
+  let stripped = text;
+  for (const botName of BOT_NAMES) {
+    stripped = stripped.replace(new RegExp(`@?${escapeRegExp(botName)}`, "g"), "");
+  }
+  return stripped.replace(/@\S+/g, "").replace(/\s+/g, " ").trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeActivityTitle(title: string | undefined, sourceText: string) {
+  const cleanedSource = stripBotMentions(sourceText);
+  const raw = (title || inferActivityTitle(cleanedSource)).trim();
+  const cleaned = stripBotMentions(raw)
+    .replace(/(创建|新建|安排|预约|添加|拉个|建个|日程|日历|会议|吧|一下|我们全部人|全部人|所有人|大家|他们|她们|应该也想去|想去|想吃|我想吃|晚上|明天|今晚|明晚|今天|后天)/g, " ")
+    .replace(/[，,。；;：:！!？?\n]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned && cleaned.length <= 16 && !cleaned.includes("@")) {
+    if (/寿司朗/.test(cleaned) && !/(聚餐|吃饭|小聚)/.test(cleaned)) {
+      return "寿司朗聚餐";
+    }
+    if (/(烧烤|火锅|烤肉|日料|牛排|牛扒|小龙虾|披萨|汉堡|拉面|海底捞)/.test(cleaned) && !/(聚餐|吃饭|小聚)/.test(cleaned)) {
+      return `${cleaned}聚餐`;
+    }
+    return cleaned;
+  }
+
+  return inferActivityTitle(cleanedSource);
+}
+
 function inferTimeHint(text: string) {
   const patterns = [
     /(今天|今晚|明天|明晚|后天|周末|本周末|下周[一二三四五六日天]?|周[一二三四五六日天])\s*(早上|上午|中午|下午|晚上|今晚|明晚)?\s*(\d{1,2}(?:[:：点]\d{0,2})?)?/,
@@ -1112,9 +1146,25 @@ function getString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function isBotLikeName(name?: string) {
+  if (!name) {
+    return false;
+  }
+
+  const normalized = normalizeBotText(name);
+  return BOT_NAMES.some((botName) => normalized.includes(normalizeBotText(botName)));
+}
+
+function isBotLikeMember(member: ChatMember | ParticipantCandidate) {
+  return isBotLikeName(member.name);
+}
+
 function uniqueByOpenId(candidates: ParticipantCandidate[]) {
   const seen = new Set<string>();
   return candidates.filter((candidate) => {
+    if (isBotLikeMember(candidate)) {
+      return false;
+    }
     if (seen.has(candidate.openId)) {
       return false;
     }
@@ -1308,6 +1358,55 @@ function fallbackParticipantCandidates(
   return uniqueByOpenId(candidates);
 }
 
+function mentionsCollectiveOrPronoun(text: string) {
+  return /(他们|她们|他俩|她俩|他们俩|她们俩|我们全部人|全部人|所有人|全员|大家|我们)/.test(text);
+}
+
+function inferParticipantCandidatesFromMembers(
+  event: NormalizedMessageEvent,
+  context: ChatContext,
+  members: ChatMember[],
+) {
+  if (!members.length) {
+    return [];
+  }
+
+  const candidates: ParticipantCandidate[] = [];
+  for (const member of members) {
+    if (isBotLikeMember(member)) {
+      continue;
+    }
+
+    if (event.text.includes(member.name)) {
+      candidates.push({
+        openId: member.openId,
+        name: member.name,
+        reason: "文本直接提到",
+      });
+    }
+  }
+
+  if (mentionsCollectiveOrPronoun(event.text)) {
+    const recentSpeakerIds = new Set(
+      context.messages
+        .slice(-12)
+        .map((message) => message.senderId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const recentMembers = members.filter((member) => recentSpeakerIds.has(member.openId) && !isBotLikeMember(member));
+    const source = recentMembers.length >= 2 ? recentMembers : members.filter((member) => !isBotLikeMember(member));
+    candidates.push(
+      ...source.slice(0, 30).map((member) => ({
+        openId: member.openId,
+        name: member.name,
+        reason: recentMembers.length >= 2 ? "最近参与了上下文" : "群成员名单推断",
+      })),
+    );
+  }
+
+  return uniqueByOpenId(candidates);
+}
+
 function normalizeIntent(value: unknown): IntentKind {
   const allowed: IntentKind[] = [
     "explicit_schedule_create",
@@ -1442,7 +1541,7 @@ function classifyHeuristically(
   return {
     intent,
     confidence: intent === "ignore" ? 0 : 0.72,
-    activityTitle: inferActivityTitle(text),
+    activityTitle: normalizeActivityTitle(undefined, text),
     timeHint,
     participantCandidates,
     missingFields: timeHint && hasExplicitCalendarTime(text) ? [] : ["具体时间"],
@@ -1489,12 +1588,23 @@ async function classifyIntent(
   try {
     const modelDecision = await classifyWithModel(event, context, members, incomplete);
     if (modelDecision && modelDecision.confidence >= 0.55 && modelDecision.intent !== "ignore") {
+      const inferredParticipants = inferParticipantCandidatesFromMembers(event, context, members);
       if (!modelDecision.participantCandidates.length) {
         modelDecision.participantCandidates = fallback.participantCandidates;
+      }
+      if (
+        inferredParticipants.length &&
+        (mentionsCollectiveOrPronoun(event.text) || modelDecision.participantCandidates.length <= 1)
+      ) {
+        modelDecision.participantCandidates = uniqueByOpenId([
+          ...modelDecision.participantCandidates,
+          ...inferredParticipants,
+        ]);
       }
       if (!modelDecision.activityTitle) {
         modelDecision.activityTitle = fallback.activityTitle;
       }
+      modelDecision.activityTitle = normalizeActivityTitle(modelDecision.activityTitle, event.text);
       if (!modelDecision.timeHint) {
         modelDecision.timeHint = fallback.timeHint;
       }
@@ -2308,7 +2418,7 @@ function createPendingActivity(event: NormalizedMessageEvent, decision: IntentDe
     sourceText: event.text,
     sourceMessageId: event.messageId,
     createdAt: Date.now(),
-    title: decision.activityTitle || inferActivityTitle(event.text),
+    title: normalizeActivityTitle(decision.activityTitle, event.text),
     timeHint: decision.timeHint || inferTimeHint(event.text),
     locationHint: extractLocationHint(event.text),
     participantCandidates: decision.participantCandidates,

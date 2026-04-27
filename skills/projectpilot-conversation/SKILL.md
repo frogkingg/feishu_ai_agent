@@ -73,9 +73,20 @@ Priority:
 1. People explicitly mentioned with @.
 2. People who clearly agreed or participated in the current activity discussion.
 3. The activity initiator.
-4. If the message says "我们全部人", "全员", "大家", select available group members, but do not invent anyone.
+4. If the message says "我们全部人", "全员", "大家", "我们", "他们", or "她们", infer the intended people from recent context first. If recent context has no named people, select likely human members from the current group member list, but do not invent anyone.
+5. If the user mentions people by plain text names without @, match those names against `chat_members`.
 
 If uncertain, choose fewer participants and explain with `missing_fields` or low confidence.
+
+## Activity Title
+
+`activity_title` must be a short human label, not the original sentence.
+
+Rules:
+- 2 to 12 Chinese characters when possible.
+- Remove bot mentions, command words, dates, times, participant phrases, and fillers.
+- Prefer a natural noun phrase such as "寿司朗聚餐", "烧烤聚餐", "项目同步会", "周末打球", "团队团建".
+- Do not output strings like "@ProjectPilot 明天晚上..." or "创建一个日程吧".
 
 ## Output Contract
 
@@ -100,4 +111,3 @@ Required shape:
   "should_ask_confirmation": false
 }
 ```
-
