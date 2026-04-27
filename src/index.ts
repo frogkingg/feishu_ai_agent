@@ -522,6 +522,7 @@ interface PendingActivity {
   chatId: string;
   sourceText: string;
   sourceMessageId?: string;
+  sourceSenderId?: string;
   createdAt: number;
   title: string;
   timeHint?: string;
@@ -844,6 +845,14 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
       isTimeSupplement(text) ||
       isKeepCandidate(text))
   ) {
+    return true;
+  }
+
+  if (pending && pending.sourceSenderId && event.senderId === pending.sourceSenderId) {
+    return true;
+  }
+
+  if (pending && (isAgreementExpression(text) || mentionsCollectiveOrPronoun(text) || hasModelRoutingCue(event))) {
     return true;
   }
 
@@ -1448,6 +1457,7 @@ async function classifyWithModel(
     mentions: message.mentions,
     create_time: new Date(message.createTime).toISOString(),
   }));
+  const pending = getPendingActivity(event.chatId);
   const memberPayload = members.map((member) => ({
     open_id: member.openId,
     name: member.name,
@@ -1476,6 +1486,19 @@ async function classifyWithModel(
           text: event.text,
           mentions: event.mentions || [],
         },
+        pending_activity: pending
+          ? {
+              title: pending.title,
+              time_hint: pending.timeHint || "",
+              location_hint: pending.locationHint || "",
+              participant_candidates: pending.participantCandidates.map((participant) => ({
+                open_id: participant.openId,
+                name: participant.name,
+              })),
+              missing_fields: pending.missingFields,
+              source_text: pending.sourceText,
+            }
+          : null,
         recent_context: contextPayload,
         chat_members: memberPayload,
         member_lookup_incomplete: memberLookupIncomplete,
@@ -2426,6 +2449,7 @@ function createPendingActivity(event: NormalizedMessageEvent, decision: IntentDe
     chatId: event.chatId,
     sourceText: event.text,
     sourceMessageId: event.messageId,
+    sourceSenderId: event.senderId,
     createdAt: Date.now(),
     title: normalizeActivityTitle(decision.activityTitle, event.text),
     timeHint: decision.timeHint || inferTimeHint(event.text),
@@ -2500,6 +2524,37 @@ async function applyParticipantAdjustment(
   return `已更新建议参与人：${formatParticipantNames(pending.participantCandidates)}。回复「确认创建」后我再创建日程。`;
 }
 
+async function applyModelPendingUpdate(pending: PendingActivity, decision: IntentDecision) {
+  let changed = false;
+
+  if (decision.participantCandidates.length) {
+    pending.participantCandidates = uniqueByOpenId(decision.participantCandidates);
+    pending.memberLookupIncomplete = decision.memberLookupIncomplete;
+    changed = true;
+  }
+
+  if (decision.timeHint) {
+    pending.timeHint = decision.timeHint;
+    pending.missingFields = pending.missingFields.filter((field) => !field.includes("时间"));
+    changed = true;
+  }
+
+  if (!changed) {
+    return undefined;
+  }
+
+  pendingActivities.set(pending.chatId, pending);
+  const pieces = ["已更新候选安排。"];
+  if (decision.timeHint) {
+    pieces.push(`时间：${pending.timeHint}`);
+  }
+  if (decision.participantCandidates.length) {
+    pieces.push(`建议参与人：${formatParticipantNames(pending.participantCandidates)}`);
+  }
+  pieces.push("确认没问题后，回复「确认创建」就行。");
+  return pieces.join("\n");
+}
+
 async function confirmPendingCreate(pending: PendingActivity) {
   const attendeeIds = pending.participantCandidates.map((participant) => participant.openId);
   const source = `创建日程「${pending.title}」 ${pending.timeHint || ""} ${pending.sourceText}`;
@@ -2555,6 +2610,13 @@ async function executeIntent(
       card: buildCancelCard(pending),
       fallbackText: buildCancelFallbackText(pending),
     };
+  }
+
+  if (pending && decision.intent === "cancel_or_change_candidate" && decision.confidence >= 0.55) {
+    const updateReply = await applyModelPendingUpdate(pending, decision);
+    if (updateReply) {
+      return { type: "text", content: updateReply };
+    }
   }
 
   if (decision.intent === "ignore" || decision.confidence < 0.5) {
