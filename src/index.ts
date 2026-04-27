@@ -1318,6 +1318,33 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const SPECIFIC_ACTIVITY_TITLE_TOKENS = [
+  "寿司朗",
+  "海底捞",
+  "烧烤",
+  "火锅",
+  "烤肉",
+  "寿司",
+  "日料",
+  "牛排",
+  "牛扒",
+  "小龙虾",
+  "披萨",
+  "汉堡",
+  "拉面",
+  "居酒屋",
+  "咖啡",
+  "电影",
+  "唱歌",
+  "KTV",
+  "T2",
+];
+
+function isUngroundedActivityTitle(title: string, sourceText: string) {
+  const source = stripBotMentions(sourceText);
+  return SPECIFIC_ACTIVITY_TITLE_TOKENS.some((token) => title.includes(token) && !source.includes(token));
+}
+
 function normalizeActivityTitle(title: string | undefined, sourceText: string) {
   const cleanedSource = stripBotMentions(sourceText);
   const raw = (title || inferActivityTitle(cleanedSource)).trim();
@@ -1326,6 +1353,10 @@ function normalizeActivityTitle(title: string | undefined, sourceText: string) {
     .replace(/[，,。；;：:！!？?\n]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  if (cleaned && isUngroundedActivityTitle(cleaned, cleanedSource)) {
+    return inferActivityTitle(cleanedSource);
+  }
 
   if (cleaned && cleaned.length <= 16 && !cleaned.includes("@")) {
     if (/寿司朗/.test(cleaned) && !/(聚餐|吃饭|小聚)/.test(cleaned)) {

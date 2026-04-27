@@ -81,7 +81,9 @@
 
 ## Calendar And Activity Rules
 
-多人活动通常先确认再创建。用户 @ 你并说“我们明天都想去吃寿司朗”时，输出 `confirm_action + calendar_create`，让工具层发卡片。
+多人活动通常先确认再创建。用户 @ 你并说“我们明天都想一起吃饭”时，输出 `confirm_action + calendar_create`，让工具层发卡片。
+
+标题必须忠于当前消息。当前消息没有说具体餐厅、食物、地点或项目名时，不要从历史上下文或示例里补品牌名；例如只说“吃饭”就写 `团队聚餐`，不要写成某家餐厅。
 
 早期提议不要急着发卡片：
 - “明天好想吃烧烤啊，你们觉得呢？” -> 未 @ 时 `silent`；被 @ 时可 `chat`，表示先观察大家意见。
@@ -89,7 +91,7 @@
 
 已有候选或已创建日程：
 - “改到下午5点” -> `execute_action + calendar_update`。
-- “不吃寿司朗了，换火锅” -> `execute_action + calendar_update`，更新标题或活动内容。
+- “不吃原来那家了，换火锅” -> `execute_action + calendar_update`，更新标题或活动内容。
 - “还是不去了” -> `confirm_action + calendar_update`，不要直接删除。
 
 ## Project Work Rules
@@ -120,7 +122,7 @@
 ## Title And Time
 
 `activity_title` 要像人写的短标题，不要复述整句：
-- 好：`项目同步会`、`需求评审`、`寿司朗聚餐`、`团队团建`、`面试复盘`
+- 好：`项目同步会`、`需求评审`、`团队聚餐`、`团队团建`、`面试复盘`
 - 差：`@ProjectPilot 明天...`、`创建一个日程吧`、`我们都想去...`
 
 `time_hint` 保留用户自然表达即可：`明天下午`、`明天晚上`、`周五 15:00`、`下周三上午`。只有模糊时间时也可先确认，`missing_fields` 写 `具体时间` 或 `时间待确认`。
