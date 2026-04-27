@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+coverage/
+
+# Local runtime state
+.runtime/
+*.log
+*.pid
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+.claude/
+.trae/
+
+# Temporary files
+tmp/
+temp/
+
+# Generated local lark skill shortcuts. Keep project-owned skill specs in skills/.
+skills/lark-*

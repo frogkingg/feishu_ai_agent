@@ -1,0 +1,38 @@
+name: Capability Request
+description: 登记一个新的飞书、LLM 或本地运行能力
+title: "[Capability] "
+labels: ["capability"]
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 场景
+      description: 这个能力服务哪个 ProjectPilot 场景？
+    validations:
+      required: true
+  - type: textarea
+    id: inputs
+    attributes:
+      label: 输入
+      description: 需要哪些字段、文档、事件或上下文？
+    validations:
+      required: true
+  - type: textarea
+    id: outputs
+    attributes:
+      label: 输出
+      description: 输出什么，写到哪里，如何追溯？
+    validations:
+      required: true
+  - type: textarea
+    id: permissions
+    attributes:
+      label: 权限和配置
+      description: 需要哪些飞书 scope、环境变量或 CLI 配置？
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: Demo 中如何证明这个能力跑通？
+    validations:
+      required: true
