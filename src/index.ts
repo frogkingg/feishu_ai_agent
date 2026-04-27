@@ -35,13 +35,27 @@ interface IncomingMessageEvent {
       sender_type?: string;
       name?: string;
     };
+    operator?: {
+      open_id?: string;
+      user_id?: string;
+    };
+    action?: {
+      value?: unknown;
+      tag?: string;
+    };
+    context?: {
+      open_chat_id?: string;
+      open_message_id?: string;
+    };
   };
   header?: {
     event_type?: string;
   };
 }
 
-const EVENT_TYPE = "im.message.receive_v1";
+const MESSAGE_EVENT_TYPE = "im.message.receive_v1";
+const CARD_ACTION_EVENT_TYPE = "card.action.trigger";
+const EVENT_TYPES = [MESSAGE_EVENT_TYPE, CARD_ACTION_EVENT_TYPE].join(",");
 const RESTART_BASE_DELAY_MS = 2_000;
 const RESTART_MAX_DELAY_MS = 30_000;
 const LARK_BIN = process.env.LARK_CLI_BIN || "lark-cli";
@@ -426,6 +440,15 @@ type BotAction =
   | { type: "text"; content: string }
   | { type: "card"; card: Record<string, unknown>; fallbackText: string };
 
+interface CardActionEvent {
+  type: string;
+  action?: string;
+  candidateId?: string;
+  chatId?: string;
+  messageId?: string;
+  operatorId?: string;
+}
+
 function normalizeContent(content: unknown): string {
   if (typeof content !== "string") {
     return "";
@@ -713,12 +736,17 @@ function inferActivityTitle(text: string) {
 }
 
 function inferTimeHint(text: string) {
-  const match = text.match(
-    /(今天|今晚|明天|明晚|后天|周末|本周末|下周[一二三四五六日天]?|周[一二三四五六日天])?(?:\s*)?(早上|上午|中午|下午|晚上|今晚|明晚)?(?:\s*)?(\d{1,2}(?:[:：点]\d{0,2})?)?/,
-  );
-  const value = match?.[0]?.trim();
-  if (value && /(今天|今晚|明天|明晚|后天|周|上午|下午|晚上|中午|\d)/.test(value)) {
-    return value.replace(/\s+/g, "");
+  const patterns = [
+    /(今天|今晚|明天|明晚|后天|周末|本周末|下周[一二三四五六日天]?|周[一二三四五六日天])\s*(早上|上午|中午|下午|晚上|今晚|明晚)?\s*(\d{1,2}(?:[:：点]\d{0,2})?)?/,
+    /(早上|上午|中午|下午|晚上|今晚|明晚)\s*(\d{1,2}(?:[:：点]\d{0,2})?)?/,
+    /\d{1,2}(?:[:：点]\d{0,2})/,
+  ];
+
+  for (const pattern of patterns) {
+    const value = text.match(pattern)?.[0]?.trim();
+    if (value) {
+      return value.replace(/\s+/g, "");
+    }
   }
 
   if (text.includes("改天")) {
@@ -1328,7 +1356,7 @@ async function createCalendarEventFromText(text: string, attendeeIds: string[] =
 
 function normalizeEvent(raw: IncomingMessageEvent): NormalizedMessageEvent | undefined {
   const type = raw.type || raw.header?.event_type;
-  if (type !== EVENT_TYPE) {
+  if (type !== MESSAGE_EVENT_TYPE) {
     return undefined;
   }
 
@@ -1348,6 +1376,126 @@ function normalizeEvent(raw: IncomingMessageEvent): NormalizedMessageEvent | und
     createTime: parseEventTime(raw.create_time || message?.create_time),
     text: normalizeContent(raw.content ?? message?.content),
   };
+}
+
+function normalizeCardAction(raw: IncomingMessageEvent): CardActionEvent | undefined {
+  const type = raw.type || raw.header?.event_type;
+  if (type !== CARD_ACTION_EVENT_TYPE) {
+    return undefined;
+  }
+
+  const actionValue = raw.event?.action?.value;
+  const value =
+    typeof actionValue === "string"
+      ? (JSON.parse(actionValue) as Record<string, unknown>)
+      : actionValue && typeof actionValue === "object"
+        ? (actionValue as Record<string, unknown>)
+        : {};
+
+  return {
+    type,
+    action: getString(value.action),
+    candidateId: getString(value.candidate_id) || getString(value.candidateId),
+    chatId:
+      raw.event?.context?.open_chat_id ||
+      getString((raw as Record<string, unknown>).open_chat_id) ||
+      raw.chat_id,
+    messageId:
+      raw.event?.context?.open_message_id ||
+      getString((raw as Record<string, unknown>).open_message_id) ||
+      raw.message_id,
+    operatorId:
+      raw.event?.operator?.open_id ||
+      getString((raw as Record<string, unknown>).open_id) ||
+      raw.sender_id,
+  };
+}
+
+function eventFromCardAction(cardEvent: CardActionEvent, text: string): NormalizedMessageEvent {
+  return {
+    type: CARD_ACTION_EVENT_TYPE,
+    chatId: cardEvent.chatId,
+    messageId: cardEvent.messageId,
+    senderId: cardEvent.operatorId,
+    senderType: "user",
+    messageType: "interactive",
+    text,
+  };
+}
+
+function getPendingByCardAction(cardEvent: CardActionEvent) {
+  const byChat = getPendingActivity(cardEvent.chatId);
+  if (!cardEvent.candidateId || byChat?.id === cardEvent.candidateId) {
+    return byChat;
+  }
+
+  for (const pending of pendingActivities.values()) {
+    if (pending.id === cardEvent.candidateId) {
+      return pending;
+    }
+  }
+
+  return undefined;
+}
+
+async function handleCardAction(raw: IncomingMessageEvent) {
+  let cardEvent: CardActionEvent | undefined;
+  try {
+    cardEvent = normalizeCardAction(raw);
+  } catch (error) {
+    console.error("解析卡片回调失败:", error);
+    return;
+  }
+
+  if (!cardEvent) {
+    return;
+  }
+
+  console.log(
+    `收到卡片回调: action=${cardEvent.action || "(none)"} candidate=${cardEvent.candidateId || "(none)"}`,
+  );
+
+  const pending = getPendingByCardAction(cardEvent);
+  if (!pending) {
+    if (cardEvent.chatId || cardEvent.messageId) {
+      await sendMessage(
+        eventFromCardAction(cardEvent, "expired"),
+        "这个候选安排已经失效了。可以重新在群里说一下要安排的活动。",
+      );
+    }
+    return;
+  }
+
+  if (cardEvent.action === "create_schedule") {
+    await sendMessage(eventFromCardAction(cardEvent, "确认创建"), await confirmPendingCreate(pending));
+    return;
+  }
+
+  if (cardEvent.action === "adjust_participants") {
+    await sendMessage(
+      eventFromCardAction(cardEvent, "调整参与人"),
+      "可以直接回复：加上某某，或去掉某某。我会更新建议参与人后再等你确认创建。",
+    );
+    return;
+  }
+
+  if (cardEvent.action === "dismiss_candidate" || cardEvent.action === "cancel_candidate") {
+    pendingActivities.delete(pending.chatId);
+    await sendMessage(
+      eventFromCardAction(cardEvent, "取消候选"),
+      `已取消候选安排：${pending.title}。`,
+    );
+    return;
+  }
+
+  if (cardEvent.action === "keep_candidate") {
+    pending.status = "pending";
+    pendingActivities.set(pending.chatId, pending);
+    await sendMessage(
+      eventFromCardAction(cardEvent, "保留候选"),
+      `好的，先保留候选安排：${pending.title}。`,
+    );
+  }
 }
 
 function formatParticipantNames(participants: ParticipantCandidate[]) {
@@ -1440,13 +1588,6 @@ function buildActivityCard(pending: PendingActivity): Record<string, unknown> {
           },
         ],
       },
-      {
-        tag: "div",
-        text: {
-          tag: "lark_md",
-          content: "_按钮回调未必已在当前本地监听里打通；也可以直接回复：确认创建 / 加上某某 / 先不创建。_",
-        },
-      },
     ],
   };
 }
@@ -1472,9 +1613,10 @@ function buildCancelCard(pending: PendingActivity): Record<string, unknown> {
         tag: "div",
         text: {
           tag: "lark_md",
-          content: [`**活动**：${pending.title}`, `**时间**：${pending.timeHint || "待补充"}`].join(
-            "\n",
-          ),
+          content: [
+            `**活动**：${pending.title}`,
+            `**时间**：${pending.timeHint || "待补充"}`,
+          ].join("\n"),
         },
       },
       {
@@ -1696,6 +1838,16 @@ async function handleMessage(raw: IncomingMessageEvent) {
   await handleNormalizedMessage(event);
 }
 
+async function handleIncomingEvent(raw: IncomingMessageEvent) {
+  const type = raw.type || raw.header?.event_type;
+  if (type === CARD_ACTION_EVENT_TYPE) {
+    await handleCardAction(raw);
+    return;
+  }
+
+  await handleMessage(raw);
+}
+
 async function handleNormalizedMessage(event: NormalizedMessageEvent) {
   if (event.senderType === "app") {
     return;
@@ -1760,7 +1912,7 @@ function normalizePolledMessage(
   }
 
   return {
-    type: EVENT_TYPE,
+    type: MESSAGE_EVENT_TYPE,
     messageId,
     chatId,
     senderId: sender?.id,
@@ -1862,7 +2014,7 @@ async function startListener() {
       "event",
       "+subscribe",
       "--event-types",
-      EVENT_TYPE,
+      EVENT_TYPES,
       "--compact",
       "--quiet",
       "--as",
@@ -1884,7 +2036,7 @@ async function startListener() {
       }
 
       try {
-        handleMessage(JSON.parse(trimmed)).catch((error) => {
+        handleIncomingEvent(JSON.parse(trimmed)).catch((error) => {
           console.error("处理消息失败:", error);
         });
       } catch (error) {
