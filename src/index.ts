@@ -2930,7 +2930,10 @@ async function hydrateRecentCalendarIds(recent: RecentActivity) {
   }
 }
 
-async function patchRecentCalendarEventTime(recent: RecentActivity, intent: CalendarIntent) {
+async function patchRecentCalendarEventFields(
+  recent: RecentActivity,
+  data: Record<string, unknown>,
+) {
   await hydrateRecentCalendarIds(recent);
 
   if (!recent.eventId) {
@@ -2950,19 +2953,29 @@ async function patchRecentCalendarEventTime(recent: RecentActivity, intent: Cale
       }),
       "--data",
       JSON.stringify({
-        start_time: {
-          timestamp: toUnixSeconds(intent.start),
-          timezone: "Asia/Shanghai",
-        },
-        end_time: {
-          timestamp: toUnixSeconds(intent.end),
-          timezone: "Asia/Shanghai",
-        },
+        ...data,
         need_notification: true,
       }),
     ],
     "user",
   );
+
+  return undefined;
+}
+
+function getRecentActivityTitleUpdate(
+  event: NormalizedMessageEvent,
+  decision: IntentDecision,
+  recent: RecentActivity,
+) {
+  if (!/(?:改|换|不.*了|别.*了|不要.*了)/.test(event.text)) {
+    return undefined;
+  }
+
+  const nextTitle = normalizeActivityTitle(decision.activityTitle, event.text);
+  if (nextTitle && nextTitle !== recent.title) {
+    return nextTitle;
+  }
 
   return undefined;
 }
@@ -2973,27 +2986,44 @@ async function applyRecentActivityUpdate(
   recent: RecentActivity,
 ) {
   const wantsTimeChange = Boolean(decision.timeHint || isTimeSupplement(event.text));
-  if (!wantsTimeChange) {
+  const nextTitle = getRecentActivityTitleUpdate(event, decision, recent);
+  if (!wantsTimeChange && !nextTitle) {
     return undefined;
   }
 
   let intent: CalendarIntent | undefined;
-  try {
-    intent = parseCalendarIntent(buildRecentActivityCalendarText(recent, decision, event.text));
-  } catch (error) {
-    if (error instanceof Error && error.message === "missing_explicit_time") {
-      return "我知道你想改这个安排，但还缺一个明确时间。可以直接说：改到明天晚上10:30。";
+  const patchData: Record<string, unknown> = {};
+  if (wantsTimeChange) {
+    try {
+      intent = parseCalendarIntent(buildRecentActivityCalendarText(recent, decision, event.text));
+    } catch (error) {
+      if (error instanceof Error && error.message === "missing_explicit_time") {
+        return "我知道你想改这个安排，但还缺一个明确时间。可以直接说：改到明天晚上10:30。";
+      }
+      throw error;
     }
-    throw error;
+
+    if (!intent) {
+      return undefined;
+    }
+
+    patchData.start_time = {
+      timestamp: toUnixSeconds(intent.start),
+      timezone: "Asia/Shanghai",
+    };
+    patchData.end_time = {
+      timestamp: toUnixSeconds(intent.end),
+      timezone: "Asia/Shanghai",
+    };
   }
 
-  if (!intent) {
-    return undefined;
+  if (nextTitle) {
+    patchData.summary = nextTitle;
   }
 
   let failure: string | undefined;
   try {
-    failure = await patchRecentCalendarEventTime(recent, intent);
+    failure = await patchRecentCalendarEventFields(recent, patchData);
   } catch (error) {
     console.error("更新日程失败:", error);
     return `我理解你想改这个日程，但飞书日历更新失败：${sanitizeError(error)}`;
@@ -3002,15 +3032,25 @@ async function applyRecentActivityUpdate(
     return failure;
   }
 
-  recent.start = intent.start;
-  recent.end = intent.end;
-  recent.approximate = false;
-  recent.timeHint = decision.timeHint || inferTimeHint(event.text) || formatCalendarTimeRange(intent);
+  if (intent) {
+    recent.start = intent.start;
+    recent.end = intent.end;
+    recent.approximate = false;
+    recent.timeHint = decision.timeHint || inferTimeHint(event.text) || formatCalendarTimeRange(intent);
+  }
+  if (nextTitle) {
+    recent.title = nextTitle;
+  }
   recent.sourceText = `${recent.sourceText}\n${event.text}`;
   recent.updatedAt = Date.now();
   setRecentActivity(recent);
 
-  const reply = [`改好了：${recent.title}`, `时间：${formatCalendarTimeRange(intent)}`].join("\n");
+  const reply = [
+    `改好了：${recent.title}`,
+    intent ? `时间：${formatCalendarTimeRange(intent)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
   if (recent.cardMessageId) {
     try {
       await updateInteractiveMessage(
