@@ -949,7 +949,23 @@ function isStrongScheduleDecision(text: string) {
 }
 
 function isParticipantAdjustment(text: string) {
-  return /(加上|带上|拉上|别拉|去掉|调整参与人|参与人)/.test(text) || isCollectiveParticipantRequest(text);
+  return (
+    /(加上|带上|拉上|别拉|别带|不要拉|不要带|不用拉|不带|去掉|移除|调整参与人|参与人|参会人|我来不了|我不参加|我不能参加|不能参加|无法参加)/.test(
+      text,
+    ) || isCollectiveParticipantRequest(text)
+  );
+}
+
+function isParticipantRemovalText(text: string) {
+  return /(别拉|别带|不要拉|不要带|不用拉|不带|去掉|移除|来不了|不参加|不能参加|无法参加)/.test(
+    text,
+  );
+}
+
+function isSelfParticipantRemoval(text: string) {
+  return /(我来不了|我不参加|我不能参加|我无法参加|别带上?我|不要拉上?我|不要带上?我|不用拉我|不带我)/.test(
+    text,
+  );
 }
 
 function isTimeSupplement(text: string) {
@@ -1369,11 +1385,30 @@ function hasCalendarUpdateContent(text: string) {
   );
 }
 
+function isExplicitCalendarUpdateText(text: string) {
+  return /(?:这个|刚才|刚刚|那个|日程|安排|会议|活动|时间|地点|参与人|参会人|人员|不对|改到|改成|改为|换到|换成|挪到|提前|推迟|加上|带上|拉上|去掉|移除|别拉|别带|不要拉|不要带|不用拉|不带|我来不了|不参加|不能参加|取消|不去了|不吃了|算了)/.test(
+    text,
+  );
+}
+
+function isExplicitCalendarLineChange(text: string) {
+  return isExplicitCalendarUpdateText(text) && hasCalendarUpdateContent(text) && !looksLikeNewCalendarTopic(text);
+}
+
 function looksLikeNewCalendarTopic(text: string) {
+  const hasCreatableOrEvent =
+    isCalendarCreateIntent(text) ||
+    isCalendarLineSeed(text) ||
+    (isTimeSupplement(text) && /(会议|开会|聚餐|吃饭|团建|活动|复盘|评审|同步|OKR|目标|银行|取款|取钱)/i.test(text));
+  const explicitUpdate =
+    /(?:不对|改到|改成|改为|换到|换成|挪到|提前|推迟|去掉|移除|别拉|别带|不要拉|不要带|不用拉|不带|我来不了|不参加|不能参加|取消|不去了|不吃了|算了)/.test(
+      text,
+    );
+  const participantOnlyUpdate = isParticipantAdjustment(text) && !hasCalendarLineEntity(text) && !isCalendarCreateIntent(text);
   return (
-    !/(不对|改到|改成|改为|换到|换成|挪到|提前|推迟|加上|带上|拉上|去掉|别拉|取消)/.test(text) &&
-    (isCalendarCreateIntent(text) ||
-      (isTimeSupplement(text) && /(会议|开会|聚餐|吃饭|团建|活动|复盘|评审|同步|OKR|目标|银行|取款|取钱)/i.test(text)))
+    hasCreatableOrEvent &&
+    !explicitUpdate &&
+    !participantOnlyUpdate
   );
 }
 
@@ -1386,9 +1421,16 @@ function isActivityReference(text: string, activity: { title: string; locationHi
   const sameStarterTimeAdjustment =
     sameStarter &&
     isTimeSupplement(text) &&
-    /(时间|定|改|不如|晚上|下午|上午|下班后|疯狂星期二)/.test(text) &&
+    /(时间|定到|定在|改到|改成|改为|换到|换成|挪到|提前|推迟|不如)/.test(text) &&
     !looksLikeNewCalendarTopic(text);
-  return directObject || sameStarterTimeAdjustment || (sameStarter && hasSameActivityKind(activity.title, text));
+  const sameStarterParticipantAdjustment =
+    sameStarter && isParticipantAdjustment(text) && !looksLikeNewCalendarTopic(text);
+  const sameStarterSameKindUpdate =
+    sameStarter &&
+    isExplicitCalendarUpdateText(text) &&
+    hasSameActivityKind(activity.title, text) &&
+    !looksLikeNewCalendarTopic(text);
+  return directObject || sameStarterTimeAdjustment || sameStarterParticipantAdjustment || sameStarterSameKindUpdate;
 }
 
 function isRecentActivityFollowup(
@@ -1405,12 +1447,16 @@ function isRecentActivityFollowup(
   }
 
   const asksForChange =
-    /(?:不对|改到|改成|改为|换到|换成|挪到|提前|推迟|加上|带上|拉上|去掉|别拉|取消|不去了|不吃了|算了)/.test(
+    /(?:不对|改到|改成|改为|换到|换成|挪到|提前|推迟|加上|带上|拉上|去掉|移除|别拉|别带|不要拉|不要带|不用拉|不带|我来不了|不参加|不能参加|取消|不去了|不吃了|算了)/.test(
       text,
     );
   const refersToKnownActivity = isActivityReference(text, recent, event);
+  const participantSelfUpdate =
+    isSelfParticipantRemoval(text) &&
+    recent.participantCandidates.some((candidate) => candidate.openId === event.senderId);
 
   return (
+    participantSelfUpdate ||
     (asksForChange && refersToKnownActivity && hasCalendarUpdateContent(text)) ||
     (refersToKnownActivity && (isTimeSupplement(text) || isParticipantAdjustment(text))) ||
     (isDirectMention(event) && refersToKnownActivity)
@@ -1432,6 +1478,14 @@ function isPendingActivityFollowup(
 
   if (isCreateConfirmation(text) || isKeepCandidate(text) || isCancelExpression(text)) {
     return isActivityReference(text, pending, event) || event.senderId === pending.sourceSenderId;
+  }
+
+  if (isParticipantAdjustment(text)) {
+    return (
+      isActivityReference(text, pending, event) ||
+      event.senderId === pending.sourceSenderId ||
+      pending.participantCandidates.some((candidate) => candidate.openId === event.senderId)
+    );
   }
 
   return isActivityReference(text, pending, event) && hasCalendarUpdateContent(text);
@@ -1591,13 +1645,17 @@ function findCalendarLineForMessage(event: NormalizedMessageEvent, text = event.
     return undefined;
   }
 
+  if (looksLikeNewCalendarTopic(text) && !isActivityReference(text, latest, event)) {
+    return undefined;
+  }
+
   if (isActivityReference(text, latest, event)) {
     return latest;
   }
 
   const currentTime = event.createTime || Date.now();
   const closeEnough = currentTime - latest.updatedAt <= CONTEXT_WINDOW_MS;
-  if (closeEnough && (isCalendarLineCommand(text) || isCalendarLineSupplement(text))) {
+  if (closeEnough && (isCalendarLineCommand(text) || isExplicitCalendarLineChange(text))) {
     return latest;
   }
 
@@ -1951,6 +2009,13 @@ function inferActivityTitle(text: string) {
   if (/(OKR|目标制定|目标制订|绩效复盘)/i.test(text)) {
     return "OKR 复盘与目标制定";
   }
+  const namedMeeting = text.match(/(?:开|召开|组织|安排)(?:一个|个)?([^，,。；;\n？?]{2,24}?(?:会|会议))/);
+  if (namedMeeting) {
+    return namedMeeting[1]
+      .replace(/^(?:一?个|这个|那个)/, "")
+      .replace(/^(?:项目|团队)?$/, "")
+      .trim() || "会议";
+  }
   if (/(复盘|总结会|总结会议)/.test(text)) {
     return "复盘总结会";
   }
@@ -2044,7 +2109,8 @@ function normalizeActivityTitle(title: string | undefined, sourceText: string) {
   const cleanedSource = stripBotMentions(sourceText);
   const raw = (title || inferActivityTitle(cleanedSource)).trim();
   const cleaned = stripBotMentions(raw)
-    .replace(/(创建|新建|安排|预约|添加|拉个|建个|日程|日历|会议|吧|一下|我们全部人|全部人|所有人|大家|他们|她们|应该也想去|想去|想吃|我想吃|晚上|明天|今晚|明晚|今天|后天)/g, " ")
+    .replace(/(创建|新建|安排|预约|添加|拉个|建个|开一个|开个|拉上|带上|日程|日历|会议|吧|一下|我们全部人|全部人|所有人|大家|群里|群里的|小伙伴|同学|参加|他们|她们|应该也想去|想去|想吃|我想吃|晚上|明天|今晚|明晚|今天|后天)/g, " ")
+    .replace(/\d{1,2}\s*点/g, " ")
     .replace(/[，,。；;：:！!？?\n]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -2161,6 +2227,114 @@ function fallbackMembersFromContext(context: ChatContext, currentEvent?: Normali
   }
 
   return [...members.values()];
+}
+
+function candidateFromMember(member: ChatMember, reason: string): ParticipantCandidate {
+  return {
+    openId: member.openId,
+    name: member.name,
+    reason,
+  };
+}
+
+function senderAsCandidate(
+  event: NormalizedMessageEvent,
+  members: ChatMember[],
+  reason: string,
+): ParticipantCandidate | undefined {
+  if (!event.senderId) {
+    return undefined;
+  }
+
+  const member = members.find((item) => item.openId === event.senderId);
+  if (member) {
+    return candidateFromMember(member, reason);
+  }
+
+  return {
+    openId: event.senderId,
+    name: event.senderName || event.senderId,
+    reason,
+  };
+}
+
+function normalizeNameForMatch(value: string) {
+  return value
+    .replace(/\s+/g, "")
+    .replace(/[·・.。,_，:：;；'"“”‘’（）()【】\[\]<>《》]/g, "")
+    .toLowerCase();
+}
+
+function memberNameTokens(member: ChatMember) {
+  const name = member.name.trim();
+  const normalized = normalizeNameForMatch(name);
+  const tokens = new Set<string>();
+  if (normalized) {
+    tokens.add(normalized);
+  }
+
+  const cjk = name.match(/[\u4e00-\u9fa5]{1,8}/)?.[0];
+  if (cjk) {
+    tokens.add(normalizeNameForMatch(cjk));
+    tokens.add(normalizeNameForMatch(`${cjk[0]}同学`));
+    if (cjk.length >= 2) {
+      tokens.add(normalizeNameForMatch(`${cjk.slice(0, 2)}同学`));
+    }
+  }
+
+  return [...tokens].filter(Boolean);
+}
+
+function membersMentionedInText(text: string, members: ChatMember[]) {
+  const normalizedText = normalizeNameForMatch(text);
+  return members.filter((member) => memberNameTokens(member).some((token) => normalizedText.includes(token)));
+}
+
+function splitParticipantAdjustmentClauses(text: string) {
+  return text
+    .replace(/另外/g, "，另外")
+    .replace(/然后/g, "，然后")
+    .split(/[，,。；;\n]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function participantAdjustmentPlan(
+  event: NormalizedMessageEvent,
+  members: ChatMember[],
+  decisionCandidates: ParticipantCandidate[] = [],
+) {
+  const add: ParticipantCandidate[] = [];
+  const remove: ParticipantCandidate[] = [];
+
+  if (isSelfParticipantRemoval(event.text)) {
+    const self = senderAsCandidate(event, members, "用户表示自己不参加");
+    if (self) {
+      remove.push(self);
+    }
+  }
+
+  for (const clause of splitParticipantAdjustmentClauses(event.text)) {
+    const matched = membersMentionedInText(clause, members).filter((member) => !isBotLikeMember(member));
+    if (!matched.length) {
+      continue;
+    }
+
+    if (isParticipantRemovalText(clause)) {
+      remove.push(...matched.map((member) => candidateFromMember(member, "用户要求移除参与人")));
+    } else if (/(加上|带上|拉上|参加|一起)/.test(clause)) {
+      add.push(...matched.map((member) => candidateFromMember(member, "用户要求加入参与人")));
+    }
+  }
+
+  if (!add.length && !remove.length && decisionCandidates.length) {
+    add.push(...decisionCandidates.map((candidate) => ({ ...candidate, reason: candidate.reason || "模型判断为参与人" })));
+  }
+
+  return {
+    add: uniqueByOpenId(add),
+    remove: uniqueByOpenId(remove),
+  };
 }
 
 async function getChatMembers(chatId: string, context: ChatContext, event: NormalizedMessageEvent) {
@@ -3798,25 +3972,22 @@ async function applyParticipantAdjustment(
     return `已把建议参与人改为群里全部成员：${formatParticipantNames(pending.participantCandidates)}${note}。回复「确认创建」或补充时间后我再创建日程。`;
   }
 
-  const matched = members.filter((member) => event.text.includes(member.name));
-  if (!matched.length) {
+  const adjustment = participantAdjustmentPlan(event, members);
+  if (!adjustment.add.length && !adjustment.remove.length) {
     return "我还没识别出要调整的成员。可以直接说：加上张三、去掉李四，或说“群里的全部人”。";
   }
 
-  const removing = /(去掉|别拉|不用拉|不带)/.test(event.text);
-  if (removing) {
-    const removeIds = new Set(matched.map((member) => member.openId));
+  if (adjustment.remove.length) {
+    const removeIds = new Set(adjustment.remove.map((member) => member.openId));
     pending.participantCandidates = pending.participantCandidates.filter(
       (candidate) => !removeIds.has(candidate.openId),
     );
-  } else {
+  }
+
+  if (adjustment.add.length) {
     pending.participantCandidates = uniqueByOpenId([
       ...pending.participantCandidates,
-      ...matched.map((member) => ({
-        openId: member.openId,
-        name: member.name,
-        reason: "用户文本补充",
-      })),
+      ...adjustment.add,
     ]);
   }
 
@@ -4154,6 +4325,131 @@ async function patchRecentCalendarEventFields(
   return undefined;
 }
 
+async function addCalendarAttendees(recent: RecentActivity, participants: ParticipantCandidate[]) {
+  if (!participants.length) {
+    return;
+  }
+
+  await hydrateRecentCalendarIds(recent, true);
+  if (!recent.eventId) {
+    throw new Error("缺少 event_id，无法安全添加参会人");
+  }
+
+  await runLarkCli(
+    [
+      "calendar",
+      "event.attendees",
+      "create",
+      "--params",
+      JSON.stringify({
+        calendar_id: recent.calendarId || "primary",
+        event_id: recent.eventId,
+        user_id_type: "open_id",
+      }),
+      "--data",
+      JSON.stringify({
+        attendees: participants.map((participant) => ({
+          type: "user",
+          user_id: participant.openId,
+        })),
+        need_notification: true,
+      }),
+    ],
+    "user",
+  );
+}
+
+async function removeCalendarAttendees(recent: RecentActivity, participants: ParticipantCandidate[]) {
+  if (!participants.length) {
+    return;
+  }
+
+  await hydrateRecentCalendarIds(recent, true);
+  if (!recent.eventId) {
+    throw new Error("缺少 event_id，无法安全移除参会人");
+  }
+
+  await runLarkCli(
+    [
+      "calendar",
+      "event.attendees",
+      "batch_delete",
+      "--params",
+      JSON.stringify({
+        calendar_id: recent.calendarId || "primary",
+        event_id: recent.eventId,
+        user_id_type: "open_id",
+      }),
+      "--data",
+      JSON.stringify({
+        delete_ids: participants.map((participant) => ({
+          type: "user",
+          user_id: participant.openId,
+        })),
+        need_notification: true,
+      }),
+    ],
+    "user",
+  );
+}
+
+async function applyRecentParticipantAdjustment(
+  event: NormalizedMessageEvent,
+  context: ChatContext,
+  recent: RecentActivity,
+  decision: IntentDecision,
+) {
+  if (!event.chatId) {
+    return "我需要在群聊里才能调整这个日程的参与人。";
+  }
+
+  const { members, incomplete } = await getChatMembers(event.chatId, context, event);
+  let addCandidates: ParticipantCandidate[] = [];
+  let removeCandidates: ParticipantCandidate[] = [];
+
+  if (isCollectiveParticipantRequest(event.text)) {
+    addCandidates = members
+      .filter((member) => !isBotLikeMember(member))
+      .slice(0, 30)
+      .map((member) => candidateFromMember(member, "用户要求群里全部人参与"));
+  } else {
+    const adjustment = participantAdjustmentPlan(event, members, decision.participantCandidates);
+    addCandidates = adjustment.add;
+    removeCandidates = adjustment.remove;
+  }
+
+  if (!addCandidates.length && !removeCandidates.length) {
+    return undefined;
+  }
+
+  const currentIds = new Set(recent.participantCandidates.map((participant) => participant.openId));
+  const addToCalendar = addCandidates.filter((participant) => !currentIds.has(participant.openId));
+  const removeFromCalendar = removeCandidates;
+
+  try {
+    await addCalendarAttendees(recent, addToCalendar);
+    await removeCalendarAttendees(recent, removeFromCalendar);
+  } catch (error) {
+    const safeError = sanitizeError(error);
+    console.error("更新日程参与人失败:", safeError);
+    return `我识别到要调整参与人，但飞书日历更新失败：${safeError}`;
+  }
+
+  const removeIds = new Set(removeCandidates.map((participant) => participant.openId));
+  recent.participantCandidates = uniqueByOpenId([
+    ...recent.participantCandidates.filter((participant) => !removeIds.has(participant.openId)),
+    ...addCandidates,
+  ]);
+  recent.memberLookupIncomplete = incomplete;
+  recent.sourceText = `${recent.sourceText}\n${event.text}`;
+  recent.updatedAt = Date.now();
+  createOrUpdateTopicFromActivity(event, recent, "updating");
+  setRecentActivity(recent);
+
+  const note = incomplete ? "（我没读到完整群成员，先按上下文可见成员处理）" : "";
+  return `参与人已更新：${formatParticipantNames(recent.participantCandidates)}${note}`;
+}
+
 function getRecentActivityTitleUpdate(
   event: NormalizedMessageEvent,
   decision: IntentDecision,
@@ -4185,12 +4481,14 @@ function getRecentActivityTitleUpdate(
 
 async function applyRecentActivityUpdate(
   event: NormalizedMessageEvent,
+  context: ChatContext,
   decision: IntentDecision,
   recent: RecentActivity,
 ) {
   const wantsTimeChange = Boolean(decision.timeHint || isTimeSupplement(event.text));
   const nextTitle = getRecentActivityTitleUpdate(event, decision, recent);
-  if (!wantsTimeChange && !nextTitle) {
+  const wantsParticipantChange = isParticipantAdjustment(event.text) || Boolean(decision.participantCandidates.length);
+  if (!wantsTimeChange && !nextTitle && !wantsParticipantChange) {
     return undefined;
   }
 
@@ -4224,16 +4522,18 @@ async function applyRecentActivityUpdate(
     patchData.summary = nextTitle;
   }
 
-  let failure: string | undefined;
-  try {
-    failure = await patchRecentCalendarEventFields(recent, patchData);
-  } catch (error) {
-    const safeError = sanitizeError(error);
-    console.error("更新日程失败:", safeError);
-    return `我理解你想改这个日程，但飞书日历更新失败：${safeError}`;
-  }
-  if (failure) {
-    return failure;
+  if (Object.keys(patchData).length) {
+    let failure: string | undefined;
+    try {
+      failure = await patchRecentCalendarEventFields(recent, patchData);
+    } catch (error) {
+      const safeError = sanitizeError(error);
+      console.error("更新日程失败:", safeError);
+      return `我理解你想改这个日程，但飞书日历更新失败：${safeError}`;
+    }
+    if (failure) {
+      return failure;
+    }
   }
 
   if (intent) {
@@ -4250,9 +4550,17 @@ async function applyRecentActivityUpdate(
   createOrUpdateTopicFromActivity(event, recent, "updating");
   setRecentActivity(recent);
 
+  const participantReply = wantsParticipantChange
+    ? await applyRecentParticipantAdjustment(event, context, recent, decision)
+    : undefined;
+  if (participantReply?.startsWith("我识别到要调整参与人，但飞书日历更新失败")) {
+    return participantReply;
+  }
+
   const reply = [
     `改好了：${recent.title}`,
     intent ? `时间：${formatCalendarTimeRange(intent)}` : "",
+    participantReply || "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -4409,7 +4717,7 @@ async function executeIntent(
   }
 
   if (!pending && recent && recentRelevant && decision.intent === "cancel_or_change_candidate" && decision.confidence >= 0.55) {
-    const updateReply = await applyRecentActivityUpdate(event, decision, recent);
+    const updateReply = await applyRecentActivityUpdate(event, context, decision, recent);
     if (updateReply) {
       return { type: "text", content: updateReply };
     }
@@ -4428,6 +4736,7 @@ async function executeIntent(
   if (!pending && recent && recentRelevant && decision.toolIntent === "calendar_update" && decision.confidence >= 0.55) {
     const updateReply = await applyRecentActivityUpdate(
       event,
+      context,
       {
         ...decision,
         intent: "cancel_or_change_candidate",
@@ -4979,6 +5288,9 @@ async function startListener() {
   child.stderr?.on("data", (data: Buffer) => {
     const message = data.toString().trim();
     if (message) {
+      if (/not found handler/.test(message)) {
+        return;
+      }
       console.warn("监听日志:", message);
     }
   });
