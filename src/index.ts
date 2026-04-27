@@ -760,7 +760,7 @@ function isStrongScheduleDecision(text: string) {
 }
 
 function isParticipantAdjustment(text: string) {
-  return /(加上|带上|拉上|别拉|去掉|调整参与人|参与人)/.test(text);
+  return /(加上|带上|拉上|别拉|去掉|调整参与人|参与人)/.test(text) || isCollectiveParticipantRequest(text);
 }
 
 function isTimeSupplement(text: string) {
@@ -1152,7 +1152,10 @@ function isBotLikeName(name?: string) {
   }
 
   const normalized = normalizeBotText(name);
-  return BOT_NAMES.some((botName) => normalized.includes(normalizeBotText(botName)));
+  return (
+    BOT_NAMES.some((botName) => normalized.includes(normalizeBotText(botName))) ||
+    /(agent|bot|机器人|智能伙伴|助手)/i.test(name)
+  );
 }
 
 function isBotLikeMember(member: ChatMember | ParticipantCandidate) {
@@ -1317,9 +1320,9 @@ function fallbackParticipantCandidates(
     }
   }
 
-  if (/(所有人|全员|大家|我们所有人)/.test(event.text) && members.length) {
+  if (isCollectiveParticipantRequest(event.text) && members.length) {
     candidates.push(
-      ...members.slice(0, 30).map((member) => ({
+      ...members.filter((member) => !isBotLikeMember(member)).slice(0, 30).map((member) => ({
         openId: member.openId,
         name: member.name,
         reason: "消息表达为全员参与",
@@ -1359,7 +1362,13 @@ function fallbackParticipantCandidates(
 }
 
 function mentionsCollectiveOrPronoun(text: string) {
-  return /(他们|她们|他俩|她俩|他们俩|她们俩|我们全部人|全部人|所有人|全员|大家|我们)/.test(text);
+  return /(他们|她们|他俩|她俩|他们俩|她们俩|我们全部人|全部人|所有人|全员|大家|群里|群成员|成员|我们)/.test(text);
+}
+
+function isCollectiveParticipantRequest(text: string) {
+  return /(我们全部人|我们所有人|我们都|我们.{0,8}都|全部人|所有人|全员|大家|群里的人|群里的|群成员|全部成员|所有成员)/.test(
+    text,
+  );
 }
 
 function inferParticipantCandidatesFromMembers(
@@ -2443,10 +2452,31 @@ async function applyParticipantAdjustment(
     return "我需要在群聊里才能调整这个候选安排的参与人。";
   }
 
-  const { members } = await getChatMembers(event.chatId, context, event);
+  const { members, incomplete } = await getChatMembers(event.chatId, context, event);
+  if (isCollectiveParticipantRequest(event.text)) {
+    const groupMembers = members
+      .filter((member) => !isBotLikeMember(member))
+      .slice(0, 30)
+      .map((member) => ({
+        openId: member.openId,
+        name: member.name,
+        reason: "用户要求群里全部人参与",
+      }));
+
+    if (!groupMembers.length) {
+      return "我现在读不到可加入的群成员。你可以直接说：加上张三、李四，我再更新参与人。";
+    }
+
+    pending.participantCandidates = uniqueByOpenId(groupMembers);
+    pending.memberLookupIncomplete = incomplete;
+    pendingActivities.set(pending.chatId, pending);
+    const note = incomplete ? "（我没读到完整群成员，先按上下文可见成员处理）" : "";
+    return `已把建议参与人改为群里全部成员：${formatParticipantNames(pending.participantCandidates)}${note}。回复「确认创建」或补充时间后我再创建日程。`;
+  }
+
   const matched = members.filter((member) => event.text.includes(member.name));
   if (!matched.length) {
-    return "我还没识别出要调整的成员。可以直接说：加上张三，或去掉李四。";
+    return "我还没识别出要调整的成员。可以直接说：加上张三、去掉李四，或说“群里的全部人”。";
   }
 
   const removing = /(去掉|别拉|不用拉|不带)/.test(event.text);
