@@ -82,6 +82,7 @@ let restartCount = 0;
 let stopping = false;
 const handledMessageIds = new Set<string>();
 const processingReceiptMessageIds = new Set<string>();
+const processingReceipts = new Map<string, { reactionId?: string; fallbackSent?: boolean }>();
 const chatContexts = new Map<string, ChatContext>();
 const pendingActivities = new Map<string, PendingActivity>();
 const chatMemberCache = new Map<string, { fetchedAt: number; members: ChatMember[] }>();
@@ -368,10 +369,32 @@ async function addMessageReaction(messageId: string, emojiType: string) {
   ]);
 }
 
+async function deleteMessageReaction(messageId: string, reactionId: string) {
+  return runLarkCli([
+    "im",
+    "reactions",
+    "delete",
+    "--params",
+    JSON.stringify({ message_id: messageId, reaction_id: reactionId }),
+  ]);
+}
+
+async function listMessageReactions(messageId: string, emojiType: string) {
+  return runLarkCli([
+    "im",
+    "reactions",
+    "list",
+    "--params",
+    JSON.stringify({ message_id: messageId, reaction_type: emojiType, page_size: 20 }),
+  ]);
+}
+
 interface CalendarIntent {
   summary: string;
   start: string;
   end: string;
+  approximate?: boolean;
+  approximateLabel?: string;
 }
 
 interface MentionInfo {
@@ -735,15 +758,51 @@ async function sendProcessingReceipt(event: NormalizedMessageEvent, context: Cha
 
   processingReceiptMessageIds.add(event.messageId);
   try {
-    await addMessageReaction(event.messageId, PROCESSING_REACTION_EMOJI);
+    const result = await addMessageReaction(event.messageId, PROCESSING_REACTION_EMOJI);
+    const reactionId = findStringDeep(result, ["reaction_id", "reactionId", "id"]);
+    processingReceipts.set(event.messageId, { reactionId });
     console.log(`已发送处理中表情: ${PROCESSING_REACTION_EMOJI} message_id=${event.messageId}`);
   } catch (error) {
     console.warn("发送处理中表情失败，降级为短回复:", sanitizeError(error));
     try {
       await sendMessage(event, PROCESSING_ACK_TEXT);
+      processingReceipts.set(event.messageId, { fallbackSent: true });
     } catch (fallbackError) {
       console.warn("发送处理中短回复失败:", sanitizeError(fallbackError));
     }
+  }
+}
+
+async function clearProcessingReceipt(event: NormalizedMessageEvent) {
+  if (!event.messageId) {
+    return;
+  }
+
+  const receipt = processingReceipts.get(event.messageId);
+  if (!receipt) {
+    return;
+  }
+
+  processingReceipts.delete(event.messageId);
+  let reactionId = receipt.reactionId;
+  if (!reactionId) {
+    try {
+      const result = await listMessageReactions(event.messageId, PROCESSING_REACTION_EMOJI);
+      reactionId = findStringDeep(result, ["reaction_id", "reactionId"]);
+    } catch (error) {
+      console.warn("查找处理中表情失败，跳过移除:", sanitizeError(error));
+    }
+  }
+
+  if (!reactionId) {
+    return;
+  }
+
+  try {
+    await deleteMessageReaction(event.messageId, reactionId);
+    console.log(`已移除处理中表情 message_id=${event.messageId}`);
+  } catch (error) {
+    console.warn("移除处理中表情失败:", sanitizeError(error));
   }
 }
 
@@ -1275,6 +1334,27 @@ function toLocalIso(date: Date) {
   ].join("");
 }
 
+function formatCalendarIsoForHumans(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) {
+    return value;
+  }
+
+  return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}`;
+}
+
+function formatCalendarTimeRange(intent: CalendarIntent) {
+  const start = formatCalendarIsoForHumans(intent.start);
+  const end = formatCalendarIsoForHumans(intent.end);
+  const startDate = start.slice(0, 10);
+  const endDate = end.slice(0, 10);
+  if (startDate === endDate) {
+    return `${start} - ${end.slice(11)}`;
+  }
+
+  return `${start} - ${end}`;
+}
+
 function normalizeHour(hour: number, period?: string) {
   if (!period) {
     return hour;
@@ -1405,8 +1485,60 @@ function parseCalendarIntent(text: string, now = new Date()): CalendarIntent | u
   };
 }
 
+function parseApproximateCalendarIntent(text: string, now = new Date()): CalendarIntent | undefined {
+  const normalizedText = normalizeChineseTimeText(text);
+  if (!isCalendarCreateIntent(normalizedText)) {
+    return undefined;
+  }
+
+  const hasDateHint = /(今天|今日|明天|明日|后天|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}月\d{1,2}日?)/.test(
+    normalizedText,
+  );
+  if (!hasDateHint) {
+    return undefined;
+  }
+
+  const baseDate = resolveBaseDate(normalizedText, now);
+  const ranges: Array<[RegExp, number, number, string]> = [
+    [/(早上|上午)/, 9, 12, "上午"],
+    [/中午/, 12, 14, "中午"],
+    [/下午/, 14, 18, "下午"],
+    [/(晚上|今晚|明晚)/, 19, 21, "晚上"],
+  ];
+  const matchedRange = ranges.find(([pattern]) => pattern.test(normalizedText));
+  const [, startHour, endHour, label] = matchedRange || [/./, 9, 18, "当天"];
+  const start = new Date(baseDate);
+  start.setHours(startHour, 0, 0, 0);
+  const end = new Date(baseDate);
+  end.setHours(endHour, 0, 0, 0);
+
+  if (end <= start) {
+    end.setDate(end.getDate() + 1);
+  }
+  if (end <= now) {
+    start.setDate(start.getDate() + 1);
+    end.setDate(end.getDate() + 1);
+  }
+
+  return {
+    summary: extractSummary(text),
+    start: toLocalIso(start),
+    end: toLocalIso(end),
+    approximate: true,
+    approximateLabel: inferTimeHint(text) || label,
+  };
+}
+
 function formatCalendarResult(intent: CalendarIntent) {
-  return `已创建日程：${intent.summary}\n时间：${intent.start} - ${intent.end}`;
+  if (intent.approximate) {
+    return [
+      `安排上了：${intent.summary}`,
+      `我先按「${intent.approximateLabel || "大概时间"}」放进日历：${formatCalendarTimeRange(intent)}`,
+      "如果想更准，直接回我「改到明天下午5点」就行。",
+    ].join("\n");
+  }
+
+  return [`安排好了：${intent.summary}`, `时间：${formatCalendarTimeRange(intent)}`].join("\n");
 }
 
 function sanitizeError(error: unknown) {
@@ -1416,15 +1548,25 @@ function sanitizeError(error: unknown) {
     .slice(0, 700);
 }
 
-async function createCalendarEventFromText(text: string, attendeeIds: string[] = []) {
+async function createCalendarEventFromText(
+  text: string,
+  attendeeIds: string[] = [],
+  options: { allowApproximate?: boolean } = {},
+) {
   let intent: CalendarIntent | undefined;
   try {
     intent = parseCalendarIntent(text);
   } catch (error) {
     if (error instanceof Error && error.message === "missing_explicit_time") {
-      return "我可以创建日程了。基础版本请给我一个明确开始时间，例如：明天下午3点创建日程「项目同步会」。";
+      if (options.allowApproximate) {
+        intent = parseApproximateCalendarIntent(text);
+      }
+      if (!intent) {
+        return "我可以先安排，但还缺一个大概时间。比如直接说：明天下午、明晚，或明天下午5点。";
+      }
+    } else {
+      throw error;
     }
-    throw error;
   }
 
   if (!intent) {
@@ -1923,9 +2065,9 @@ async function applyParticipantAdjustment(
 async function confirmPendingCreate(pending: PendingActivity) {
   const attendeeIds = pending.participantCandidates.map((participant) => participant.openId);
   const source = `创建日程「${pending.title}」 ${pending.timeHint || ""} ${pending.sourceText}`;
-  const result = await createCalendarEventFromText(source, attendeeIds);
+  const result = await createCalendarEventFromText(source, attendeeIds, { allowApproximate: true });
 
-  if (!result?.includes("请给我一个明确开始时间")) {
+  if (!result?.includes("还缺一个大概时间")) {
     pendingActivities.delete(pending.chatId);
   }
 
@@ -2094,9 +2236,15 @@ async function handleNormalizedMessage(event: NormalizedMessageEvent) {
   const context = rememberMessage(event) || getRecentContext(event);
   await sendProcessingReceipt(event, context);
   const action = await routeMessage(event);
-  await sendAction(event, action);
-  if (action.type !== "silent") {
-    console.log(`已处理 message_id=${event.messageId || "(none)"} action=${action.type}`);
+  try {
+    await sendAction(event, action);
+    if (action.type !== "silent") {
+      console.log(`已处理 message_id=${event.messageId || "(none)"} action=${action.type}`);
+    }
+  } finally {
+    if (action.type !== "silent") {
+      await clearProcessingReceipt(event);
+    }
   }
 }
 
