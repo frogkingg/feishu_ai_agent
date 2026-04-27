@@ -1,5 +1,5 @@
 import { ChildProcess, execFile, spawn } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
 
@@ -72,6 +72,9 @@ const PENDING_ACTIVITY_TTL_MS = Number(
 const TENTATIVE_ACTIVITY_TTL_MS = Number(
   process.env.PROJECTPILOT_TENTATIVE_ACTIVITY_TTL_MS || 30 * 60_000,
 );
+const RECENT_ACTIVITY_TTL_MS = Number(
+  process.env.PROJECTPILOT_RECENT_ACTIVITY_TTL_MS || 45 * 60_000,
+);
 const MEMBER_CACHE_TTL_MS = Number(process.env.PROJECTPILOT_MEMBER_CACHE_TTL_MS || 10 * 60_000);
 const BOT_NAMES = (process.env.PROJECTPILOT_BOT_NAMES || "测试项目知识中枢 Agent,ProjectPilot,项目领航员,机器人")
   .split(",")
@@ -81,6 +84,8 @@ const PROCESSING_REACTION_EMOJI = process.env.PROJECTPILOT_PROCESSING_REACTION_E
 const PROCESSING_ACK_TEXT = process.env.PROJECTPILOT_PROCESSING_ACK_TEXT || "收到，我看一下。";
 const PROJECTPILOT_SKILL_PATH =
   process.env.PROJECTPILOT_SKILL_PATH || join(process.cwd(), "skills/projectpilot-conversation/SKILL.md");
+const RUNTIME_DIR = join(process.cwd(), ".runtime");
+const RECENT_ACTIVITY_STORE_PATH = join(RUNTIME_DIR, "recent-activities.json");
 
 let listener: ChildProcess | undefined;
 let restartCount = 0;
@@ -92,6 +97,7 @@ const processingReceipts = new Map<string, { reactionId?: string; fallbackSent?:
 const chatContexts = new Map<string, ChatContext>();
 const pendingActivities = new Map<string, PendingActivity>();
 const tentativeActivities = new Map<string, TentativeActivity>();
+const recentActivities = new Map<string, RecentActivity>();
 const chatMemberCache = new Map<string, { fetchedAt: number; members: ChatMember[] }>();
 
 function loadLocalEnv() {
@@ -455,6 +461,14 @@ interface CalendarIntent {
   approximateLabel?: string;
 }
 
+interface CalendarCreateResult {
+  reply: string;
+  intent?: CalendarIntent;
+  calendarId?: string;
+  eventId?: string;
+  raw?: unknown;
+}
+
 interface MentionInfo {
   id?: string;
   name?: string;
@@ -545,6 +559,27 @@ interface TentativeActivity {
   locationHint?: string;
   detailTexts: string[];
   supporterIds: string[];
+}
+
+interface RecentActivity {
+  id: string;
+  chatId: string;
+  sourceText: string;
+  sourceMessageId?: string;
+  sourceSenderId?: string;
+  createdAt: number;
+  updatedAt: number;
+  title: string;
+  timeHint?: string;
+  locationHint?: string;
+  participantCandidates: ParticipantCandidate[];
+  memberLookupIncomplete?: boolean;
+  calendarId?: string;
+  eventId?: string;
+  start?: string;
+  end?: string;
+  approximate?: boolean;
+  cardMessageId?: string;
 }
 
 type BotAction =
@@ -837,6 +872,7 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
 
   const pending = getPendingActivity(event.chatId);
   const tentative = getTentativeActivity(event.chatId);
+  const recent = getRecentActivity(event.chatId);
   if (
     pending &&
     (isCancelExpression(text) ||
@@ -853,6 +889,10 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
   }
 
   if (pending && (isAgreementExpression(text) || mentionsCollectiveOrPronoun(text) || hasModelRoutingCue(event))) {
+    return true;
+  }
+
+  if (isRecentActivityFollowup(event, recent, text)) {
     return true;
   }
 
@@ -984,6 +1024,97 @@ function getTentativeActivity(chatId?: string) {
   }
 
   return tentative;
+}
+
+function getRecentActivity(chatId?: string) {
+  if (!chatId) {
+    return undefined;
+  }
+
+  const recent = recentActivities.get(chatId);
+  if (!recent) {
+    return undefined;
+  }
+
+  if (Date.now() - recent.updatedAt > RECENT_ACTIVITY_TTL_MS) {
+    deleteRecentActivity(chatId);
+    return undefined;
+  }
+
+  return recent;
+}
+
+function persistRecentActivities() {
+  try {
+    mkdirSync(RUNTIME_DIR, { recursive: true });
+    writeFileSync(
+      RECENT_ACTIVITY_STORE_PATH,
+      JSON.stringify([...recentActivities.values()], null, 2),
+    );
+  } catch (error) {
+    console.warn("保存最近日程上下文失败:", sanitizeError(error));
+  }
+}
+
+function setRecentActivity(recent: RecentActivity) {
+  recentActivities.set(recent.chatId, recent);
+  persistRecentActivities();
+}
+
+function deleteRecentActivity(chatId: string) {
+  recentActivities.delete(chatId);
+  persistRecentActivities();
+}
+
+function loadRecentActivities() {
+  if (!existsSync(RECENT_ACTIVITY_STORE_PATH)) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(RECENT_ACTIVITY_STORE_PATH, "utf8"));
+    const activities = Array.isArray(parsed) ? parsed : [];
+    const now = Date.now();
+    for (const activity of activities) {
+      if (!activity || typeof activity !== "object") {
+        continue;
+      }
+      const recent = activity as RecentActivity;
+      if (!recent.chatId || !recent.updatedAt || now - recent.updatedAt > RECENT_ACTIVITY_TTL_MS) {
+        continue;
+      }
+      recentActivities.set(recent.chatId, recent);
+    }
+    persistRecentActivities();
+  } catch (error) {
+    console.warn("读取最近日程上下文失败，已忽略本地缓存:", sanitizeError(error));
+  }
+}
+
+function isRecentActivityFollowup(
+  event: NormalizedMessageEvent,
+  recent: RecentActivity | undefined,
+  text: string,
+) {
+  if (!recent || !text.trim()) {
+    return false;
+  }
+
+  const sameStarter = Boolean(recent.sourceSenderId && event.senderId === recent.sourceSenderId);
+  const refersToKnownActivity =
+    text.includes(recent.title) ||
+    (recent.locationHint ? text.includes(recent.locationHint) : false) ||
+    /(?:这个|刚才|刚刚|那个|吃饭|日程|安排|时间|地点|参与人|人|人员)/.test(text);
+  const asksForChange =
+    /(?:不对|改到|改成|改为|换到|换成|挪到|提前|推迟|加上|带上|拉上|去掉|别拉|取消|不去了|不吃了|算了)/.test(
+      text,
+    );
+
+  return (
+    asksForChange ||
+    (sameStarter && refersToKnownActivity && (isTimeSupplement(text) || isParticipantAdjustment(text))) ||
+    (isDirectMention(event) && refersToKnownActivity)
+  );
 }
 
 function rememberTentativeActivity(
@@ -1458,6 +1589,7 @@ async function classifyWithModel(
     create_time: new Date(message.createTime).toISOString(),
   }));
   const pending = getPendingActivity(event.chatId);
+  const recent = getRecentActivity(event.chatId);
   const memberPayload = members.map((member) => ({
     open_id: member.openId,
     name: member.name,
@@ -1497,6 +1629,21 @@ async function classifyWithModel(
               })),
               missing_fields: pending.missingFields,
               source_text: pending.sourceText,
+            }
+          : null,
+        recent_activity: recent
+          ? {
+              title: recent.title,
+              time_hint: recent.timeHint || "",
+              location_hint: recent.locationHint || "",
+              participant_candidates: recent.participantCandidates.map((participant) => ({
+                open_id: participant.openId,
+                name: participant.name,
+              })),
+              source_text: recent.sourceText,
+              start: recent.start || "",
+              end: recent.end || "",
+              approximate: recent.approximate || false,
             }
           : null,
         recent_context: contextPayload,
@@ -1557,8 +1704,11 @@ function classifyHeuristically(
 ): IntentDecision {
   const text = event.text;
   let intent: IntentKind = "ignore";
+  const recent = getRecentActivity(event.chatId);
 
   if (getPendingActivity(event.chatId) && (isCancelExpression(text) || isParticipantAdjustment(text))) {
+    intent = "cancel_or_change_candidate";
+  } else if (isRecentActivityFollowup(event, recent, text)) {
     intent = "cancel_or_change_candidate";
   } else if (isSocialScheduleCandidate(text)) {
     intent = "social_schedule_candidate";
@@ -1596,6 +1746,11 @@ function shouldConsultModel(
   }
 
   if (getPendingActivity(event.chatId) || getTentativeActivity(event.chatId)) {
+    return true;
+  }
+
+  const recent = getRecentActivity(event.chatId);
+  if (isRecentActivityFollowup(event, recent, event.text)) {
     return true;
   }
 
@@ -1922,8 +2077,24 @@ function formatCalendarResult(intent: CalendarIntent) {
   return [`安排好了：${intent.summary}`, `时间：${formatCalendarTimeRange(intent)}`].join("\n");
 }
 
-function isCalendarCreateSuccess(result: string) {
-  return /^安排[上好]了/.test(result);
+function getCalendarReply(result: string | CalendarCreateResult | undefined) {
+  return typeof result === "string" ? result : result?.reply;
+}
+
+function isCalendarCreateSuccess(result: string | CalendarCreateResult | undefined) {
+  return /^安排[上好]了/.test(getCalendarReply(result) || "");
+}
+
+function toUnixSeconds(value: string) {
+  return String(Math.floor(new Date(value).getTime() / 1000));
+}
+
+function extractCalendarCreateIds(result: unknown) {
+  const calendarId =
+    findStringDeep(result, ["calendar_id", "calendarId", "organizer_calendar_id", "organizerCalendarId"]) ||
+    "primary";
+  const eventId = findStringDeep(result, ["event_id", "eventId"]);
+  return { calendarId, eventId };
 }
 
 function sanitizeError(error: unknown) {
@@ -1937,7 +2108,7 @@ async function createCalendarEventFromText(
   text: string,
   attendeeIds: string[] = [],
   options: { allowApproximate?: boolean } = {},
-) {
+): Promise<CalendarCreateResult | undefined> {
   let intent: CalendarIntent | undefined;
   try {
     intent = parseCalendarIntent(text);
@@ -1947,7 +2118,9 @@ async function createCalendarEventFromText(
         intent = parseApproximateCalendarIntent(text);
       }
       if (!intent) {
-        return "我可以先安排，但还缺一个大概时间。比如直接说：明天下午、明晚，或明天下午5点。";
+        return {
+          reply: "我可以先安排，但还缺一个大概时间。比如直接说：明天下午、明晚，或明天下午5点。",
+        };
       }
     } else {
       throw error;
@@ -1975,11 +2148,20 @@ async function createCalendarEventFromText(
       args.push("--attendee-ids", attendeeIds.join(","));
     }
 
-    await runLarkCli(args, "user");
-    return formatCalendarResult(intent);
+    const raw = await runLarkCli(args, "user");
+    const { calendarId, eventId } = extractCalendarCreateIds(raw);
+    return {
+      reply: formatCalendarResult(intent),
+      intent,
+      calendarId,
+      eventId,
+      raw,
+    };
   } catch (error) {
     console.error("创建日程失败:", error);
-    return `我收到了创建日程请求，但飞书日历创建失败：${sanitizeError(error)}`;
+    return {
+      reply: `我收到了创建日程请求，但飞书日历创建失败：${sanitizeError(error)}`,
+    };
   }
 }
 
@@ -2215,6 +2397,7 @@ async function handleCardAction(raw: IncomingMessageEvent) {
   if (cardEvent.action === "create_schedule") {
     const result = await confirmPendingCreate(pending);
     if (isCalendarCreateSuccess(result) && cardEvent.messageId) {
+      attachRecentActivityCardMessage(pending.chatId, cardEvent.messageId);
       try {
         await updateInteractiveMessage(cardEvent.messageId, buildCreatedActivityCard(pending, result));
         return;
@@ -2555,16 +2738,304 @@ async function applyModelPendingUpdate(pending: PendingActivity, decision: Inten
   return pieces.join("\n");
 }
 
+function rememberRecentActivityFromPending(pending: PendingActivity, result: CalendarCreateResult) {
+  if (!isCalendarCreateSuccess(result)) {
+    return undefined;
+  }
+
+  const recent: RecentActivity = {
+    id: pending.id,
+    chatId: pending.chatId,
+    sourceText: pending.sourceText,
+    sourceMessageId: pending.sourceMessageId,
+    sourceSenderId: pending.sourceSenderId,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    title: pending.title,
+    timeHint: pending.timeHint || result.intent?.approximateLabel,
+    locationHint: pending.locationHint,
+    participantCandidates: pending.participantCandidates,
+    memberLookupIncomplete: pending.memberLookupIncomplete,
+    calendarId: result.calendarId,
+    eventId: result.eventId,
+    start: result.intent?.start,
+    end: result.intent?.end,
+    approximate: result.intent?.approximate,
+  };
+  setRecentActivity(recent);
+  return recent;
+}
+
+function rememberRecentActivityFromEvent(
+  event: NormalizedMessageEvent,
+  decision: IntentDecision,
+  result: CalendarCreateResult,
+) {
+  if (!event.chatId || !isCalendarCreateSuccess(result)) {
+    return undefined;
+  }
+
+  const recent: RecentActivity = {
+    id: createPendingId(event),
+    chatId: event.chatId,
+    sourceText: event.text,
+    sourceMessageId: event.messageId,
+    sourceSenderId: event.senderId,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    title: result.intent?.summary || normalizeActivityTitle(decision.activityTitle, event.text),
+    timeHint: decision.timeHint || inferTimeHint(event.text) || result.intent?.approximateLabel,
+    locationHint: extractLocationHint(event.text),
+    participantCandidates: decision.participantCandidates,
+    memberLookupIncomplete: decision.memberLookupIncomplete,
+    calendarId: result.calendarId,
+    eventId: result.eventId,
+    start: result.intent?.start,
+    end: result.intent?.end,
+    approximate: result.intent?.approximate,
+  };
+  setRecentActivity(recent);
+  return recent;
+}
+
+function attachRecentActivityCardMessage(chatId?: string, cardMessageId?: string) {
+  const recent = getRecentActivity(chatId);
+  if (!recent || !cardMessageId) {
+    return;
+  }
+
+  recent.cardMessageId = cardMessageId;
+  recent.updatedAt = Date.now();
+  setRecentActivity(recent);
+}
+
+function hasDateHint(text: string) {
+  return /(今天|今日|明天|明日|后天|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}月\d{1,2}日?)/.test(
+    text,
+  );
+}
+
+function dateHintFromIso(value?: string) {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+}
+
+function buildRecentActivityCalendarText(
+  recent: RecentActivity,
+  decision: IntentDecision,
+  text: string,
+) {
+  const timeHint = decision.timeHint || inferTimeHint(text) || text;
+  const dateHint = hasDateHint(timeHint) ? "" : dateHintFromIso(recent.start);
+  return `创建日程「${recent.title}」 ${dateHint} ${timeHint}`.trim();
+}
+
+function pendingActivityFromRecent(recent: RecentActivity): PendingActivity {
+  return {
+    id: recent.id,
+    chatId: recent.chatId,
+    sourceText: recent.sourceText,
+    sourceMessageId: recent.sourceMessageId,
+    sourceSenderId: recent.sourceSenderId,
+    createdAt: recent.createdAt,
+    title: recent.title,
+    timeHint: recent.timeHint,
+    locationHint: recent.locationHint,
+    participantCandidates: recent.participantCandidates,
+    missingFields: [],
+    memberLookupIncomplete: recent.memberLookupIncomplete,
+    status: "pending",
+  };
+}
+
+function findCalendarEventRecord(
+  value: unknown,
+  title: string,
+  depth = 0,
+): { calendarId?: string; eventId?: string } | undefined {
+  if (depth > 8 || value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const parsed = safeJsonObject(value);
+    return parsed ? findCalendarEventRecord(parsed, title, depth + 1) : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findCalendarEventRecord(item, title, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const eventId = getString(record.event_id) || getString(record.eventId);
+  const calendarId =
+    getString(record.calendar_id) ||
+    getString(record.calendarId) ||
+    getString(record.organizer_calendar_id) ||
+    getString(record.organizerCalendarId);
+  const summary = getString(record.summary) || getString(record.title) || getString(record.name);
+  if (eventId && (!summary || summary.includes(title) || title.includes(summary))) {
+    return { calendarId, eventId };
+  }
+
+  for (const raw of Object.values(record)) {
+    const found = findCalendarEventRecord(raw, title, depth + 1);
+    if (found) {
+      return found;
+    }
+  }
+
+  return undefined;
+}
+
+async function hydrateRecentCalendarIds(recent: RecentActivity) {
+  if (recent.eventId || !recent.start || !recent.end) {
+    return;
+  }
+
+  try {
+    const agenda = await runLarkCli(
+      [
+        "calendar",
+        "+agenda",
+        "--calendar-id",
+        recent.calendarId || "primary",
+        "--start",
+        recent.start,
+        "--end",
+        recent.end,
+        "--format",
+        "json",
+      ],
+      "user",
+    );
+    const found = findCalendarEventRecord(agenda, recent.title);
+    if (found?.eventId) {
+      recent.eventId = found.eventId;
+      recent.calendarId = found.calendarId || recent.calendarId || "primary";
+      setRecentActivity(recent);
+    }
+  } catch (error) {
+    console.warn("回查最近日程 ID 失败:", sanitizeError(error));
+  }
+}
+
+async function patchRecentCalendarEventTime(recent: RecentActivity, intent: CalendarIntent) {
+  await hydrateRecentCalendarIds(recent);
+
+  if (!recent.eventId) {
+    return "我理解你想改这个日程，但刚才创建返回里没有拿到 event_id，暂时没法安全定位到要更新的日程。你可以先在日历卡片里手动改一下时间。";
+  }
+
+  await runLarkCli(
+    [
+      "calendar",
+      "events",
+      "patch",
+      "--params",
+      JSON.stringify({
+        calendar_id: recent.calendarId || "primary",
+        event_id: recent.eventId,
+        user_id_type: "open_id",
+      }),
+      "--data",
+      JSON.stringify({
+        start_time: {
+          timestamp: toUnixSeconds(intent.start),
+          timezone: "Asia/Shanghai",
+        },
+        end_time: {
+          timestamp: toUnixSeconds(intent.end),
+          timezone: "Asia/Shanghai",
+        },
+        need_notification: true,
+      }),
+    ],
+    "user",
+  );
+
+  return undefined;
+}
+
+async function applyRecentActivityUpdate(
+  event: NormalizedMessageEvent,
+  decision: IntentDecision,
+  recent: RecentActivity,
+) {
+  const wantsTimeChange = Boolean(decision.timeHint || isTimeSupplement(event.text));
+  if (!wantsTimeChange) {
+    return undefined;
+  }
+
+  let intent: CalendarIntent | undefined;
+  try {
+    intent = parseCalendarIntent(buildRecentActivityCalendarText(recent, decision, event.text));
+  } catch (error) {
+    if (error instanceof Error && error.message === "missing_explicit_time") {
+      return "我知道你想改这个安排，但还缺一个明确时间。可以直接说：改到明天晚上10:30。";
+    }
+    throw error;
+  }
+
+  if (!intent) {
+    return undefined;
+  }
+
+  let failure: string | undefined;
+  try {
+    failure = await patchRecentCalendarEventTime(recent, intent);
+  } catch (error) {
+    console.error("更新日程失败:", error);
+    return `我理解你想改这个日程，但飞书日历更新失败：${sanitizeError(error)}`;
+  }
+  if (failure) {
+    return failure;
+  }
+
+  recent.start = intent.start;
+  recent.end = intent.end;
+  recent.approximate = false;
+  recent.timeHint = decision.timeHint || inferTimeHint(event.text) || formatCalendarTimeRange(intent);
+  recent.sourceText = `${recent.sourceText}\n${event.text}`;
+  recent.updatedAt = Date.now();
+  setRecentActivity(recent);
+
+  const reply = [`改好了：${recent.title}`, `时间：${formatCalendarTimeRange(intent)}`].join("\n");
+  if (recent.cardMessageId) {
+    try {
+      await updateInteractiveMessage(
+        recent.cardMessageId,
+        buildCreatedActivityCard(pendingActivityFromRecent(recent), reply),
+      );
+    } catch (error) {
+      console.warn("更新已创建卡片失败，保留文本回复:", sanitizeError(error));
+    }
+  }
+
+  return reply;
+}
+
 async function confirmPendingCreate(pending: PendingActivity) {
   const attendeeIds = pending.participantCandidates.map((participant) => participant.openId);
   const source = `创建日程「${pending.title}」 ${pending.timeHint || ""} ${pending.sourceText}`;
   const result = await createCalendarEventFromText(source, attendeeIds, { allowApproximate: true });
 
-  if (!result?.includes("还缺一个大概时间")) {
+  if (result && isCalendarCreateSuccess(result)) {
     pendingActivities.delete(pending.chatId);
+    rememberRecentActivityFromPending(pending, result);
   }
 
-  return result || "我还需要一个明确开始时间，例如：明天晚上7点。";
+  return result?.reply || "我还需要一个明确开始时间，例如：明天晚上7点。";
 }
 
 async function executeIntent(
@@ -2574,6 +3045,7 @@ async function executeIntent(
 ): Promise<BotAction> {
   const text = event.text;
   const pending = getPendingActivity(event.chatId);
+  const recent = getRecentActivity(event.chatId);
 
   if (pending && isParticipantAdjustment(text)) {
     return { type: "text", content: await applyParticipantAdjustment(event, context, pending) };
@@ -2614,6 +3086,13 @@ async function executeIntent(
 
   if (pending && decision.intent === "cancel_or_change_candidate" && decision.confidence >= 0.55) {
     const updateReply = await applyModelPendingUpdate(pending, decision);
+    if (updateReply) {
+      return { type: "text", content: updateReply };
+    }
+  }
+
+  if (!pending && recent && decision.intent === "cancel_or_change_candidate" && decision.confidence >= 0.55) {
+    const updateReply = await applyRecentActivityUpdate(event, decision, recent);
     if (updateReply) {
       return { type: "text", content: updateReply };
     }
@@ -2697,9 +3176,10 @@ async function executeIntent(
       };
     }
 
-    const calendarReply = await createCalendarEventFromText(text);
-    if (calendarReply) {
-      return { type: "text", content: calendarReply };
+    const calendarResult = await createCalendarEventFromText(text);
+    if (calendarResult) {
+      rememberRecentActivityFromEvent(event, decision, calendarResult);
+      return { type: "text", content: calendarResult.reply };
     }
   }
 
@@ -2745,6 +3225,11 @@ async function routeTentativeActivity(
   }
 
   const text = event.text.trim();
+  const recent = getRecentActivity(event.chatId);
+  if (isRecentActivityFollowup(event, recent, text)) {
+    return undefined;
+  }
+
   if (!isDirectMention(event) && !isPrivateChat(event) && isTentativeSocialCandidate(event, text)) {
     rememberTentativeActivity(event, context);
     return { type: "silent", reason: "候选活动仍在征询意见，继续观察" };
@@ -2865,8 +3350,8 @@ async function handleNormalizedMessage(event: NormalizedMessageEvent) {
 
   const context = rememberMessage(event) || getRecentContext(event);
   await sendProcessingReceipt(event, context);
-  const action = await routeMessage(event);
   try {
+    const action = await routeMessage(event);
     await sendAction(event, action);
     if (action.type !== "silent") {
       console.log(`已处理 message_id=${event.messageId || "(none)"} action=${action.type}`);
@@ -3075,6 +3560,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 loadLocalEnv();
+loadRecentActivities();
 
 startListener().catch((error) => {
   console.error("启动失败:", error);
