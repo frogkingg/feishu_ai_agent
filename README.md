@@ -76,9 +76,10 @@ npm run bot:stop
 3. [团队协作指南](docs/COLLABORATION.md)
 4. [飞书 CLI 机器人部署与测试](docs/CLI_BOT_DEPLOYMENT_TESTING.md)
 5. [本机协同部署方案](docs/LOCAL_COLLABORATION_DEPLOYMENT.md)
-6. [能力调用指引](docs/CAPABILITY_GUIDE.md)
-7. [Skill 编写规范](docs/SKILL_AUTHORING.md)
-8. [路线图](docs/ROADMAP.md)
+6. [如何教会 ProjectPilot 新流程与能力](docs/CAPABILITY_DEVELOPMENT.md)
+7. [能力调用指引](docs/CAPABILITY_GUIDE.md)
+8. [Skill 编写规范](docs/SKILL_AUTHORING.md)
+9. [路线图](docs/ROADMAP.md)
 
 ## 贡献方式
 

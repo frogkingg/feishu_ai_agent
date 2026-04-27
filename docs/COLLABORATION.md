@@ -80,13 +80,15 @@
 
 ```text
 建 Issue
--> 补能力说明
+-> 补能力说明 / Capability Spec
 -> 补 Skill 草案
 -> 实现代码或脚本
 -> 本地测试
 -> 飞书侧验证
 -> PR 合并
 ```
+
+如果是让 Agent 学会新的群聊流程，优先使用 `Agent Capability` Issue 模板，并参考 [`docs/CAPABILITY_DEVELOPMENT.md`](CAPABILITY_DEVELOPMENT.md)。
 
 ## 负责人建议
 

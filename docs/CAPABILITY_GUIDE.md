@@ -33,6 +33,11 @@
 - 关联 Demo：
 ```
 
+更完整的同事式能力设计流程见：
+
+- [`docs/CAPABILITY_DEVELOPMENT.md`](CAPABILITY_DEVELOPMENT.md)
+- [`docs/templates/CAPABILITY_SPEC.md`](templates/CAPABILITY_SPEC.md)
+
 ## P0 能力清单
 
 ### 1. 项目知识库创建和更新
