@@ -69,6 +69,9 @@ const CONTEXT_MAX_MESSAGES = Number(process.env.PROJECTPILOT_CONTEXT_MAX_MESSAGE
 const PENDING_ACTIVITY_TTL_MS = Number(
   process.env.PROJECTPILOT_PENDING_ACTIVITY_TTL_MS || 30 * 60_000,
 );
+const TENTATIVE_ACTIVITY_TTL_MS = Number(
+  process.env.PROJECTPILOT_TENTATIVE_ACTIVITY_TTL_MS || 30 * 60_000,
+);
 const MEMBER_CACHE_TTL_MS = Number(process.env.PROJECTPILOT_MEMBER_CACHE_TTL_MS || 10 * 60_000);
 const BOT_NAMES = (process.env.PROJECTPILOT_BOT_NAMES || "测试项目知识中枢 Agent,ProjectPilot,项目领航员,机器人")
   .split(",")
@@ -85,6 +88,7 @@ const processingReceiptMessageIds = new Set<string>();
 const processingReceipts = new Map<string, { reactionId?: string; fallbackSent?: boolean }>();
 const chatContexts = new Map<string, ChatContext>();
 const pendingActivities = new Map<string, PendingActivity>();
+const tentativeActivities = new Map<string, TentativeActivity>();
 const chatMemberCache = new Map<string, { fetchedAt: number; members: ChatMember[] }>();
 
 function loadLocalEnv() {
@@ -467,10 +471,25 @@ interface PendingActivity {
   createdAt: number;
   title: string;
   timeHint?: string;
+  locationHint?: string;
   participantCandidates: ParticipantCandidate[];
   missingFields: string[];
   memberLookupIncomplete?: boolean;
   status: "pending" | "cancel_confirmation";
+}
+
+interface TentativeActivity {
+  chatId: string;
+  sourceText: string;
+  sourceMessageId?: string;
+  sourceSenderId?: string;
+  createdAt: number;
+  updatedAt: number;
+  title: string;
+  timeHint?: string;
+  locationHint?: string;
+  detailTexts: string[];
+  supporterIds: string[];
 }
 
 type BotAction =
@@ -668,6 +687,24 @@ function isCreateConfirmation(text: string) {
   return /(确认创建|创建日程|就这样|可以创建|帮我创建|安排上|确认安排)/.test(text);
 }
 
+function isAgreementExpression(text: string) {
+  return /(^|\s|[，,。！!])(\+1|好啊|好呀|可以|可|行|没问题|走|冲|去啊|去呀|我可以|我也想|同意|赞成|就这个|定了|安排)(\s|[，,。！!]|$)/.test(
+    text,
+  );
+}
+
+function isOpinionSeekingExpression(text: string) {
+  return /(你们觉得|大家觉得|觉得呢|怎么样|如何|好不好|行不行|可以吗|要不要|有人想|有人要|想不想|去不去|吗[？?]?|[？?])/.test(
+    text,
+  );
+}
+
+function isStrongScheduleDecision(text: string) {
+  return /(定了|就这么定|就这个|安排一下|安排上|创建日程|拉个日程|建个日程|确定|确认|那就|就明天|就今晚)/.test(
+    text,
+  );
+}
+
 function isParticipantAdjustment(text: string) {
   return /(加上|带上|拉上|别拉|去掉|调整参与人|参与人)/.test(text);
 }
@@ -702,6 +739,23 @@ function isSocialScheduleCandidate(text: string) {
   return hasGroupPlanningCue(text);
 }
 
+function isTentativeSocialCandidate(text: string) {
+  if (!isSocialScheduleCandidate(text) || isStrongScheduleDecision(text) || isCalendarCreateIntent(text)) {
+    return false;
+  }
+
+  return isOpinionSeekingExpression(text) || /(好想|想吃|想去|想约|有点想|有人)/.test(text);
+}
+
+function extractLocationHint(text: string) {
+  const match = text.match(/(?:在|去)([^，,。；;\n]{2,40}?)(?:吃|聚|集合|见|吧|$)/);
+  return match?.[1]?.trim();
+}
+
+function hasActivityDetail(text: string) {
+  return isTimeSupplement(text) || Boolean(extractLocationHint(text)) || isParticipantAdjustment(text);
+}
+
 function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boolean {
   const text = event.text.trim();
   if (!text) {
@@ -709,6 +763,7 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
   }
 
   const pending = getPendingActivity(event.chatId);
+  const tentative = getTentativeActivity(event.chatId);
   if (
     pending &&
     (isCancelExpression(text) ||
@@ -717,6 +772,14 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
       isTimeSupplement(text) ||
       isKeepCandidate(text))
   ) {
+    return true;
+  }
+
+  if (isTentativeSocialCandidate(text)) {
+    return false;
+  }
+
+  if (tentative && shouldPromoteTentativeActivity(event, tentative, text)) {
     return true;
   }
 
@@ -822,6 +885,91 @@ function getPendingActivity(chatId?: string) {
   }
 
   return pending;
+}
+
+function getTentativeActivity(chatId?: string) {
+  if (!chatId) {
+    return undefined;
+  }
+
+  const tentative = tentativeActivities.get(chatId);
+  if (!tentative) {
+    return undefined;
+  }
+
+  if (Date.now() - tentative.updatedAt > TENTATIVE_ACTIVITY_TTL_MS) {
+    tentativeActivities.delete(chatId);
+    return undefined;
+  }
+
+  return tentative;
+}
+
+function rememberTentativeActivity(event: NormalizedMessageEvent, context: ChatContext) {
+  if (!event.chatId) {
+    return undefined;
+  }
+
+  const existing = getTentativeActivity(event.chatId);
+  const timeHint = inferTimeHint(event.text) || existing?.timeHint;
+  const locationHint = extractLocationHint(event.text) || existing?.locationHint;
+  const detailTexts = existing?.detailTexts || [];
+  if (hasActivityDetail(event.text)) {
+    detailTexts.push(event.text);
+  }
+
+  const tentative: TentativeActivity = {
+    chatId: event.chatId,
+    sourceText: existing?.sourceText || event.text,
+    sourceMessageId: existing?.sourceMessageId || event.messageId,
+    sourceSenderId: existing?.sourceSenderId || event.senderId,
+    createdAt: existing?.createdAt || Date.now(),
+    updatedAt: Date.now(),
+    title: existing?.title || inferActivityTitle(event.text),
+    timeHint,
+    locationHint,
+    detailTexts: detailTexts.slice(-8),
+    supporterIds: existing?.supporterIds || [],
+  };
+
+  tentativeActivities.set(event.chatId, tentative);
+  console.log(
+    `记录候选活动: ${tentative.title} time=${tentative.timeHint || "(none)"} location=${tentative.locationHint || "(none)"}`,
+  );
+  return tentative;
+}
+
+function shouldPromoteTentativeActivity(
+  event: NormalizedMessageEvent,
+  tentative: TentativeActivity,
+  text: string,
+) {
+  if (isNegativeActivityMessage(text) || isCancelExpression(text)) {
+    return false;
+  }
+
+  if (isStrongScheduleDecision(text) || isCreateConfirmation(text) || isCalendarCreateIntent(text)) {
+    return true;
+  }
+
+  if (isAgreementExpression(text)) {
+    return !tentative.sourceSenderId || !event.senderId || event.senderId !== tentative.sourceSenderId;
+  }
+
+  return false;
+}
+
+function updateTentativeFromMessage(tentative: TentativeActivity, event: NormalizedMessageEvent) {
+  tentative.updatedAt = Date.now();
+  tentative.timeHint = inferTimeHint(event.text) || tentative.timeHint;
+  tentative.locationHint = extractLocationHint(event.text) || tentative.locationHint;
+  if (hasActivityDetail(event.text)) {
+    tentative.detailTexts = [...tentative.detailTexts, event.text].slice(-8);
+  }
+  if (event.senderId && isAgreementExpression(event.text) && !tentative.supporterIds.includes(event.senderId)) {
+    tentative.supporterIds.push(event.senderId);
+  }
+  tentativeActivities.set(tentative.chatId, tentative);
 }
 
 function inferActivityTitle(text: string) {
@@ -1884,6 +2032,7 @@ function buildActivityFallbackText(pending: PendingActivity) {
     "我看起来像是在约一个多人安排，要不要先创建日程？",
     `活动：${pending.title}`,
     `时间：${pending.timeHint || "待补充"}`,
+    pending.locationHint ? `地点：${pending.locationHint}` : "",
     `建议参与人：${participantText}`,
     missingText,
     memberNote,
@@ -1919,6 +2068,7 @@ function buildActivityCard(pending: PendingActivity): Record<string, unknown> {
           content: [
             `**活动**：${pending.title}`,
             `**时间**：${pending.timeHint || "待补充"}`,
+            pending.locationHint ? `**地点**：${pending.locationHint}` : "",
             `**建议参与人**：${participantText}`,
             missingText,
             uncertainty,
@@ -1977,6 +2127,7 @@ function buildCancelCard(pending: PendingActivity): Record<string, unknown> {
           content: [
             `**活动**：${pending.title}`,
             `**时间**：${pending.timeHint || "待补充"}`,
+            pending.locationHint ? `**地点**：${pending.locationHint}` : "",
           ].join("\n"),
         },
       },
@@ -2013,6 +2164,7 @@ function createPendingActivity(event: NormalizedMessageEvent, decision: IntentDe
     createdAt: Date.now(),
     title: decision.activityTitle || inferActivityTitle(event.text),
     timeHint: decision.timeHint || inferTimeHint(event.text),
+    locationHint: extractLocationHint(event.text),
     participantCandidates: decision.participantCandidates,
     missingFields: decision.missingFields.length
       ? decision.missingFields
@@ -2185,12 +2337,91 @@ async function executeIntent(
   return { type: "silent", reason: "没有可执行意图" };
 }
 
+async function routeTentativeActivity(
+  event: NormalizedMessageEvent,
+  context: ChatContext,
+): Promise<BotAction | undefined> {
+  if (!event.chatId) {
+    return undefined;
+  }
+
+  const text = event.text.trim();
+  if (isTentativeSocialCandidate(text)) {
+    rememberTentativeActivity(event, context);
+    return { type: "silent", reason: "候选活动仍在征询意见，继续观察" };
+  }
+
+  const tentative = getTentativeActivity(event.chatId);
+  if (!tentative) {
+    return undefined;
+  }
+
+  if (isNegativeActivityMessage(text) || isCancelExpression(text)) {
+    tentativeActivities.delete(event.chatId);
+    return { type: "silent", reason: "候选活动被否定，取消观察" };
+  }
+
+  if (hasActivityDetail(text) || isAgreementExpression(text)) {
+    updateTentativeFromMessage(tentative, event);
+  }
+
+  if (!shouldPromoteTentativeActivity(event, tentative, text)) {
+    return hasActivityDetail(text)
+      ? { type: "silent", reason: "已补充候选活动信息，等待明确共识" }
+      : undefined;
+  }
+
+  const { members, incomplete } = await getChatMembers(event.chatId, context, event);
+  const supporterCandidates: ParticipantCandidate[] = [];
+  for (const supporterId of tentative.supporterIds) {
+    const member = members.find((item) => item.openId === supporterId);
+    if (member) {
+      supporterCandidates.push({
+        openId: member.openId,
+        name: member.name,
+        reason: "明确表示同意",
+      });
+    }
+  }
+  const participantCandidates = uniqueByOpenId([
+    ...fallbackParticipantCandidates(event, context, members),
+    ...supporterCandidates,
+  ]);
+  const sourceText = [tentative.sourceText, ...tentative.detailTexts, text].join("\n");
+  const decision: IntentDecision = {
+    intent: "social_schedule_candidate",
+    confidence: 0.82,
+    activityTitle: tentative.title,
+    timeHint: tentative.timeHint || inferTimeHint(sourceText),
+    participantCandidates,
+    missingFields: tentative.timeHint || hasExplicitCalendarTime(sourceText) ? [] : ["具体时间"],
+    shouldAskConfirmation: true,
+    memberLookupIncomplete: incomplete,
+  };
+  tentativeActivities.delete(event.chatId);
+  const pendingActivity = createPendingActivity({ ...event, text: sourceText }, decision);
+  pendingActivity.locationHint = tentative.locationHint || extractLocationHint(sourceText);
+  pendingActivity.sourceText = sourceText;
+  pendingActivities.set(event.chatId, pendingActivity);
+
+  return {
+    type: "card",
+    card: buildActivityCard(pendingActivity),
+    fallbackText: buildActivityFallbackText(pendingActivity),
+  };
+}
+
 async function routeMessage(event: NormalizedMessageEvent) {
   if (!event.text.trim()) {
     return { type: "silent", reason: "非文本或空文本" } satisfies BotAction;
   }
 
   const context = getRecentContext(event);
+  const tentativeAction = await routeTentativeActivity(event, context);
+  if (tentativeAction) {
+    return tentativeAction;
+  }
+
   const decision = await classifyIntent(event, context);
   console.log(
     `路由结果: intent=${decision.intent} confidence=${decision.confidence.toFixed(2)} participants=${decision.participantCandidates.length}`,
