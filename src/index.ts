@@ -813,7 +813,7 @@ function isTentativeSocialCandidate(event: NormalizedMessageEvent, text: string)
   }
 
   if (isDirectMention(event) || isPrivateChat(event)) {
-    return isOpinionSeekingExpression(text) || /(好想|想吃|想去|想约|有点想|有人)/.test(text);
+    return false;
   }
 
   return true;
@@ -847,16 +847,16 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
     return true;
   }
 
-  if (isTentativeSocialCandidate(event, text)) {
-    return false;
+  if (isPrivateChat(event) || isDirectMention(event)) {
+    return true;
   }
 
   if (tentative && shouldPromoteTentativeActivity(event, tentative, text)) {
     return true;
   }
 
-  if (isPrivateChat(event) || isDirectMention(event)) {
-    return true;
+  if (isTentativeSocialCandidate(event, text)) {
+    return false;
   }
 
   if (isCalendarCreateIntent(text) || isProjectIntent(text)) {
@@ -2558,6 +2558,27 @@ async function executeIntent(
 
   if (decision.intent === "social_schedule_candidate") {
     if (!decision.shouldAskConfirmation && event.chatId) {
+      if (isDirectMention(event) || isPrivateChat(event)) {
+        if (isOpinionSeekingExpression(text) && !isStrongScheduleDecision(text) && !isCalendarCreateIntent(text)) {
+          rememberTentativeActivity(event, context, decision);
+          return {
+            type: "text",
+            content:
+              "我先把它记成一个候选安排，等大家明确同意，或者有人补充时间/地点/参与人后，我再发创建日程的确认卡片。",
+          };
+        }
+
+        const pendingActivity = createPendingActivity(event, {
+          ...decision,
+          shouldAskConfirmation: true,
+        });
+        return {
+          type: "card",
+          card: buildActivityCard(pendingActivity),
+          fallbackText: buildActivityFallbackText(pendingActivity),
+        };
+      }
+
       rememberTentativeActivity(event, context, decision);
       return { type: "silent", reason: "模型判断为早期候选活动，继续观察共识" };
     }
@@ -2632,7 +2653,7 @@ async function routeTentativeActivity(
   }
 
   const text = event.text.trim();
-  if (isTentativeSocialCandidate(event, text)) {
+  if (!isDirectMention(event) && !isPrivateChat(event) && isTentativeSocialCandidate(event, text)) {
     rememberTentativeActivity(event, context);
     return { type: "silent", reason: "候选活动仍在征询意见，继续观察" };
   }
