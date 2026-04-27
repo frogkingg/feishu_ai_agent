@@ -199,7 +199,50 @@ function getProjectPilotSkill() {
   return projectPilotSkillCache;
 }
 
-async function callLlm(event: NormalizedMessageEvent) {
+function buildCommsContextPayload(
+  event: NormalizedMessageEvent,
+  context?: ChatContext,
+) {
+  const pending = getPendingActivity(event.chatId);
+  const recent = getRecentActivity(event.chatId);
+  return {
+    current_message: {
+      sender_id: event.senderId,
+      sender_name: event.senderName,
+      text: event.text,
+      mentions: event.mentions || [],
+    },
+    recent_context:
+      context?.messages.slice(-CONTEXT_MAX_MESSAGES).map((message) => ({
+        sender_id: message.senderId,
+        sender_name: message.senderName,
+        text: message.text,
+        mentions: message.mentions,
+        create_time: new Date(message.createTime).toISOString(),
+      })) || [],
+    pending_activity: pending
+      ? {
+          title: pending.title,
+          time_hint: pending.timeHint || "",
+          location_hint: pending.locationHint || "",
+          missing_fields: pending.missingFields,
+          source_text: pending.sourceText,
+        }
+      : null,
+    recent_activity: recent
+      ? {
+          title: recent.title,
+          time_hint: recent.timeHint || "",
+          location_hint: recent.locationHint || "",
+          start: recent.start || "",
+          end: recent.end || "",
+          approximate: recent.approximate || false,
+        }
+      : null,
+  };
+}
+
+async function callLlm(event: NormalizedMessageEvent, context?: ChatContext) {
   const config = getLlmConfig();
   if (!config) {
     return undefined;
@@ -222,17 +265,17 @@ async function callLlm(event: NormalizedMessageEvent) {
           {
             role: "system",
             content: [
-              "你是 ProjectPilot，一个常驻在飞书里的项目管理专家 Agent。",
-              "用简洁中文回复，优先帮助用户推进项目立项、任务拆解、会议待办、风险识别和飞书协作。",
-              "不要声称已经执行了外部操作，除非上下文明确显示已经完成。",
-              getProjectPilotSkill(),
+              "你是 ProjectPilot，一个常驻在飞书里的 PM 同事型 Agent，不是命令行机器人。",
+              "当用户 @ 你或私聊你时，像靠谱同事一样自然回应：先理解问题，再给简短、有建设性的判断、追问或下一步建议。",
+              "你可以建议使用飞书动作，例如创建日程、拆任务、沉淀文档，但不能声称已经执行外部操作，除非上下文明确显示工具已经完成。",
+              "回复要简洁中文，少套话，避免只说“无法判断动作”。",
             ]
               .filter(Boolean)
               .join("\n\n"),
           },
           {
             role: "user",
-            content: event.text,
+            content: JSON.stringify(buildCommsContextPayload(event, context)),
           },
         ],
       }),
@@ -282,19 +325,34 @@ async function callStructuredLlm(
   const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
   try {
-    const response = await fetch(config.apiUrl, {
+    const requestBody = {
+      model: config.model,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages,
+    };
+    let response = await fetch(config.apiUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.apiKey}`,
       },
-      body: JSON.stringify({
-        model: config.model,
-        temperature: 0.1,
-        messages,
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
+
+    if (response.status === 400) {
+      const retryBody = { ...requestBody, response_format: undefined };
+      response = await fetch(config.apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(retryBody),
+        signal: controller.signal,
+      });
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -520,14 +578,29 @@ type IntentKind =
   | "project_request"
   | "ignore";
 
+type ResponseMode = "silent" | "chat" | "suggest" | "confirm_action" | "execute_action";
+
+type ToolIntent =
+  | "none"
+  | "calendar_create"
+  | "calendar_update"
+  | "task_create"
+  | "project_intake"
+  | "doc_update"
+  | "risk_check";
+
 interface IntentDecision {
   intent: IntentKind;
   confidence: number;
+  responseMode: ResponseMode;
+  toolIntent: ToolIntent;
+  assistantReply?: string;
   activityTitle?: string;
   timeHint?: string;
   participantCandidates: ParticipantCandidate[];
   missingFields: string[];
   shouldAskConfirmation: boolean;
+  requiresConfirmation: boolean;
   memberLookupIncomplete?: boolean;
 }
 
@@ -835,6 +908,12 @@ function hasModelRoutingCue(event: NormalizedMessageEvent) {
   return (hasTime && (hasCollective || hasAction)) || (hasCollective && hasAction) || (asksForOpinion && hasAction);
 }
 
+function hasConstructiveWorkCue(text: string) {
+  return /(owner|负责人|没人负责|没定|阻塞|卡住|风险|延期|来不及|拆一下|拆任务|待办|任务|结论|决策|纪要|复盘|同步|推进|项目|需求|PRD|Demo|文档|知识库)/i.test(
+    text,
+  );
+}
+
 function isSocialScheduleCandidate(text: string) {
   if (!hasActivityKeyword(text) || isNegativeActivityMessage(text)) {
     return false;
@@ -912,6 +991,10 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
     return true;
   }
 
+  if (hasConstructiveWorkCue(text)) {
+    return true;
+  }
+
   if (isSocialScheduleCandidate(text)) {
     return true;
   }
@@ -929,6 +1012,10 @@ function shouldSendProcessingReceipt(event: NormalizedMessageEvent, context: Cha
   }
 
   if (processingReceiptMessageIds.has(event.messageId)) {
+    return false;
+  }
+
+  if (!isDirectMention(event) && !isPrivateChat(event) && !getPendingActivity(event.chatId) && !getRecentActivity(event.chatId)) {
     return false;
   }
 
@@ -1567,6 +1654,50 @@ function normalizeIntent(value: unknown): IntentKind {
   return allowed.includes(value as IntentKind) ? (value as IntentKind) : "ignore";
 }
 
+function normalizeResponseMode(value: unknown): ResponseMode {
+  const allowed: ResponseMode[] = ["silent", "chat", "suggest", "confirm_action", "execute_action"];
+  return allowed.includes(value as ResponseMode) ? (value as ResponseMode) : "silent";
+}
+
+function normalizeToolIntent(value: unknown): ToolIntent {
+  const allowed: ToolIntent[] = [
+    "none",
+    "calendar_create",
+    "calendar_update",
+    "task_create",
+    "project_intake",
+    "doc_update",
+    "risk_check",
+  ];
+  return allowed.includes(value as ToolIntent) ? (value as ToolIntent) : "none";
+}
+
+function defaultResponseMode(intent: IntentKind): ResponseMode {
+  if (intent === "ignore") {
+    return "silent";
+  }
+  if (intent === "social_schedule_candidate") {
+    return "confirm_action";
+  }
+  if (intent === "explicit_schedule_create" || intent === "cancel_or_change_candidate") {
+    return "execute_action";
+  }
+  return "chat";
+}
+
+function defaultToolIntent(intent: IntentKind): ToolIntent {
+  if (intent === "explicit_schedule_create" || intent === "social_schedule_candidate") {
+    return "calendar_create";
+  }
+  if (intent === "cancel_or_change_candidate") {
+    return "calendar_update";
+  }
+  if (intent === "project_request") {
+    return "project_intake";
+  }
+  return "none";
+}
+
 function normalizeStringArray(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
@@ -1599,9 +1730,9 @@ async function classifyWithModel(
     {
       role: "system",
       content: [
-        "你是 ProjectPilot 的群聊意图分类器，只输出 JSON 对象，不要输出解释。",
-        "你的任务是依据 ProjectPilot Skill 判断机器人是否需要介入，并为多人活动推荐可能参与人。",
-        "Skill 是最高优先级业务规则；代码关键词只是粗略召回，不能限制你的语义判断。",
+        "你是 ProjectPilot 的 PM Orchestrator，总控群聊语义、同事式回复和工具调用时机，只输出 JSON 对象，不要输出解释。",
+        "你的任务是依据 ProjectPilot Skill 判断 response_mode、tool_intent、assistant_reply，并为多人活动推荐可能参与人。",
+        "Skill 是最高优先级业务规则；代码关键词只是粗略召回，不能限制你的语义判断。代码只负责门禁和工具安全，你负责语义判断。",
         "只能从候选群成员列表里选择 participant_candidates，不能凭空编人。",
         getProjectPilotSkill(),
       ]
@@ -1650,15 +1781,21 @@ async function classifyWithModel(
         chat_members: memberPayload,
         member_lookup_incomplete: memberLookupIncomplete,
         output_schema: {
+          response_mode: "silent | chat | suggest | confirm_action | execute_action",
+          tool_intent:
+            "none | calendar_create | calendar_update | task_create | project_intake | doc_update | risk_check",
           intent:
             "explicit_schedule_create | social_schedule_candidate | cancel_or_change_candidate | project_request | ignore",
           confidence: "0..1",
+          assistant_reply:
+            "string; natural PM coworker reply for chat/suggest or a short question when information is missing",
           activity_title: "string or empty",
           time_hint: "string or empty",
           participant_candidates: [
             { open_id: "must be one of chat_members.open_id", name: "member name", reason: "short" },
           ],
           missing_fields: ["string"],
+          requires_confirmation: "boolean; true for collaborative writes like calendar/task/doc changes",
           should_ask_confirmation:
             "boolean; false means observe silently as a tentative candidate, true means send a confirmation card",
         },
@@ -1672,6 +1809,13 @@ async function classifyWithModel(
 
   const intent = normalizeIntent(raw.intent);
   const confidence = typeof raw.confidence === "number" ? raw.confidence : Number(raw.confidence || 0);
+  const responseMode = normalizeResponseMode(
+    getString(raw.response_mode) || getString(raw.responseMode) || defaultResponseMode(intent),
+  );
+  const toolIntent = normalizeToolIntent(
+    getString(raw.tool_intent) || getString(raw.toolIntent) || defaultToolIntent(intent),
+  );
+  const assistantReply = getString(raw.assistant_reply) || getString(raw.assistantReply);
   const participantCandidates = filterParticipantCandidates(raw.participant_candidates, members);
   const activityTitle = getString(raw.activity_title) || getString(raw.activityTitle);
   const timeHint = getString(raw.time_hint) || getString(raw.timeHint);
@@ -1683,15 +1827,23 @@ async function classifyWithModel(
     typeof raw.should_ask_confirmation === "boolean"
       ? raw.should_ask_confirmation
       : raw.shouldAskConfirmation === true;
+  const requiresConfirmation =
+    typeof raw.requires_confirmation === "boolean"
+      ? raw.requires_confirmation
+      : raw.requiresConfirmation === true || shouldAskConfirmation;
 
   return {
     intent,
     confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
+    responseMode,
+    toolIntent,
+    assistantReply,
     activityTitle,
     timeHint,
     participantCandidates,
     missingFields,
     shouldAskConfirmation,
+    requiresConfirmation,
     memberLookupIncomplete,
   } satisfies IntentDecision;
 }
@@ -1723,11 +1875,14 @@ function classifyHeuristically(
   return {
     intent,
     confidence: intent === "ignore" ? 0 : 0.72,
+    responseMode: defaultResponseMode(intent),
+    toolIntent: defaultToolIntent(intent),
     activityTitle: normalizeActivityTitle(undefined, text),
     timeHint,
     participantCandidates,
     missingFields: timeHint && hasExplicitCalendarTime(text) ? [] : ["具体时间"],
     shouldAskConfirmation: intent === "social_schedule_candidate",
+    requiresConfirmation: intent === "social_schedule_candidate",
     memberLookupIncomplete,
   };
 }
@@ -1754,6 +1909,10 @@ function shouldConsultModel(
     return true;
   }
 
+  if (hasConstructiveWorkCue(event.text)) {
+    return true;
+  }
+
   return Boolean(context.chatId && hasModelRoutingCue(event));
 }
 
@@ -1774,13 +1933,18 @@ async function classifyIntent(
   const fallback = classifyHeuristically(event, context, members, incomplete);
   try {
     const modelDecision = await classifyWithModel(event, context, members, incomplete);
-    if (modelDecision && modelDecision.confidence >= 0.55 && modelDecision.intent !== "ignore") {
+    if (
+      modelDecision &&
+      modelDecision.confidence >= 0.55 &&
+      (modelDecision.intent !== "ignore" || modelDecision.responseMode !== "silent")
+    ) {
       const inferredParticipants = inferParticipantCandidatesFromMembers(event, context, members);
-      if (!modelDecision.participantCandidates.length) {
+      if (modelDecision.toolIntent !== "none" && !modelDecision.participantCandidates.length) {
         modelDecision.participantCandidates = fallback.participantCandidates;
       }
       if (
         inferredParticipants.length &&
+        modelDecision.toolIntent !== "none" &&
         (mentionsCollectiveOrPronoun(event.text) || modelDecision.participantCandidates.length <= 1)
       ) {
         modelDecision.participantCandidates = uniqueByOpenId([
@@ -1791,11 +1955,13 @@ async function classifyIntent(
       if (!modelDecision.activityTitle) {
         modelDecision.activityTitle = fallback.activityTitle;
       }
-      modelDecision.activityTitle = normalizeActivityTitle(modelDecision.activityTitle, event.text);
+      if (modelDecision.toolIntent !== "none") {
+        modelDecision.activityTitle = normalizeActivityTitle(modelDecision.activityTitle, event.text);
+      }
       if (!modelDecision.timeHint) {
         modelDecision.timeHint = fallback.timeHint;
       }
-      if (!modelDecision.missingFields.length) {
+      if (modelDecision.toolIntent !== "none" && !modelDecision.missingFields.length) {
         modelDecision.missingFields = fallback.missingFields;
       }
       return modelDecision;
@@ -3138,13 +3304,104 @@ async function executeIntent(
     }
   }
 
+  if (pending && decision.toolIntent === "calendar_update" && decision.confidence >= 0.55) {
+    const updateReply = await applyModelPendingUpdate(pending, {
+      ...decision,
+      intent: "cancel_or_change_candidate",
+    });
+    if (updateReply) {
+      return { type: "text", content: updateReply };
+    }
+  }
+
+  if (!pending && recent && decision.toolIntent === "calendar_update" && decision.confidence >= 0.55) {
+    const updateReply = await applyRecentActivityUpdate(
+      event,
+      {
+        ...decision,
+        intent: "cancel_or_change_candidate",
+      },
+      recent,
+    );
+    if (updateReply) {
+      return { type: "text", content: updateReply };
+    }
+  }
+
+  if (decision.responseMode === "silent" && !isDirectMention(event) && !isPrivateChat(event)) {
+    return { type: "silent", reason: "模型判断继续观察" };
+  }
+
+  if (decision.responseMode === "chat" || decision.responseMode === "suggest") {
+    if (decision.assistantReply) {
+      return { type: "text", content: decision.assistantReply };
+    }
+
+    if (isDirectMention(event) || isPrivateChat(event)) {
+      try {
+        const llmReply = await callLlm(event, context);
+        if (llmReply) {
+          return { type: "text", content: llmReply };
+        }
+      } catch (error) {
+        console.error("大模型回复失败:", error);
+      }
+    }
+  }
+
+  if (
+    decision.toolIntent === "calendar_create" &&
+    decision.confidence >= 0.5 &&
+    (decision.responseMode === "confirm_action" ||
+      decision.requiresConfirmation ||
+      decision.shouldAskConfirmation ||
+      decision.intent === "social_schedule_candidate")
+  ) {
+    const pendingActivity = createPendingActivity(event, {
+      ...decision,
+      intent: "social_schedule_candidate",
+      shouldAskConfirmation: true,
+    });
+    return {
+      type: "card",
+      card: buildActivityCard(pendingActivity),
+      fallbackText: buildActivityFallbackText(pendingActivity),
+    };
+  }
+
+  if (
+    decision.toolIntent === "calendar_create" &&
+    decision.responseMode === "execute_action" &&
+    decision.confidence >= 0.5
+  ) {
+    const calendarResult = await createCalendarEventFromText(text);
+    if (calendarResult) {
+      rememberRecentActivityFromEvent(event, decision, calendarResult);
+      return { type: "text", content: calendarResult.reply };
+    }
+  }
+
+  if (
+    decision.toolIntent !== "none" &&
+    decision.toolIntent !== "calendar_create" &&
+    decision.toolIntent !== "calendar_update" &&
+    decision.requiresConfirmation
+  ) {
+    return {
+      type: "text",
+      content:
+        decision.assistantReply ||
+        "可以，我先按这个方向理解。这个动作会写入飞书协作内容，我建议先确认范围和负责人，再帮你落成任务、文档或项目计划。",
+    };
+  }
+
   if (decision.intent === "ignore" || decision.confidence < 0.5) {
     if (isDirectMention(event) || isPrivateChat(event)) {
       if (isGreetingIntent(text)) {
         return {
           type: "text",
           content:
-            "你好，我在。现在我会安静监听群聊，只在 @我、明确要创建日程/项目，或出现高置信度多人安排时介入。",
+            "我在。你可以直接和我聊项目推进、任务拆解、会议安排或风险判断；需要我动飞书工具时，我会先说明要做什么。",
         };
       }
 
@@ -3153,7 +3410,7 @@ async function executeIntent(
       }
 
       try {
-        const llmReply = await callLlm(event);
+        const llmReply = await callLlm(event, context);
         if (llmReply) {
           return { type: "text", content: llmReply };
         }
@@ -3161,7 +3418,10 @@ async function executeIntent(
         console.error("大模型回复失败:", error);
       }
 
-      return { type: "text", content: "我收到了，但还没判断出要执行哪类飞书动作。你可以直接说要创建日程、调整参与人或拆解项目。" };
+      return {
+        type: "text",
+        content: "我听懂你在找我，但还缺一点上下文。你可以直接说想讨论的问题，或者告诉我要不要把它整理成日程、任务、文档或项目计划。",
+      };
     }
 
     return { type: "silent", reason: "未命中发言门禁" };
@@ -3224,9 +3484,24 @@ async function executeIntent(
   }
 
   if (decision.intent === "project_request" || text.includes("创建项目")) {
+    if (decision.assistantReply) {
+      return { type: "text", content: decision.assistantReply };
+    }
+
+    if (isDirectMention(event) || isPrivateChat(event)) {
+      try {
+        const llmReply = await callLlm(event, context);
+        if (llmReply) {
+          return { type: "text", content: llmReply };
+        }
+      } catch (error) {
+        console.error("大模型回复失败:", error);
+      }
+    }
+
     return {
       type: "text",
-      content: "好的，我正在解析你的项目需求。请补充项目名称、目标、截止时间、成员和分工信息。",
+      content: "我可以一起梳理。先给我一个目标和当前卡点，我会帮你拆成下一步、负责人和需要沉淀的飞书动作。",
     };
   }
 
@@ -3235,7 +3510,7 @@ async function executeIntent(
       return {
         type: "text",
         content:
-          "你好，我在。现在我会安静监听群聊，只在 @我、明确要创建日程/项目，或出现高置信度多人安排时介入。",
+          "我在。你可以直接和我聊项目推进、任务拆解、会议安排或风险判断；需要我动飞书工具时，我会先说明要做什么。",
       };
     }
 
@@ -3244,7 +3519,7 @@ async function executeIntent(
     }
 
     try {
-      const llmReply = await callLlm(event);
+      const llmReply = await callLlm(event, context);
       if (llmReply) {
         return { type: "text", content: llmReply };
       }
@@ -3315,11 +3590,14 @@ async function routeTentativeActivity(
   const decision: IntentDecision = {
     intent: "social_schedule_candidate",
     confidence: 0.82,
+    responseMode: "confirm_action",
+    toolIntent: "calendar_create",
     activityTitle: tentative.title,
     timeHint: tentative.timeHint || inferTimeHint(sourceText),
     participantCandidates,
     missingFields: tentative.timeHint || hasExplicitCalendarTime(sourceText) ? [] : ["具体时间"],
     shouldAskConfirmation: true,
+    requiresConfirmation: true,
     memberLookupIncomplete: incomplete,
   };
   tentativeActivities.delete(event.chatId);
@@ -3348,7 +3626,7 @@ async function routeMessage(event: NormalizedMessageEvent) {
 
   const decision = await classifyIntent(event, context);
   console.log(
-    `路由结果: intent=${decision.intent} confidence=${decision.confidence.toFixed(2)} participants=${decision.participantCandidates.length}`,
+    `路由结果: mode=${decision.responseMode} tool=${decision.toolIntent} intent=${decision.intent} confidence=${decision.confidence.toFixed(2)} participants=${decision.participantCandidates.length}`,
   );
   return executeIntent(event, context, decision);
 }

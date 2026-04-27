@@ -32,6 +32,27 @@
 
 新增语义时优先改 Skill，不优先加硬编码规则。只有涉及权限、安全边界、真实工具调用参数时，才改代码。
 
+## 同事型 Agent 写法
+
+ProjectPilot 的第一层目标不是“猜命令”，而是像 PM 同事一样参与飞书协作。新增或调整 Skill 时，优先写清楚三件事：
+
+- **自然对话**：被 @ 或私聊时，先回答真实问题，可以追问，也可以给判断；不要因为没有工具动作就说无法判断。
+- **建设性建议**：未 @ 时默认安静，只有 owner 缺失、风险暴露、决策悬空、任务可沉淀等高价值场景才短促介入。
+- **工具动作**：只有识别出明确飞书动作时才进入工具流程；协作写入默认先确认，模型不能声称自己已经执行。
+
+结构化路由推荐输出：
+
+```json
+{
+  "response_mode": "silent | chat | suggest | confirm_action | execute_action",
+  "tool_intent": "none | calendar_create | calendar_update | task_create | project_intake | doc_update | risk_check",
+  "assistant_reply": "给群里的自然回复或追问",
+  "requires_confirmation": true
+}
+```
+
+其中 `response_mode` 决定 ProjectPilot 是否说话以及怎么说，`tool_intent` 只决定代码层接哪个安全工具。不要把聊天语气、业务判断、CLI 参数拼接混成同一个规则。
+
 ## 新能力交付流程
 
 ```text
