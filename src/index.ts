@@ -342,6 +342,35 @@ async function sendInteractiveMessage(event: NormalizedMessageEvent, card: Recor
   ]);
 }
 
+async function updateInteractiveMessage(messageId: string, card: Record<string, unknown>) {
+  const content = JSON.stringify(card);
+
+  try {
+    return await runLarkCli(
+      [
+        "api",
+        "PATCH",
+        `/open-apis/im/v1/messages/${messageId}`,
+        "--data",
+        JSON.stringify({ content }),
+      ],
+      "bot",
+    );
+  } catch (error) {
+    console.warn("通过 im/v1/messages 更新卡片失败，尝试 interactive/v1/card/update:", sanitizeError(error));
+    return runLarkCli(
+      [
+        "api",
+        "POST",
+        "/open-apis/interactive/v1/card/update",
+        "--data",
+        JSON.stringify({ open_message_id: messageId, card }),
+      ],
+      "bot",
+    );
+  }
+}
+
 async function sendAction(event: NormalizedMessageEvent, action: BotAction) {
   if (action.type === "silent") {
     console.log(`静默: ${action.reason}`);
@@ -739,12 +768,16 @@ function isSocialScheduleCandidate(text: string) {
   return hasGroupPlanningCue(text);
 }
 
-function isTentativeSocialCandidate(text: string) {
+function isTentativeSocialCandidate(event: NormalizedMessageEvent, text: string) {
   if (!isSocialScheduleCandidate(text) || isStrongScheduleDecision(text) || isCalendarCreateIntent(text)) {
     return false;
   }
 
-  return isOpinionSeekingExpression(text) || /(好想|想吃|想去|想约|有点想|有人)/.test(text);
+  if (isDirectMention(event) || isPrivateChat(event)) {
+    return isOpinionSeekingExpression(text) || /(好想|想吃|想去|想约|有点想|有人)/.test(text);
+  }
+
+  return true;
 }
 
 function extractLocationHint(text: string) {
@@ -775,7 +808,7 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
     return true;
   }
 
-  if (isTentativeSocialCandidate(text)) {
+  if (isTentativeSocialCandidate(event, text)) {
     return false;
   }
 
@@ -1689,6 +1722,10 @@ function formatCalendarResult(intent: CalendarIntent) {
   return [`安排好了：${intent.summary}`, `时间：${formatCalendarTimeRange(intent)}`].join("\n");
 }
 
+function isCalendarCreateSuccess(result: string) {
+  return /^安排[上好]了/.test(result);
+}
+
 function sanitizeError(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   return raw
@@ -1976,7 +2013,17 @@ async function handleCardAction(raw: IncomingMessageEvent) {
   }
 
   if (cardEvent.action === "create_schedule") {
-    await sendMessage(eventFromCardAction(cardEvent, "确认创建"), await confirmPendingCreate(pending));
+    const result = await confirmPendingCreate(pending);
+    if (isCalendarCreateSuccess(result) && cardEvent.messageId) {
+      try {
+        await updateInteractiveMessage(cardEvent.messageId, buildCreatedActivityCard(pending, result));
+        return;
+      } catch (error) {
+        console.warn("更新已创建卡片失败，降级为文本回复:", sanitizeError(error));
+      }
+    }
+
+    await sendMessage(eventFromCardAction(cardEvent, "确认创建"), result);
     return;
   }
 
@@ -2055,7 +2102,7 @@ function buildActivityCard(pending: PendingActivity): Record<string, unknown> {
     : "";
 
   return {
-    config: { wide_screen_mode: true },
+    config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: "blue",
       title: { tag: "plain_text", content: "要创建这个日程吗？" },
@@ -2096,6 +2143,47 @@ function buildActivityCard(pending: PendingActivity): Record<string, unknown> {
             tag: "button",
             text: { tag: "plain_text", content: "先不创建" },
             value: { action: "dismiss_candidate", candidate_id: pending.id },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function buildCreatedActivityCard(
+  pending: PendingActivity,
+  result: string,
+): Record<string, unknown> {
+  const participantText = formatParticipantNames(pending.participantCandidates);
+  return {
+    config: { wide_screen_mode: true, update_multi: true },
+    header: {
+      template: "green",
+      title: { tag: "plain_text", content: "已创建日程" },
+    },
+    elements: [
+      {
+        tag: "div",
+        text: {
+          tag: "lark_md",
+          content: [
+            "**状态**：已创建",
+            `**活动**：${pending.title}`,
+            pending.locationHint ? `**地点**：${pending.locationHint}` : "",
+            `**参与人**：${participantText}`,
+            "",
+            result,
+          ]
+            .filter((line) => line !== undefined)
+            .join("\n"),
+        },
+      },
+      {
+        tag: "note",
+        elements: [
+          {
+            tag: "plain_text",
+            content: "需要微调时间的话，直接回复“改到明天下午5点”。",
           },
         ],
       },
@@ -2346,7 +2434,7 @@ async function routeTentativeActivity(
   }
 
   const text = event.text.trim();
-  if (isTentativeSocialCandidate(text)) {
+  if (isTentativeSocialCandidate(event, text)) {
     rememberTentativeActivity(event, context);
     return { type: "silent", reason: "候选活动仍在征询意见，继续观察" };
   }
