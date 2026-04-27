@@ -7,6 +7,7 @@ import {
   Project,
   ProjectPatchDecision,
   ProjectPatchAction,
+  ProjectTask,
   RouterDecision,
 } from "../llm/schemas";
 import { stripBotMentions } from "../agent/router";
@@ -87,8 +88,43 @@ const PSEUDO_OWNERS = new Set([
   "一起",
 ]);
 
+const TASK_OBJECT_OWNER_TOKENS = [
+  "入口",
+  "脚本",
+  "需求",
+  "PRD",
+  "文档",
+  "项目",
+  "状态",
+  "风险",
+  "任务",
+  "卡片",
+  "接口",
+  "页面",
+  "流程",
+  "逻辑",
+  "功能",
+  "Demo",
+  "机器人",
+];
+
+function isTaskObjectOwner(value?: string) {
+  const normalized = value?.trim();
+  return Boolean(
+    normalized &&
+      TASK_OBJECT_OWNER_TOKENS.some(
+        (token) => normalized.toLowerCase().includes(token.toLowerCase()) || token.toLowerCase().includes(normalized.toLowerCase()),
+      ),
+  );
+}
+
 function isPseudoOwner(value?: string) {
-  return !value || PSEUDO_OWNERS.has(value) || /^(今天|今晚|明早|明天|明晚|后天|上午|下午|晚上|一起)/.test(value);
+  return (
+    !value ||
+    PSEUDO_OWNERS.has(value) ||
+    /^(今天|今晚|明早|明天|明晚|后天|上午|下午|晚上|一起)/.test(value) ||
+    isTaskObjectOwner(value)
+  );
 }
 
 function normalizeOwnerName(value?: string) {
@@ -132,6 +168,26 @@ function stripTaskPrefix(segment: string, owner?: string) {
   return title.trim() || segment;
 }
 
+function normalizeTaskTitle(title: string | undefined, fallbackText: string) {
+  const cleaned = (title || fallbackText)
+    .replace(/^(今天|今晚|明早|明天|明晚|后天|晚上|上午|下午|先|一起)+/g, "")
+    .replace(/^(先|一起|把|将)/, "")
+    .replace(/^(负责|跟进|来做|处理|整理|打通|完成|验收)\s*/, "")
+    .trim();
+  return cleaned || fallbackText.trim() || "未命名任务";
+}
+
+function sanitizeTask(task: Partial<ProjectTask>, fallbackEvidenceText?: string): Partial<ProjectTask> {
+  const ownerName = normalizeOwnerName(task.ownerName);
+  const evidenceText = task.evidenceText || fallbackEvidenceText;
+  return {
+    ...task,
+    title: normalizeTaskTitle(task.title, evidenceText || "未命名任务"),
+    ownerName,
+    evidenceText,
+  };
+}
+
 function extractTasks(text: string) {
   const segments = splitTaskSegments(text);
   const tasks = segments
@@ -143,7 +199,7 @@ function extractTasks(text: string) {
         return undefined;
       }
       return {
-        title: stripTaskPrefix(segment, owner),
+        title: normalizeTaskTitle(stripTaskPrefix(segment, owner), segment),
         ownerName: owner,
         due,
         status: "todo" as const,
@@ -283,6 +339,7 @@ function normalizeToolDecision(
   const grounding = typeof raw.grounding === "object" && raw.grounding ? (raw.grounding as Record<string, unknown>) : {};
   const messageIds = normalizeArray<string>(grounding.messageIds || grounding.message_ids);
   const evidenceTexts = normalizeArray<string>(grounding.evidenceTexts || grounding.evidence_texts);
+  const fallbackEvidenceText = evidenceTexts[0] || fallback.grounding.evidenceTexts[0];
 
   const actionValue =
       action &&
@@ -310,7 +367,12 @@ function normalizeToolDecision(
         : typeof raw.project_draft === "object" && raw.project_draft
           ? raw.project_draft
           : fallback.projectDraft) as ProjectPatchDecision["projectDraft"],
-    tasks: raw.tasks === undefined ? fallback.tasks : normalizeArray(raw.tasks),
+    tasks:
+      raw.tasks === undefined
+        ? fallback.tasks?.map((task) => sanitizeTask(task, fallbackEvidenceText))
+        : normalizeArray<Partial<ProjectTask>>(raw.tasks)
+            .map((task) => sanitizeTask(task, fallbackEvidenceText))
+            .filter((task) => Boolean(task.title)),
     risks: raw.risks === undefined ? fallback.risks : normalizeArray(raw.risks),
     decisions: raw.decisions === undefined ? fallback.decisions : normalizeArray(raw.decisions),
     notes: raw.notes === undefined ? fallback.notes : normalizeArray(raw.notes),

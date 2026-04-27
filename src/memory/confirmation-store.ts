@@ -106,13 +106,13 @@ export function getLatestPendingConfirmation(chatId?: string, requesterId?: stri
 }
 
 export function matchesConfirmText(text: string) {
-  return /(^|\s|[，,。！!])(?:确认|可以|记一下|记录|就这样|保存|没问题|OK|ok|好的)(?:\s|[，,。！!]|$)/.test(
+  return /(^|\s|[，,。！!])(?:确认(?:记录|一下)?|可以(?:记录)?|记一下|记录|记下来吧?|好[，,、\s]*记下来|就这样|保存|没问题|OK|ok|好的)(?:\s|[，,。！!]|$)/.test(
     text.trim(),
   );
 }
 
 export function matchesCancelText(text: string) {
-  return /(?:取消|先别|不用|算了|不记|不要记录)/.test(text.trim());
+  return /(?:取消|先别|不用|算了|不记|先不记|暂时别记|不用记|别记录|不要记录)/.test(text.trim());
 }
 
 function updateLatestPending(

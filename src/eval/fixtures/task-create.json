@@ -128,5 +128,55 @@
       },
       "shouldNot": ["calendar_create"]
     }
+  },
+  {
+    "name": "object入口_not_owner",
+    "context": {
+      "activeProject": "OpenClaw 飞书项目领航员 Demo"
+    },
+    "messages": [
+      {
+        "text": "机器人入口先打通"
+      }
+    ],
+    "expected": {
+      "primaryDomain": "task",
+      "intent": "task_extract",
+      "action": "task_create",
+      "taskCount": 1,
+      "expectedPatch": {
+        "tasks": [
+          {
+            "title": "机器人入口",
+            "ownerName": null
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "object_script_not_owner",
+    "context": {
+      "activeProject": "OpenClaw 飞书项目领航员 Demo"
+    },
+    "messages": [
+      {
+        "text": "演示脚本晚上整理"
+      }
+    ],
+    "expected": {
+      "primaryDomain": "task",
+      "intent": "task_extract",
+      "action": "task_create",
+      "taskCount": 1,
+      "expectedPatch": {
+        "tasks": [
+          {
+            "title": "演示脚本",
+            "ownerName": null
+          }
+        ]
+      }
+    }
   }
 ]

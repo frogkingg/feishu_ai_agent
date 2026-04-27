@@ -71,7 +71,7 @@ export function detectSafetyLabelByHardRule(text: string): SafetyLabel | undefin
 }
 
 export function hasHighValueProjectSignal(text: string) {
-  return /(风险|延期|来不及|阻塞|卡住|不稳定|owner\s*(还)?没定|owner\s*(也)?还没定|owner\s*没定|没人负责|刚才结论|action items?|决策|纪要)/i.test(
+  return /(风险|延期|来不及|阻塞|卡住|不稳定|(负责人|owner).{0,6}(还没|没定|未定|没确认|未确认)|没人负责|刚才结论|action items?|决策|纪要)/i.test(
     text,
   );
 }
