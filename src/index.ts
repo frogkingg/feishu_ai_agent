@@ -75,6 +75,7 @@ const TENTATIVE_ACTIVITY_TTL_MS = Number(
 const RECENT_ACTIVITY_TTL_MS = Number(
   process.env.PROJECTPILOT_RECENT_ACTIVITY_TTL_MS || 45 * 60_000,
 );
+const TOPIC_TTL_MS = Number(process.env.PROJECTPILOT_TOPIC_TTL_MS || 24 * 60 * 60_000);
 const MEMBER_CACHE_TTL_MS = Number(process.env.PROJECTPILOT_MEMBER_CACHE_TTL_MS || 10 * 60_000);
 const BOT_NAMES = (process.env.PROJECTPILOT_BOT_NAMES || "测试项目知识中枢 Agent,ProjectPilot,项目领航员,机器人")
   .split(",")
@@ -98,6 +99,7 @@ const chatContexts = new Map<string, ChatContext>();
 const pendingActivities = new Map<string, PendingActivity>();
 const tentativeActivities = new Map<string, TentativeActivity>();
 const recentActivities = new Map<string, RecentActivity>();
+const conversationTopics = new Map<string, ConversationTopic[]>();
 const chatMemberCache = new Map<string, { fetchedAt: number; members: ChatMember[] }>();
 
 function loadLocalEnv() {
@@ -580,6 +582,14 @@ type IntentKind =
 
 type ResponseMode = "silent" | "chat" | "suggest" | "confirm_action" | "execute_action";
 
+type TopicStatus = "observing" | "proposed" | "confirming" | "committed" | "updating" | "closed";
+
+type TopicKind = "calendar" | "project" | "chat" | "risk";
+
+type TopicAction = "none" | "create_topic" | "update_topic" | "close_topic";
+
+type SafetyLabel = "normal" | "joke" | "insult" | "hypothetical" | "ambiguous";
+
 type ToolIntent =
   | "none"
   | "calendar_create"
@@ -589,11 +599,20 @@ type ToolIntent =
   | "doc_update"
   | "risk_check";
 
+interface GroundingEvidence {
+  messageIds: string[];
+  evidenceTexts: string[];
+}
+
 interface IntentDecision {
   intent: IntentKind;
   confidence: number;
   responseMode: ResponseMode;
   toolIntent: ToolIntent;
+  topicAction: TopicAction;
+  topicId?: string;
+  grounding: GroundingEvidence;
+  safetyLabel: SafetyLabel;
   assistantReply?: string;
   activityTitle?: string;
   timeHint?: string;
@@ -604,8 +623,29 @@ interface IntentDecision {
   memberLookupIncomplete?: boolean;
 }
 
+interface ConversationTopic {
+  id: string;
+  chatId: string;
+  kind: TopicKind;
+  status: TopicStatus;
+  title: string;
+  sourceText: string;
+  sourceMessageId?: string;
+  sourceSenderId?: string;
+  createdAt: number;
+  updatedAt: number;
+  messageIds: string[];
+  evidenceTexts: string[];
+  timeHint?: string;
+  locationHint?: string;
+  participantCandidates: ParticipantCandidate[];
+  calendarId?: string;
+  eventId?: string;
+}
+
 interface PendingActivity {
   id: string;
+  topicId?: string;
   chatId: string;
   sourceText: string;
   sourceMessageId?: string;
@@ -621,6 +661,7 @@ interface PendingActivity {
 }
 
 interface TentativeActivity {
+  topicId?: string;
   chatId: string;
   sourceText: string;
   sourceMessageId?: string;
@@ -636,6 +677,7 @@ interface TentativeActivity {
 
 interface RecentActivity {
   id: string;
+  topicId?: string;
   chatId: string;
   sourceText: string;
   sourceMessageId?: string;
@@ -882,6 +924,26 @@ function isNegativeActivityMessage(text: string) {
   return /(不想|不去|不吃|不约|算了|取消|别|还是不)/.test(text);
 }
 
+function detectSafetyLabel(event: NormalizedMessageEvent): SafetyLabel {
+  const text = stripBotMentions(event.text);
+  if (/(如果|假如|要是|能不能|可不可以|试试|看看会不会|待会.*改|我感觉|我觉得)/.test(text)) {
+    return "hypothetical";
+  }
+
+  if (/(哈哈|笑死|666|抽卡|开玩笑|梗|吐槽|泪目|死掉|笨比|真笨|傻|离职|不用来上班|工作能力.*差|你可以直接走了|滚)/.test(text)) {
+    if (/(笨|傻|离职|不用来上班|工作能力.*差|你可以直接走了|滚)/.test(text)) {
+      return "insult";
+    }
+    return "joke";
+  }
+
+  if (/(可能|也许|大概|不确定|看看有没有问题|没有问题的话)/.test(text)) {
+    return "ambiguous";
+  }
+
+  return "normal";
+}
+
 function hasActivityKeyword(text: string) {
   return /(烧烤|聚餐|约饭|吃饭|火锅|团建|出去玩|唱歌|咖啡|看电影|喝酒|夜宵|午饭|晚饭|活动|小聚|寿司|寿司朗|日料|烤肉|牛排|牛扒|餐厅|饭店|自助|小龙虾|披萨|汉堡|拉面|居酒屋|海底捞|吃(?!吗|不|没|了|吧|嘛|么)[^，,。；;\n？?]{1,20})/.test(
     text,
@@ -952,8 +1014,11 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
   const pending = getPendingActivity(event.chatId);
   const tentative = getTentativeActivity(event.chatId);
   const recent = getRecentActivity(event.chatId);
+  const pendingRelevant = isPendingActivityFollowup(event, pending, text);
+  const tentativeRelevant = isTentativeActivityFollowup(event, tentative, text);
   if (
     pending &&
+    pendingRelevant &&
     (isCancelExpression(text) ||
       isCreateConfirmation(text) ||
       isParticipantAdjustment(text) ||
@@ -963,11 +1028,11 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
     return true;
   }
 
-  if (pending && pending.sourceSenderId && event.senderId === pending.sourceSenderId) {
+  if (pending && pendingRelevant && pending.sourceSenderId && event.senderId === pending.sourceSenderId) {
     return true;
   }
 
-  if (pending && (isAgreementExpression(text) || mentionsCollectiveOrPronoun(text) || hasModelRoutingCue(event))) {
+  if (pending && pendingRelevant && (isAgreementExpression(text) || mentionsCollectiveOrPronoun(text) || hasModelRoutingCue(event))) {
     return true;
   }
 
@@ -979,7 +1044,7 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
     return true;
   }
 
-  if (tentative && shouldPromoteTentativeActivity(event, tentative, text)) {
+  if (tentative && tentativeRelevant && shouldPromoteTentativeActivity(event, tentative, text)) {
     return true;
   }
 
@@ -999,7 +1064,7 @@ function shouldRespond(event: NormalizedMessageEvent, context: ChatContext): boo
     return true;
   }
 
-  if (context.messages.length >= 2 && pending && isCancelExpression(text)) {
+  if (context.messages.length >= 2 && pending && pendingRelevant && isCancelExpression(text)) {
     return true;
   }
 
@@ -1015,7 +1080,12 @@ function shouldSendProcessingReceipt(event: NormalizedMessageEvent, context: Cha
     return false;
   }
 
-  if (!isDirectMention(event) && !isPrivateChat(event) && !getPendingActivity(event.chatId) && !getRecentActivity(event.chatId)) {
+  if (
+    !isDirectMention(event) &&
+    !isPrivateChat(event) &&
+    !isPendingActivityFollowup(event, getPendingActivity(event.chatId), event.text) &&
+    !isRecentActivityFollowup(event, getRecentActivity(event.chatId), event.text)
+  ) {
     return false;
   }
 
@@ -1178,6 +1248,77 @@ function loadRecentActivities() {
   }
 }
 
+function createTopicId(event: NormalizedMessageEvent) {
+  return `${event.chatId || "dm"}:${event.messageId || Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getTopics(chatId?: string) {
+  if (!chatId) {
+    return [];
+  }
+
+  const now = Date.now();
+  const topics = conversationTopics.get(chatId) || [];
+  const activeTopics = topics.filter(
+    (topic) => topic.status !== "closed" && now - topic.updatedAt <= TOPIC_TTL_MS,
+  );
+  if (activeTopics.length !== topics.length) {
+    conversationTopics.set(chatId, activeTopics);
+  }
+  return activeTopics;
+}
+
+function setTopic(topic: ConversationTopic) {
+  const topics = getTopics(topic.chatId).filter((item) => item.id !== topic.id);
+  topics.push(topic);
+  conversationTopics.set(topic.chatId, topics.slice(-20));
+  return topic;
+}
+
+function getTopic(chatId?: string, topicId?: string) {
+  if (!chatId || !topicId) {
+    return undefined;
+  }
+  return getTopics(chatId).find((topic) => topic.id === topicId);
+}
+
+function hasSameActivityKind(title: string, text: string) {
+  if (/(聚餐|吃饭|烧烤|火锅|海底捞|寿司|日料|烤肉|饭)/.test(title)) {
+    return /(聚餐|吃饭|烧烤|火锅|海底捞|寿司|日料|烤肉|饭|参加|参与人)/.test(text);
+  }
+  if (/(会议|会|同步|复盘|评审)/.test(title)) {
+    return /(会议|开会|同步|复盘|评审|主题|参会|参与人)/.test(text);
+  }
+  return title.length > 1 && text.includes(title);
+}
+
+function hasCalendarUpdateContent(text: string) {
+  return Boolean(
+    isTimeSupplement(text) ||
+      isParticipantAdjustment(text) ||
+      hasActivityKeyword(text) ||
+      extractLocationHint(text) ||
+      /(时间|地点|参与人|人员|日程|安排|活动|会议|聚餐)/.test(text),
+  );
+}
+
+function looksLikeNewCalendarTopic(text: string) {
+  return (
+    !/(不对|改到|改成|改为|换到|换成|挪到|提前|推迟|加上|带上|拉上|去掉|别拉|取消)/.test(text) &&
+    (isCalendarCreateIntent(text) ||
+      (isTimeSupplement(text) && /(会议|开会|聚餐|吃饭|团建|活动|复盘|评审|同步)/.test(text)))
+  );
+}
+
+function isActivityReference(text: string, activity: { title: string; locationHint?: string; sourceSenderId?: string }, event: NormalizedMessageEvent) {
+  const directObject =
+    text.includes(activity.title) ||
+    (activity.locationHint ? text.includes(activity.locationHint) : false) ||
+    /(?:这个|刚才|刚刚|那个).{0,10}(日程|安排|聚餐|吃饭|会议|活动|时间|地点|参与人|人员)/.test(text);
+  const sameStarter = Boolean(activity.sourceSenderId && event.senderId === activity.sourceSenderId);
+  return directObject || (sameStarter && hasSameActivityKind(activity.title, text));
+}
+
 function isRecentActivityFollowup(
   event: NormalizedMessageEvent,
   recent: RecentActivity | undefined,
@@ -1187,21 +1328,140 @@ function isRecentActivityFollowup(
     return false;
   }
 
-  const sameStarter = Boolean(recent.sourceSenderId && event.senderId === recent.sourceSenderId);
-  const refersToKnownActivity =
-    text.includes(recent.title) ||
-    (recent.locationHint ? text.includes(recent.locationHint) : false) ||
-    /(?:这个|刚才|刚刚|那个|吃饭|日程|安排|时间|地点|参与人|人|人员)/.test(text);
+  if (looksLikeNewCalendarTopic(text)) {
+    return false;
+  }
+
   const asksForChange =
     /(?:不对|改到|改成|改为|换到|换成|挪到|提前|推迟|加上|带上|拉上|去掉|别拉|取消|不去了|不吃了|算了)/.test(
       text,
     );
+  const refersToKnownActivity = isActivityReference(text, recent, event);
 
   return (
-    asksForChange ||
-    (sameStarter && refersToKnownActivity && (isTimeSupplement(text) || isParticipantAdjustment(text))) ||
+    (asksForChange && refersToKnownActivity && hasCalendarUpdateContent(text)) ||
+    (refersToKnownActivity && (isTimeSupplement(text) || isParticipantAdjustment(text))) ||
     (isDirectMention(event) && refersToKnownActivity)
   );
+}
+
+function isPendingActivityFollowup(
+  event: NormalizedMessageEvent,
+  pending: PendingActivity | undefined,
+  text: string,
+) {
+  if (!pending || !text.trim()) {
+    return false;
+  }
+
+  if (looksLikeNewCalendarTopic(text) && !text.includes(pending.title)) {
+    return false;
+  }
+
+  if (isCreateConfirmation(text) || isKeepCandidate(text) || isCancelExpression(text)) {
+    return isActivityReference(text, pending, event) || event.senderId === pending.sourceSenderId;
+  }
+
+  return isActivityReference(text, pending, event) && hasCalendarUpdateContent(text);
+}
+
+function isTentativeActivityFollowup(
+  event: NormalizedMessageEvent,
+  tentative: TentativeActivity | undefined,
+  text: string,
+) {
+  if (!tentative || !text.trim()) {
+    return false;
+  }
+
+  if (looksLikeNewCalendarTopic(text) && !text.includes(tentative.title)) {
+    return false;
+  }
+
+  return (
+    isActivityReference(text, tentative, event) ||
+    event.senderId === tentative.sourceSenderId ||
+    hasActivityDetail(text) ||
+    isAgreementExpression(text)
+  );
+}
+
+function createOrUpdateTopicFromActivity(
+  event: NormalizedMessageEvent,
+  activity: {
+    topicId?: string;
+    chatId: string;
+    title: string;
+    sourceText: string;
+    sourceMessageId?: string;
+    sourceSenderId?: string;
+    timeHint?: string;
+    locationHint?: string;
+    participantCandidates?: ParticipantCandidate[];
+    calendarId?: string;
+    eventId?: string;
+  },
+  status: TopicStatus,
+) {
+  const existing = getTopic(activity.chatId, activity.topicId);
+  const topic: ConversationTopic =
+    existing || {
+      id: activity.topicId || createTopicId(event),
+      chatId: activity.chatId,
+      kind: "calendar",
+      status,
+      title: activity.title,
+      sourceText: activity.sourceText,
+      sourceMessageId: activity.sourceMessageId,
+      sourceSenderId: activity.sourceSenderId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messageIds: [],
+      evidenceTexts: [],
+      participantCandidates: [],
+    };
+
+  topic.status = status;
+  topic.title = activity.title || topic.title;
+  topic.timeHint = activity.timeHint || topic.timeHint;
+  topic.locationHint = activity.locationHint || topic.locationHint;
+  topic.calendarId = activity.calendarId || topic.calendarId;
+  topic.eventId = activity.eventId || topic.eventId;
+  topic.participantCandidates = activity.participantCandidates || topic.participantCandidates;
+  topic.updatedAt = Date.now();
+  topic.messageIds = [...new Set([...topic.messageIds, activity.sourceMessageId, event.messageId].filter(Boolean) as string[])].slice(-20);
+  topic.evidenceTexts = [...new Set([...topic.evidenceTexts, activity.sourceText, event.text].filter(Boolean))].slice(-12);
+  return setTopic(topic);
+}
+
+function getRelatedTopic(event: NormalizedMessageEvent, text = event.text) {
+  const pending = getPendingActivity(event.chatId);
+  if (isPendingActivityFollowup(event, pending, text) && pending?.topicId) {
+    return getTopic(event.chatId, pending.topicId);
+  }
+
+  const recent = getRecentActivity(event.chatId);
+  if (isRecentActivityFollowup(event, recent, text) && recent?.topicId) {
+    return getTopic(event.chatId, recent.topicId);
+  }
+
+  const topics = getTopics(event.chatId).sort((a, b) => b.updatedAt - a.updatedAt);
+  return topics.find((topic) => isActivityReference(text, topic, event) && hasCalendarUpdateContent(text));
+}
+
+function getRelevantContextMessages(context: ChatContext, topic?: ConversationTopic) {
+  if (!topic) {
+    return context.messages.slice(-8);
+  }
+
+  const topicMessageIds = new Set(topic.messageIds);
+  const related = context.messages.filter(
+    (message) =>
+      (message.messageId && topicMessageIds.has(message.messageId)) ||
+      message.text.includes(topic.title) ||
+      topic.evidenceTexts.some((evidence) => evidence && message.text.includes(evidence)),
+  );
+  return [...related, ...context.messages.slice(-5)].slice(-10);
 }
 
 function rememberTentativeActivity(
@@ -1222,6 +1482,7 @@ function rememberTentativeActivity(
   }
 
   const tentative: TentativeActivity = {
+    topicId: existing?.topicId,
     chatId: event.chatId,
     sourceText: existing?.sourceText || event.text,
     sourceMessageId: existing?.sourceMessageId || event.messageId,
@@ -1234,6 +1495,9 @@ function rememberTentativeActivity(
     detailTexts: detailTexts.slice(-8),
     supporterIds: existing?.supporterIds || [],
   };
+
+  const topic = createOrUpdateTopicFromActivity(event, tentative, "observing");
+  tentative.topicId = topic.id;
 
   tentativeActivities.set(event.chatId, tentative);
   console.log(
@@ -1272,6 +1536,8 @@ function updateTentativeFromMessage(tentative: TentativeActivity, event: Normali
   if (event.senderId && isAgreementExpression(event.text) && !tentative.supporterIds.includes(event.senderId)) {
     tentative.supporterIds.push(event.senderId);
   }
+  const topic = createOrUpdateTopicFromActivity(event, tentative, "proposed");
+  tentative.topicId = topic.id;
   tentativeActivities.set(tentative.chatId, tentative);
 }
 
@@ -1703,6 +1969,16 @@ function normalizeToolIntent(value: unknown): ToolIntent {
   return allowed.includes(value as ToolIntent) ? (value as ToolIntent) : "none";
 }
 
+function normalizeTopicAction(value: unknown): TopicAction {
+  const allowed: TopicAction[] = ["none", "create_topic", "update_topic", "close_topic"];
+  return allowed.includes(value as TopicAction) ? (value as TopicAction) : "none";
+}
+
+function normalizeSafetyLabel(value: unknown): SafetyLabel {
+  const allowed: SafetyLabel[] = ["normal", "joke", "insult", "hypothetical", "ambiguous"];
+  return allowed.includes(value as SafetyLabel) ? (value as SafetyLabel) : "normal";
+}
+
 function defaultResponseMode(intent: IntentKind): ResponseMode {
   if (intent === "ignore") {
     return "silent";
@@ -1729,6 +2005,44 @@ function defaultToolIntent(intent: IntentKind): ToolIntent {
   return "none";
 }
 
+function defaultTopicAction(intent: IntentKind): TopicAction {
+  if (intent === "social_schedule_candidate" || intent === "explicit_schedule_create") {
+    return "create_topic";
+  }
+  if (intent === "cancel_or_change_candidate" || intent === "project_request") {
+    return "update_topic";
+  }
+  return "none";
+}
+
+function defaultGrounding(event: NormalizedMessageEvent): GroundingEvidence {
+  return {
+    messageIds: event.messageId ? [event.messageId] : [],
+    evidenceTexts: [stripBotMentions(event.text)].filter(Boolean),
+  };
+}
+
+function normalizeGrounding(value: unknown, event: NormalizedMessageEvent): GroundingEvidence {
+  if (!value || typeof value !== "object") {
+    return defaultGrounding(event);
+  }
+
+  const raw = value as Record<string, unknown>;
+  const messageIds =
+    normalizeStringArray(raw.message_ids).length > 0
+      ? normalizeStringArray(raw.message_ids)
+      : normalizeStringArray(raw.messageIds);
+  const evidenceTexts =
+    normalizeStringArray(raw.evidence_texts).length > 0
+      ? normalizeStringArray(raw.evidence_texts)
+      : normalizeStringArray(raw.evidenceTexts);
+  const fallback = defaultGrounding(event);
+  return {
+    messageIds: messageIds.length ? messageIds : fallback.messageIds,
+    evidenceTexts: evidenceTexts.length ? evidenceTexts : fallback.evidenceTexts,
+  };
+}
+
 function normalizeStringArray(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
@@ -1743,7 +2057,8 @@ async function classifyWithModel(
   members: ChatMember[],
   memberLookupIncomplete: boolean,
 ) {
-  const contextPayload = context.messages.slice(-CONTEXT_MAX_MESSAGES).map((message) => ({
+  const relatedTopic = getRelatedTopic(event);
+  const contextPayload = getRelevantContextMessages(context, relatedTopic).map((message) => ({
     sender_id: message.senderId,
     sender_name: message.senderName,
     text: message.text,
@@ -1752,6 +2067,8 @@ async function classifyWithModel(
   }));
   const pending = getPendingActivity(event.chatId);
   const recent = getRecentActivity(event.chatId);
+  const relevantPending = isPendingActivityFollowup(event, pending, event.text) ? pending : undefined;
+  const relevantRecent = isRecentActivityFollowup(event, recent, event.text) ? recent : undefined;
   const memberPayload = members.map((member) => ({
     open_id: member.openId,
     name: member.name,
@@ -1765,6 +2082,8 @@ async function classifyWithModel(
         "你的任务是依据 ProjectPilot Skill 判断 response_mode、tool_intent、assistant_reply，并为多人活动推荐可能参与人。",
         "Skill 是最高优先级业务规则；代码关键词只是粗略召回，不能限制你的语义判断。代码只负责门禁和工具安全，你负责语义判断。",
         "只能从候选群成员列表里选择 participant_candidates，不能凭空编人。",
+        "json 输出必须带 grounding evidence。没有 grounding evidence 的工具动作必须降级为 chat 或 confirm_action。",
+        "玩笑、辱骂、反讽、假设句不能触发工具；这些情况 safety_label 输出 joke/insult/hypothetical/ambiguous。",
         getProjectPilotSkill(),
       ]
         .filter(Boolean)
@@ -1775,37 +2094,52 @@ async function classifyWithModel(
       content: JSON.stringify({
         current_date: new Date().toISOString(),
         current_message: {
+          message_id: event.messageId,
           sender_id: event.senderId,
           sender_name: event.senderName,
           text: event.text,
           mentions: event.mentions || [],
         },
-        pending_activity: pending
+        related_topic: relatedTopic
           ? {
-              title: pending.title,
-              time_hint: pending.timeHint || "",
-              location_hint: pending.locationHint || "",
-              participant_candidates: pending.participantCandidates.map((participant) => ({
-                open_id: participant.openId,
-                name: participant.name,
-              })),
-              missing_fields: pending.missingFields,
-              source_text: pending.sourceText,
+              topic_id: relatedTopic.id,
+              kind: relatedTopic.kind,
+              status: relatedTopic.status,
+              title: relatedTopic.title,
+              evidence_texts: relatedTopic.evidenceTexts,
+              message_ids: relatedTopic.messageIds,
+              time_hint: relatedTopic.timeHint || "",
+              location_hint: relatedTopic.locationHint || "",
             }
           : null,
-        recent_activity: recent
+        pending_activity: relevantPending
           ? {
-              title: recent.title,
-              time_hint: recent.timeHint || "",
-              location_hint: recent.locationHint || "",
-              participant_candidates: recent.participantCandidates.map((participant) => ({
+              topic_id: relevantPending.topicId || "",
+              title: relevantPending.title,
+              time_hint: relevantPending.timeHint || "",
+              location_hint: relevantPending.locationHint || "",
+              participant_candidates: relevantPending.participantCandidates.map((participant) => ({
                 open_id: participant.openId,
                 name: participant.name,
               })),
-              source_text: recent.sourceText,
-              start: recent.start || "",
-              end: recent.end || "",
-              approximate: recent.approximate || false,
+              missing_fields: relevantPending.missingFields,
+              source_text: relevantPending.sourceText,
+            }
+          : null,
+        recent_activity: relevantRecent
+          ? {
+              topic_id: relevantRecent.topicId || "",
+              title: relevantRecent.title,
+              time_hint: relevantRecent.timeHint || "",
+              location_hint: relevantRecent.locationHint || "",
+              participant_candidates: relevantRecent.participantCandidates.map((participant) => ({
+                open_id: participant.openId,
+                name: participant.name,
+              })),
+              source_text: relevantRecent.sourceText,
+              start: relevantRecent.start || "",
+              end: relevantRecent.end || "",
+              approximate: relevantRecent.approximate || false,
             }
           : null,
         recent_context: contextPayload,
@@ -1815,6 +2149,9 @@ async function classifyWithModel(
           response_mode: "silent | chat | suggest | confirm_action | execute_action",
           tool_intent:
             "none | calendar_create | calendar_update | task_create | project_intake | doc_update | risk_check",
+          topic_action: "none | create_topic | update_topic | close_topic",
+          topic_id: "existing related_topic.topic_id or empty",
+          safety_label: "normal | joke | insult | hypothetical | ambiguous",
           intent:
             "explicit_schedule_create | social_schedule_candidate | cancel_or_change_candidate | project_request | ignore",
           confidence: "0..1",
@@ -1826,6 +2163,10 @@ async function classifyWithModel(
             { open_id: "must be one of chat_members.open_id", name: "member name", reason: "short" },
           ],
           missing_fields: ["string"],
+          grounding: {
+            message_ids: ["current or related message ids used as evidence"],
+            evidence_texts: ["short source text snippets proving the action"],
+          },
           requires_confirmation: "boolean; true for collaborative writes like calendar/task/doc changes",
           should_ask_confirmation:
             "boolean; false means observe silently as a tentative candidate, true means send a confirmation card",
@@ -1846,6 +2187,14 @@ async function classifyWithModel(
   const toolIntent = normalizeToolIntent(
     getString(raw.tool_intent) || getString(raw.toolIntent) || defaultToolIntent(intent),
   );
+  const topicAction = normalizeTopicAction(
+    getString(raw.topic_action) || getString(raw.topicAction) || defaultTopicAction(intent),
+  );
+  const topicId = getString(raw.topic_id) || getString(raw.topicId) || relatedTopic?.id;
+  const safetyLabel = normalizeSafetyLabel(
+    getString(raw.safety_label) || getString(raw.safetyLabel) || detectSafetyLabel(event),
+  );
+  const grounding = normalizeGrounding(raw.grounding, event);
   const assistantReply = getString(raw.assistant_reply) || getString(raw.assistantReply);
   const participantCandidates = filterParticipantCandidates(raw.participant_candidates, members);
   const activityTitle = getString(raw.activity_title) || getString(raw.activityTitle);
@@ -1868,6 +2217,10 @@ async function classifyWithModel(
     confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
     responseMode,
     toolIntent,
+    topicAction,
+    topicId,
+    grounding,
+    safetyLabel,
     assistantReply,
     activityTitle,
     timeHint,
@@ -1887,9 +2240,10 @@ function classifyHeuristically(
 ): IntentDecision {
   const text = event.text;
   let intent: IntentKind = "ignore";
+  const pending = getPendingActivity(event.chatId);
   const recent = getRecentActivity(event.chatId);
 
-  if (getPendingActivity(event.chatId) && (isCancelExpression(text) || isParticipantAdjustment(text))) {
+  if (pending && isPendingActivityFollowup(event, pending, text) && (isCancelExpression(text) || isParticipantAdjustment(text))) {
     intent = "cancel_or_change_candidate";
   } else if (isRecentActivityFollowup(event, recent, text)) {
     intent = "cancel_or_change_candidate";
@@ -1908,6 +2262,9 @@ function classifyHeuristically(
     confidence: intent === "ignore" ? 0 : 0.72,
     responseMode: defaultResponseMode(intent),
     toolIntent: defaultToolIntent(intent),
+    topicAction: defaultTopicAction(intent),
+    grounding: defaultGrounding(event),
+    safetyLabel: detectSafetyLabel(event),
     activityTitle: normalizeActivityTitle(undefined, text),
     timeHint,
     participantCandidates,
@@ -1931,7 +2288,12 @@ function shouldConsultModel(
     return true;
   }
 
-  if (getPendingActivity(event.chatId) || getTentativeActivity(event.chatId)) {
+  const pending = getPendingActivity(event.chatId);
+  const tentative = getTentativeActivity(event.chatId);
+  if (
+    isPendingActivityFollowup(event, pending, event.text) ||
+    isTentativeActivityFollowup(event, tentative, event.text)
+  ) {
     return true;
   }
 
@@ -2104,6 +2466,51 @@ function normalizeHour(hour: number, period?: string) {
   return hour;
 }
 
+function weekdayIndex(value: string) {
+  const map: Record<string, number> = {
+    日: 0,
+    天: 0,
+    一: 1,
+    二: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+  };
+  return map[value];
+}
+
+function resolveWeekdayDate(text: string, now = new Date()) {
+  const match = text.match(/(?:(这周|本周|下周|下个周|下星期|下礼拜))?(?:周|星期|礼拜)([一二三四五六日天])/);
+  if (!match) {
+    return undefined;
+  }
+
+  const target = weekdayIndex(match[2]);
+  if (!Number.isFinite(target)) {
+    return undefined;
+  }
+
+  const base = new Date(now);
+  base.setHours(0, 0, 0, 0);
+  const current = base.getDay();
+  let diff = target - current;
+  const explicitNext = /下/.test(match[1] || "");
+  if (explicitNext) {
+    diff += diff <= 0 ? 7 : 7;
+  } else if (!match[1] && diff < 0) {
+    diff += 7;
+  }
+  base.setDate(base.getDate() + diff);
+  return base;
+}
+
+function hasCalendarDateHint(text: string) {
+  return /(今天|今日|明天|明日|后天|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}月\d{1,2}日?)/.test(
+    text,
+  );
+}
+
 function resolveBaseDate(text: string, now = new Date()) {
   const base = new Date(now);
   base.setHours(0, 0, 0, 0);
@@ -2126,6 +2533,11 @@ function resolveBaseDate(text: string, now = new Date()) {
   const monthDate = text.match(/(\d{1,2})月(\d{1,2})日?/);
   if (monthDate) {
     return new Date(now.getFullYear(), Number(monthDate[1]) - 1, Number(monthDate[2]));
+  }
+
+  const weekdayDate = resolveWeekdayDate(text, now);
+  if (weekdayDate) {
+    return weekdayDate;
   }
 
   return base;
@@ -2206,7 +2618,7 @@ function parseCalendarIntent(text: string, now = new Date()): CalendarIntent | u
     end = new Date(start.getTime() + parseDurationMinutes(normalizedText) * 60_000);
   }
 
-  if (!/(今天|今日|明天|明日|后天|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}月\d{1,2}日?)/.test(normalizedText) && start <= now) {
+  if (!hasCalendarDateHint(normalizedText) && start <= now) {
     start.setDate(start.getDate() + 1);
     end.setDate(end.getDate() + 1);
   }
@@ -2224,10 +2636,7 @@ function parseApproximateCalendarIntent(text: string, now = new Date()): Calenda
     return undefined;
   }
 
-  const hasDateHint = /(今天|今日|明天|明日|后天|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}月\d{1,2}日?)/.test(
-    normalizedText,
-  );
-  if (!hasDateHint) {
+  if (!hasCalendarDateHint(normalizedText)) {
     return undefined;
   }
 
@@ -2826,6 +3235,7 @@ function createPendingActivity(event: NormalizedMessageEvent, decision: IntentDe
 
   const pending: PendingActivity = {
     id: createPendingId(event),
+    topicId: decision.topicId,
     chatId: event.chatId,
     sourceText: event.text,
     sourceMessageId: event.messageId,
@@ -2843,6 +3253,8 @@ function createPendingActivity(event: NormalizedMessageEvent, decision: IntentDe
     memberLookupIncomplete: decision.memberLookupIncomplete,
     status: "pending",
   };
+  const topic = createOrUpdateTopicFromActivity(event, pending, "confirming");
+  pending.topicId = topic.id;
   pendingActivities.set(event.chatId, pending);
   return pending;
 }
@@ -2873,6 +3285,7 @@ async function applyParticipantAdjustment(
 
     pending.participantCandidates = uniqueByOpenId(groupMembers);
     pending.memberLookupIncomplete = incomplete;
+    pending.topicId = createOrUpdateTopicFromActivity(event, pending, "confirming").id;
     pendingActivities.set(pending.chatId, pending);
     const note = incomplete ? "（我没读到完整群成员，先按上下文可见成员处理）" : "";
     return `已把建议参与人改为群里全部成员：${formatParticipantNames(pending.participantCandidates)}${note}。回复「确认创建」或补充时间后我再创建日程。`;
@@ -2900,6 +3313,7 @@ async function applyParticipantAdjustment(
     ]);
   }
 
+  pending.topicId = createOrUpdateTopicFromActivity(event, pending, "confirming").id;
   pendingActivities.set(pending.chatId, pending);
   return `已更新建议参与人：${formatParticipantNames(pending.participantCandidates)}。回复「确认创建」后我再创建日程。`;
 }
@@ -2923,6 +3337,18 @@ async function applyModelPendingUpdate(pending: PendingActivity, decision: Inten
     return undefined;
   }
 
+  const topic = createOrUpdateTopicFromActivity(
+    {
+      type: MESSAGE_EVENT_TYPE,
+      chatId: pending.chatId,
+      messageId: pending.sourceMessageId,
+      senderId: pending.sourceSenderId,
+      text: pending.sourceText,
+    },
+    pending,
+    "confirming",
+  );
+  pending.topicId = topic.id;
   pendingActivities.set(pending.chatId, pending);
   const pieces = ["已更新候选安排。"];
   if (decision.timeHint) {
@@ -2942,6 +3368,7 @@ function rememberRecentActivityFromPending(pending: PendingActivity, result: Cal
 
   const recent: RecentActivity = {
     id: pending.id,
+    topicId: pending.topicId,
     chatId: pending.chatId,
     sourceText: pending.sourceText,
     sourceMessageId: pending.sourceMessageId,
@@ -2959,6 +3386,18 @@ function rememberRecentActivityFromPending(pending: PendingActivity, result: Cal
     end: result.intent?.end,
     approximate: result.intent?.approximate,
   };
+  const topic = createOrUpdateTopicFromActivity(
+    {
+      type: MESSAGE_EVENT_TYPE,
+      chatId: pending.chatId,
+      messageId: pending.sourceMessageId,
+      senderId: pending.sourceSenderId,
+      text: pending.sourceText,
+    },
+    recent,
+    "committed",
+  );
+  recent.topicId = topic.id;
   setRecentActivity(recent);
   return recent;
 }
@@ -2974,6 +3413,7 @@ function rememberRecentActivityFromEvent(
 
   const recent: RecentActivity = {
     id: createPendingId(event),
+    topicId: decision.topicId,
     chatId: event.chatId,
     sourceText: event.text,
     sourceMessageId: event.messageId,
@@ -2991,6 +3431,8 @@ function rememberRecentActivityFromEvent(
     end: result.intent?.end,
     approximate: result.intent?.approximate,
   };
+  const topic = createOrUpdateTopicFromActivity(event, recent, "committed");
+  recent.topicId = topic.id;
   setRecentActivity(recent);
   return recent;
 }
@@ -3007,9 +3449,7 @@ function attachRecentActivityCardMessage(chatId?: string, cardMessageId?: string
 }
 
 function hasDateHint(text: string) {
-  return /(今天|今日|明天|明日|后天|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}月\d{1,2}日?)/.test(
-    text,
-  );
+  return hasCalendarDateHint(text);
 }
 
 function dateHintFromIso(value?: string) {
@@ -3030,6 +3470,7 @@ function buildRecentActivityCalendarText(
 function pendingActivityFromRecent(recent: RecentActivity): PendingActivity {
   return {
     id: recent.id,
+    topicId: recent.topicId,
     chatId: recent.chatId,
     sourceText: recent.sourceText,
     sourceMessageId: recent.sourceMessageId,
@@ -3240,6 +3681,7 @@ async function applyRecentActivityUpdate(
   }
   recent.sourceText = `${recent.sourceText}\n${event.text}`;
   recent.updatedAt = Date.now();
+  createOrUpdateTopicFromActivity(event, recent, "updating");
   setRecentActivity(recent);
 
   const reply = [
@@ -3275,6 +3717,55 @@ async function confirmPendingCreate(pending: PendingActivity) {
   return result?.reply || "我还需要一个明确开始时间，例如：明天晚上7点。";
 }
 
+function hasGroundingEvidence(decision: IntentDecision) {
+  return Boolean(decision.grounding.messageIds.length || decision.grounding.evidenceTexts.length);
+}
+
+function guardUnsafeToolAction(
+  event: NormalizedMessageEvent,
+  pending: PendingActivity | undefined,
+  recent: RecentActivity | undefined,
+  decision: IntentDecision,
+): BotAction | undefined {
+  if (decision.toolIntent === "none") {
+    return undefined;
+  }
+
+  if (decision.safetyLabel !== "normal") {
+    const reason = `安全闸拦截: safety=${decision.safetyLabel} tool=${decision.toolIntent}`;
+    console.log(reason);
+    if (isDirectMention(event) || isPrivateChat(event)) {
+      return {
+        type: "text",
+        content:
+          decision.assistantReply ||
+          "我先不动飞书工具了。这句话更像是在吐槽/假设/玩笑，真要我安排的话，可以直接说清楚标题、时间和参与人。",
+      };
+    }
+    return { type: "silent", reason };
+  }
+
+  if (!hasGroundingEvidence(decision)) {
+    return {
+      type: isDirectMention(event) || isPrivateChat(event) ? "text" : "silent",
+      content: "我还缺少能定位这个动作的原文证据，先不写入飞书。你可以直接说清楚要创建或修改哪个安排。",
+      reason: "工具动作缺少 grounding evidence",
+    } as BotAction;
+  }
+
+  if (decision.toolIntent === "calendar_update" && !pending && !recent) {
+    if (isDirectMention(event) || isPrivateChat(event)) {
+      return {
+        type: "text",
+        content: "我不确定你要修改哪个安排，先不动日历。你可以回复具体日程卡片，或说“把项目同步会改到明天下午5点”。",
+      };
+    }
+    return { type: "silent", reason: "没有可安全承接的日程 topic" };
+  }
+
+  return undefined;
+}
+
 async function executeIntent(
   event: NormalizedMessageEvent,
   context: ChatContext,
@@ -3283,30 +3774,53 @@ async function executeIntent(
   const text = event.text;
   const pending = getPendingActivity(event.chatId);
   const recent = getRecentActivity(event.chatId);
+  const pendingRelevant = isPendingActivityFollowup(event, pending, text);
+  const recentRelevant = isRecentActivityFollowup(event, recent, text);
 
-  if (pending && isParticipantAdjustment(text)) {
+  if (
+    decision.safetyLabel === "ambiguous" &&
+    decision.toolIntent === "calendar_create" &&
+    !isDirectMention(event) &&
+    !isPrivateChat(event)
+  ) {
+    rememberTentativeActivity(event, context, decision);
+    return { type: "silent", reason: "含条件表达的候选活动，先观察共识" };
+  }
+
+  const blockedAction = guardUnsafeToolAction(
+    event,
+    pendingRelevant ? pending : undefined,
+    recentRelevant ? recent : undefined,
+    decision,
+  );
+  if (blockedAction) {
+    return blockedAction;
+  }
+
+  if (pending && pendingRelevant && isParticipantAdjustment(text)) {
     return { type: "text", content: await applyParticipantAdjustment(event, context, pending) };
   }
 
-  if (pending && isCreateConfirmation(text)) {
+  if (pending && pendingRelevant && isCreateConfirmation(text)) {
     return { type: "text", content: await confirmPendingCreate(pending) };
   }
 
-  if (pending && isTimeSupplement(text)) {
+  if (pending && pendingRelevant && isTimeSupplement(text)) {
     pending.timeHint = inferTimeHint(text) || pending.timeHint;
     pending.sourceText = `${pending.sourceText} ${text}`;
     pending.missingFields = pending.missingFields.filter((field) => !field.includes("时间"));
+    pending.topicId = createOrUpdateTopicFromActivity(event, pending, "confirming").id;
     pendingActivities.set(pending.chatId, pending);
     return { type: "text", content: await confirmPendingCreate(pending) };
   }
 
-  if (pending && isKeepCandidate(text)) {
+  if (pending && pendingRelevant && isKeepCandidate(text)) {
     pending.status = "pending";
     pendingActivities.set(pending.chatId, pending);
     return { type: "text", content: `好的，先保留候选安排：${pending.title}。` };
   }
 
-  if (pending && isCancelExpression(text)) {
+  if (pending && pendingRelevant && isCancelExpression(text)) {
     if (/(确认取消|取消候选|先不创建|不用创建|不创建了)/.test(text)) {
       pendingActivities.delete(pending.chatId);
       return { type: "text", content: `已取消候选安排：${pending.title}。` };
@@ -3321,21 +3835,21 @@ async function executeIntent(
     };
   }
 
-  if (pending && decision.intent === "cancel_or_change_candidate" && decision.confidence >= 0.55) {
+  if (pending && pendingRelevant && decision.intent === "cancel_or_change_candidate" && decision.confidence >= 0.55) {
     const updateReply = await applyModelPendingUpdate(pending, decision);
     if (updateReply) {
       return { type: "text", content: updateReply };
     }
   }
 
-  if (!pending && recent && decision.intent === "cancel_or_change_candidate" && decision.confidence >= 0.55) {
+  if (!pending && recent && recentRelevant && decision.intent === "cancel_or_change_candidate" && decision.confidence >= 0.55) {
     const updateReply = await applyRecentActivityUpdate(event, decision, recent);
     if (updateReply) {
       return { type: "text", content: updateReply };
     }
   }
 
-  if (pending && decision.toolIntent === "calendar_update" && decision.confidence >= 0.55) {
+  if (pending && pendingRelevant && decision.toolIntent === "calendar_update" && decision.confidence >= 0.55) {
     const updateReply = await applyModelPendingUpdate(pending, {
       ...decision,
       intent: "cancel_or_change_candidate",
@@ -3345,7 +3859,7 @@ async function executeIntent(
     }
   }
 
-  if (!pending && recent && decision.toolIntent === "calendar_update" && decision.confidence >= 0.55) {
+  if (!pending && recent && recentRelevant && decision.toolIntent === "calendar_update" && decision.confidence >= 0.55) {
     const updateReply = await applyRecentActivityUpdate(
       event,
       {
@@ -3585,6 +4099,9 @@ async function routeTentativeActivity(
   if (!tentative) {
     return undefined;
   }
+  if (!isTentativeActivityFollowup(event, tentative, text)) {
+    return undefined;
+  }
 
   if (isNegativeActivityMessage(text) || isCancelExpression(text)) {
     tentativeActivities.delete(event.chatId);
@@ -3623,6 +4140,10 @@ async function routeTentativeActivity(
     confidence: 0.82,
     responseMode: "confirm_action",
     toolIntent: "calendar_create",
+    topicAction: "create_topic",
+    topicId: tentative.topicId,
+    grounding: defaultGrounding(event),
+    safetyLabel: detectSafetyLabel(event),
     activityTitle: tentative.title,
     timeHint: tentative.timeHint || inferTimeHint(sourceText),
     participantCandidates,
