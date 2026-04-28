@@ -1,104 +1,153 @@
-# ProjectPilot / 飞书项目领航员
+# MeetingAtlas / 会脉 Agent
 
-ProjectPilot 是一个面向飞书协作场景的项目管理专家 Agent。它的目标不是再做一个普通 Todo Bot，而是在飞书里维护一个会随着会议、群聊、任务和知识库变化而持续更新的 Living Project Space / 活项目知识库。
+MeetingAtlas / 会脉 Agent 是一个由飞书会议纪要触发的个人执行闭环与主题知识库 Agent。
 
-当前仓库用于承载比赛 Demo、能力调用指引、Skill 设计规范，以及后续不同服务能力的集成样例。
+会议结束后，它读取会议纪要、妙记或转写文本，抽取个人待办、后续日程、关键结论、风险、资料引用和主题关键词；所有任务、日程、知识库、资料归档等副作用都必须先生成确认请求，用户确认后才执行。默认 dry-run，不真实写飞书。
 
-## 我们现在的目标
+## 当前状态
 
-围绕飞书 AI 校园挑战赛 OpenClaw 赛道，先跑通一条足够清楚的 P0 闭环：
+仓库已从旧 ProjectPilot 实验重启为 MeetingAtlas。根目录就是新的主项目，不再保留旧 ProjectPilot 运行时代码、旧 Skill 草稿、旧源材料文档和重复工程目录。
 
-```text
-项目立项输入
--> 创建项目知识库 / 项目作战室
--> 拆解节点、模块、任务和子任务
--> 会议纪要进入系统
--> 提取 Action Items 并进入确认
--> 创建飞书任务 / 写入多维表格
--> 更新项目总览、进度和风险
--> 在群聊中主动分发简报
-```
+当前已完成到 Phase 6：
 
-产品结构保持为一个共享底座服务两个场景入口：
-
-| 层级 | 内容 |
-| --- | --- |
-| 共享底座 | 项目知识包、飞书 CLI/OpenAPI 调用层、能力注册表、Agent 编排、状态写入 |
-| 场景入口 A | 项目推进：立项、任务拆解、会议待办、风险预警、阶段复盘 |
-| 场景入口 B | 新人/中途加入：自动生成上手包、推送关键背景、同步当前任务和风险 |
-
-## 当前工程方向
-
-ProjectPilot 下一阶段要从“长上下文 + 一个大 Skill + 工具调用”升级为状态化 PM 同事 Agent。短期重点不是继续堆提示词，而是解决群聊 Agent 的上下文污染、状态承接和工具误触发问题。
-
-核心原则：
-
-- 状态机优先于长上下文：群聊中的聚餐、会议、任务、闲聊必须被拆成独立 topic，不能互相污染。
-- 代码管状态和安全：Message Gate、Topic Store、Tool Guard、飞书写入和幂等保护由代码负责。
-- Skill 管语义判断：是否像同事一样聊天、追问、建议或发起确认，由 Router / Specialist Skill 判断。
-- 模型不直接执行工具：所有飞书写入都必须有 grounding evidence，并经过代码层安全校验。
-
-## 当前代码
-
-仓库里已有一个最小 TypeScript 机器人骨架：
-
-- `src/index.ts`：监听飞书消息、调用 LLM、回复群聊消息
-- `.env.example`：本地模型和飞书轮询相关配置示例
-- `package.json`：本地启动、构建、守护进程脚本
-- `.agents/skills/`：当前机器上沉淀的飞书 CLI Skills 和参考文档
-- `文档/`：比赛规则、会议纪要、PRD 和源材料
+- Fastify + TypeScript 服务骨架。
+- SQLite 状态层和核心 repository。
+- Zod schema 校验。
+- Mock LLM 会议抽取。
+- 手动提交会议转写的本地 Demo API。
+- Action item 与 calendar draft 生成。
+- Confirmation request 确认流程。
+- 飞书 CLI wrapper dry-run 记录。
+- 两场相关无人机会议后的主题聚类建议。
+- 确认 `create_kb` 后 dry-run 生成主题知识库 Markdown。
 
 ## 快速开始
 
 ```bash
 npm install
-cp .env.example .env
 npm run build
-npm start
+npm run test
+npm run dev
 ```
 
-常用机器人命令：
+健康检查：
 
 ```bash
-npm run bot:daemon
-npm run bot:status
-npm run bot:log
-npm run bot:stop
+curl http://127.0.0.1:3000/health
 ```
 
-运行前需要先完成飞书应用和 CLI 配置，并确保本地 `lark-cli` 可用。
+## 环境变量
 
-## 仓库结构
+复制 `.env.example` 后按需修改：
+
+```bash
+cp .env.example .env
+```
+
+关键默认值：
+
+```bash
+NODE_ENV=development
+PORT=3000
+FEISHU_DRY_RUN=true
+LARK_CLI_BIN=lark
+LLM_PROVIDER=mock
+SQLITE_PATH=./data/meeting-atlas.db
+```
+
+`FEISHU_DRY_RUN=true` 是默认安全模式。确认 action/calendar/create_kb 后只写本地记录和 dry-run 输出，不真实调用飞书写操作。
+
+## 本地 Demo
+
+提交第一场无人机会议：
+
+```bash
+TRANSCRIPT=$(python - <<'PY'
+from pathlib import Path
+import json
+print(json.dumps(Path('fixtures/meetings/drone_interview_01.txt').read_text()))
+PY
+)
+
+curl -X POST http://127.0.0.1:3000/dev/meetings/manual \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"title\":\"无人机操作方案初步访谈\",
+    \"participants\":[\"张三\",\"李四\"],
+    \"organizer\":\"张三\",
+    \"started_at\":\"2026-04-28T10:00:00+08:00\",
+    \"ended_at\":\"2026-04-28T11:00:00+08:00\",
+    \"transcript_text\":$TRANSCRIPT
+  }"
+```
+
+查看确认请求：
+
+```bash
+curl http://127.0.0.1:3000/dev/confirmations
+```
+
+确认请求：
+
+```bash
+curl -X POST http://127.0.0.1:3000/dev/confirmations/<id>/confirm \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+提交第二场无人机会议后，会生成“无人机操作方案”知识库创建建议：
+
+```bash
+TRANSCRIPT=$(python - <<'PY'
+from pathlib import Path
+import json
+print(json.dumps(Path('fixtures/meetings/drone_interview_02.txt').read_text()))
+PY
+)
+
+curl -X POST http://127.0.0.1:3000/dev/meetings/manual \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"title\":\"无人机操作员访谈\",
+    \"participants\":[\"张三\",\"王五\"],
+    \"organizer\":\"张三\",
+    \"started_at\":\"2026-04-29T10:00:00+08:00\",
+    \"ended_at\":\"2026-04-29T11:00:00+08:00\",
+    \"transcript_text\":$TRANSCRIPT
+  }"
+```
+
+查看状态和知识库 Markdown：
+
+```bash
+curl http://127.0.0.1:3000/dev/state
+```
+
+完整演示路径见 [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)。
+
+## 目录结构
 
 ```text
 .
-├── src/                    # ProjectPilot 运行时代码
-├── docs/                   # 项目上下文、架构、能力和 Skill 指引
-├── skills/                 # 项目级 Skill 规范和后续可复用能力入口
-├── .agents/skills/         # 本地已有的 lark-cli Skills 资料
-├── 文档/                   # 比赛和 PRD 源材料
-└── .github/                # GitHub 协作模板
+├── docs/          # 架构、开发计划、Demo 和飞书 CLI 说明
+├── fixtures/      # 本地 Demo 会议转写与 Mock LLM 期望输出
+├── src/           # MeetingAtlas 服务、Agent、workflow、schema、tools
+├── tests/         # Vitest 单元和集成测试
+├── package.json
+├── tsconfig.json
+└── vitest.config.ts
 ```
 
-## 推荐阅读顺序
+## 当前不做
 
-1. [项目上下文](docs/PROJECT_CONTEXT.md)
-2. [系统架构](docs/ARCHITECTURE.md)
-3. [团队协作指南](docs/COLLABORATION.md)
-4. [飞书 CLI 机器人部署与测试](docs/CLI_BOT_DEPLOYMENT_TESTING.md)
-5. [本机协同部署方案](docs/LOCAL_COLLABORATION_DEPLOYMENT.md)
-6. [如何教会 ProjectPilot 新流程与能力](docs/CAPABILITY_DEVELOPMENT.md)
-7. [能力调用指引](docs/CAPABILITY_GUIDE.md)
-8. [Skill 编写规范](docs/SKILL_AUTHORING.md)
-9. [路线图](docs/ROADMAP.md)
+- 不做全量群聊监听。
+- 不做全量邮箱扫描。
+- 不做无确认自动创建任务、日程或知识库。
+- 不做删除飞书任务、日程、文档或知识库。
+- 不把长会议全文、完整知识库、完整表格或完整群聊历史直接塞进模型上下文。
+- 不接入复杂 Agent Runtime。
+- 不真实调用飞书写操作，除非显式设置 `FEISHU_DRY_RUN=false` 并校准 CLI。
 
-## 贡献方式
+## 下一步
 
-新增能力时，优先按这个顺序补齐：
-
-1. 在 `docs/CAPABILITY_GUIDE.md` 登记能力边界、输入输出和飞书权限。
-2. 在 `docs/SKILL_AUTHORING.md` 对齐 Skill 的命令、失败处理和验收标准。
-3. 在 `skills/` 增加项目级 Skill 草案或调用说明。
-4. 再补运行时代码、测试或 Demo 脚本。
-
-这样仓库不会变成一堆分散脚本，而是能持续沉淀为可复用的能力库。
+Phase 7：校准真实飞书 CLI 命令，补齐 `larkWiki` / `larkDoc` / `sendCard` 的真实模式 fallback，并把 dry-run 知识库创建平滑迁移到飞书 Wiki / Doc。
