@@ -112,6 +112,7 @@ type LlmRole = "chat" | "router" | "tool";
 let listener: ChildProcess | undefined;
 let restartCount = 0;
 let stopping = false;
+let pollingFallbackStarted = false;
 let projectPilotSkillCache: string | undefined;
 const handledMessageIds = new Set<string>();
 const processingReceiptMessageIds = new Set<string>();
@@ -5053,20 +5054,17 @@ async function routeLegacyCalendarMessage(event: NormalizedMessageEvent, context
 }
 
 async function maybeHandleProjectConfirmation(event: NormalizedMessageEvent, activeProject?: ReturnType<typeof getActiveProjectForChat>) {
-  if (!event.chatId || !event.text.trim()) {
+  if (!event.chatId || !event.senderId || !event.text.trim()) {
     return undefined;
   }
 
-  const confirmation =
-    getLatestPendingConfirmation(event.chatId, event.senderId) || getLatestPendingConfirmation(event.chatId);
+  const confirmation = getLatestPendingConfirmation(event.chatId, event.senderId);
   if (!confirmation) {
     return undefined;
   }
 
   if (matchesCancelText(event.text)) {
-    const cancelled =
-      cancelPendingConfirmation(event.chatId, event.text, event.senderId) ||
-      cancelPendingConfirmation(event.chatId, event.text);
+    const cancelled = cancelPendingConfirmation(event.chatId, event.text, event.senderId);
     if (cancelled) {
       return { type: "text", content: "好的，先不记录这条项目状态。" } satisfies BotAction;
     }
@@ -5076,9 +5074,7 @@ async function maybeHandleProjectConfirmation(event: NormalizedMessageEvent, act
     return undefined;
   }
 
-  const confirmed =
-    confirmPendingConfirmation(event.chatId, event.text, event.senderId) ||
-    confirmPendingConfirmation(event.chatId, event.text);
+  const confirmed = confirmPendingConfirmation(event.chatId, event.text, event.senderId);
   if (!confirmed) {
     return undefined;
   }
@@ -5333,14 +5329,20 @@ async function pollChatsOnce(chatIds: string[]) {
 }
 
 async function startPollingFallback() {
+  if (pollingFallbackStarted) {
+    return;
+  }
+
   const chatIds = getPollChatIds();
   if (!chatIds.length) {
     console.log("未配置 LARK_POLL_CHAT_IDS，跳过消息轮询兜底。");
+    pollingFallbackStarted = true;
     return;
   }
 
   await seedPolledMessages(chatIds);
   console.log(`消息轮询兜底已启动: ${chatIds.join(", ")}，间隔 ${POLL_INTERVAL_MS}ms`);
+  pollingFallbackStarted = true;
 
   setInterval(() => {
     pollChatsOnce(chatIds).catch((error) => {

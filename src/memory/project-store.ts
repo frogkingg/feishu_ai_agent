@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { CONFIRMATION_STORE_PATH, PROJECT_STORE_PATH, PROJECT_SUMMARY_MAX_CHARS, RUNTIME_DIR } from "../config/constants";
+import { CONFIRMATION_STORE_PATH, PROJECT_STORE_PATH, PROJECT_SUMMARY_MAX_CHARS } from "../config/constants";
 import {
   GroundingEvidence,
   Milestone,
@@ -12,6 +11,9 @@ import {
   ProjectStore,
   ProjectTask,
 } from "../llm/schemas";
+import { readJsonFile, withFileLock, writeJsonFileAtomic } from "./json-file";
+
+const PROJECT_STORE_LOCK_PATH = `${PROJECT_STORE_PATH}.lock`;
 
 export function createId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -31,33 +33,20 @@ function assertGrounded(evidence: GroundingEvidence) {
   }
 }
 
-function ensureRuntimeDir() {
-  mkdirSync(RUNTIME_DIR, { recursive: true });
-}
-
 function emptyStore(): ProjectStore {
   return { version: 1, projects: [] };
 }
 
 export function loadProjectStore(): ProjectStore {
-  if (!existsSync(PROJECT_STORE_PATH)) {
-    return emptyStore();
-  }
-
-  try {
-    const parsed = JSON.parse(readFileSync(PROJECT_STORE_PATH, "utf8")) as Partial<ProjectStore>;
-    return {
-      version: 1,
-      projects: Array.isArray(parsed.projects) ? (parsed.projects as Project[]) : [],
-    };
-  } catch {
-    return emptyStore();
-  }
+  const parsed = readJsonFile<Partial<ProjectStore>>(PROJECT_STORE_PATH, emptyStore, "项目状态文件");
+  return {
+    version: 1,
+    projects: Array.isArray(parsed.projects) ? (parsed.projects as Project[]) : [],
+  };
 }
 
 export function saveProjectStore(store: ProjectStore): void {
-  ensureRuntimeDir();
-  writeFileSync(PROJECT_STORE_PATH, JSON.stringify({ version: 1, projects: store.projects }, null, 2), "utf8");
+  writeJsonFileAtomic(PROJECT_STORE_PATH, { version: 1, projects: store.projects });
 }
 
 export function listProjectsByChat(chatId: string): Project[] {
@@ -95,30 +84,32 @@ export function createProject(
   evidence: GroundingEvidence,
 ): Project {
   assertGrounded(evidence);
-  const store = loadProjectStore();
-  const timestamp = nowIso();
-  const project: Project = {
-    id: createId("proj"),
-    chatId,
-    name: draft.name?.trim() || "未命名项目草案",
-    status: "draft",
-    goal: draft.goal,
-    background: draft.background,
-    owners: uniqueMembers(draft.owners || []),
-    members: uniqueMembers([...(draft.members || []), ...(draft.owners || [])]),
-    milestones: normalizeMilestones(draft.milestones || [], evidence, timestamp),
-    tasks: [],
-    risks: [],
-    decisions: [],
-    notes: [],
-    sourceMessageIds: evidence.messageIds,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
+  return withFileLock(PROJECT_STORE_LOCK_PATH, () => {
+    const store = loadProjectStore();
+    const timestamp = nowIso();
+    const project: Project = {
+      id: createId("proj"),
+      chatId,
+      name: draft.name?.trim() || "未命名项目草案",
+      status: "draft",
+      goal: draft.goal,
+      background: draft.background,
+      owners: uniqueMembers(draft.owners || []),
+      members: uniqueMembers([...(draft.members || []), ...(draft.owners || [])]),
+      milestones: normalizeMilestones(draft.milestones || [], evidence, timestamp),
+      tasks: [],
+      risks: [],
+      decisions: [],
+      notes: [],
+      sourceMessageIds: evidence.messageIds,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
 
-  store.projects.push(project);
-  saveProjectStore(store);
-  return project;
+    store.projects.push(project);
+    saveProjectStore(store);
+    return project;
+  });
 }
 
 function normalizeMilestones(
@@ -222,43 +213,45 @@ function normalizeNotes(
 
 export function applyProjectPatch(projectId: string, patch: ProjectPatchDecision): Project {
   assertGrounded(patch.grounding);
-  const store = loadProjectStore();
-  const project = store.projects.find((item) => item.id === projectId);
-  if (!project) {
-    throw new Error(`找不到项目: ${projectId}`);
-  }
+  return withFileLock(PROJECT_STORE_LOCK_PATH, () => {
+    const store = loadProjectStore();
+    const project = store.projects.find((item) => item.id === projectId);
+    if (!project) {
+      throw new Error(`找不到项目: ${projectId}`);
+    }
 
-  const timestamp = nowIso();
-  if (patch.projectDraft?.name?.trim()) {
-    project.name = patch.projectDraft.name.trim();
-  }
-  if (patch.projectDraft?.goal?.trim()) {
-    project.goal = patch.projectDraft.goal.trim();
-  }
-  if (patch.projectDraft?.background?.trim()) {
-    project.background = patch.projectDraft.background.trim();
-  }
-  if (patch.projectDraft?.owners?.length) {
-    project.owners = uniqueMembers([...project.owners, ...patch.projectDraft.owners]);
-  }
-  if (patch.projectDraft?.members?.length || patch.projectDraft?.owners?.length) {
-    project.members = uniqueMembers([
-      ...project.members,
-      ...(patch.projectDraft.members || []),
-      ...(patch.projectDraft.owners || []),
-    ]);
-  }
+    const timestamp = nowIso();
+    if (patch.projectDraft?.name?.trim()) {
+      project.name = patch.projectDraft.name.trim();
+    }
+    if (patch.projectDraft?.goal?.trim()) {
+      project.goal = patch.projectDraft.goal.trim();
+    }
+    if (patch.projectDraft?.background?.trim()) {
+      project.background = patch.projectDraft.background.trim();
+    }
+    if (patch.projectDraft?.owners?.length) {
+      project.owners = uniqueMembers([...project.owners, ...patch.projectDraft.owners]);
+    }
+    if (patch.projectDraft?.members?.length || patch.projectDraft?.owners?.length) {
+      project.members = uniqueMembers([
+        ...project.members,
+        ...(patch.projectDraft.members || []),
+        ...(patch.projectDraft.owners || []),
+      ]);
+    }
 
-  project.milestones.push(...normalizeMilestones(patch.projectDraft?.milestones || [], patch.grounding, timestamp));
-  project.tasks.push(...normalizeTasks(patch.tasks || [], patch.grounding, timestamp));
-  project.risks.push(...normalizeRisks(patch.risks || [], patch.grounding, timestamp));
-  project.decisions.push(...normalizeDecisions(patch.decisions || [], patch.grounding, timestamp));
-  project.notes.push(...normalizeNotes(patch.notes || [], patch.grounding, timestamp));
-  project.sourceMessageIds = [...new Set([...project.sourceMessageIds, ...patch.grounding.messageIds])];
-  project.updatedAt = timestamp;
+    project.milestones.push(...normalizeMilestones(patch.projectDraft?.milestones || [], patch.grounding, timestamp));
+    project.tasks.push(...normalizeTasks(patch.tasks || [], patch.grounding, timestamp));
+    project.risks.push(...normalizeRisks(patch.risks || [], patch.grounding, timestamp));
+    project.decisions.push(...normalizeDecisions(patch.decisions || [], patch.grounding, timestamp));
+    project.notes.push(...normalizeNotes(patch.notes || [], patch.grounding, timestamp));
+    project.sourceMessageIds = [...new Set([...project.sourceMessageIds, ...patch.grounding.messageIds])];
+    project.updatedAt = timestamp;
 
-  saveProjectStore(store);
-  return project;
+    saveProjectStore(store);
+    return project;
+  });
 }
 
 export function summarizeProjectForPrompt(project: Project | undefined): string {

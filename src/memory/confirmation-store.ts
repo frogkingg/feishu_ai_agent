@@ -1,7 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { CONFIRMATION_STORE_PATH, CONFIRMATION_TTL_MS, RUNTIME_DIR } from "../config/constants";
+import { CONFIRMATION_STORE_PATH, CONFIRMATION_TTL_MS } from "../config/constants";
 import { ConfirmationActionType, GroundingEvidence, PendingConfirmation } from "../llm/schemas";
+import { readJsonFile, withFileLock, writeJsonFileAtomic } from "./json-file";
 import { createId } from "./project-store";
+
+const CONFIRMATION_STORE_LOCK_PATH = `${CONFIRMATION_STORE_PATH}.lock`;
 
 interface ConfirmationStoreFile {
   version: 1;
@@ -31,27 +33,18 @@ function emptyStore(): ConfirmationStoreFile {
 }
 
 export function loadConfirmationStore(): ConfirmationStoreFile {
-  if (!existsSync(CONFIRMATION_STORE_PATH)) {
-    return emptyStore();
-  }
-
-  try {
-    const parsed = JSON.parse(readFileSync(CONFIRMATION_STORE_PATH, "utf8")) as Partial<ConfirmationStoreFile>;
-    return {
-      version: 1,
-      confirmations: Array.isArray(parsed.confirmations) ? (parsed.confirmations as PendingConfirmation[]) : [],
-    };
-  } catch {
-    return emptyStore();
-  }
+  const parsed = readJsonFile<Partial<ConfirmationStoreFile>>(CONFIRMATION_STORE_PATH, emptyStore, "确认状态文件");
+  return {
+    version: 1,
+    confirmations: Array.isArray(parsed.confirmations) ? (parsed.confirmations as PendingConfirmation[]) : [],
+  };
 }
 
 export function saveConfirmationStore(store: ConfirmationStoreFile) {
-  mkdirSync(RUNTIME_DIR, { recursive: true });
-  writeFileSync(CONFIRMATION_STORE_PATH, JSON.stringify({ version: 1, confirmations: store.confirmations }, null, 2), "utf8");
+  writeJsonFileAtomic(CONFIRMATION_STORE_PATH, { version: 1, confirmations: store.confirmations });
 }
 
-export function expireOldConfirmations() {
+function expireOldConfirmationsUnlocked() {
   const store = loadConfirmationStore();
   let changed = false;
   const now = Date.now();
@@ -67,29 +60,35 @@ export function expireOldConfirmations() {
   return store;
 }
 
-export function createPendingConfirmation(input: CreatePendingConfirmationInput): PendingConfirmation {
-  const store = expireOldConfirmations();
-  const createdAt = nowIso();
-  const confirmation: PendingConfirmation = {
-    id: createId("confirm"),
-    chatId: input.chatId,
-    requesterId: input.requesterId,
-    actionType: input.actionType,
-    projectId: input.projectId,
-    payload: input.payload,
-    evidence: input.evidence,
-    status: "pending",
-    createdAt,
-    expiresAt: input.expiresAt || new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString(),
-  };
+export function expireOldConfirmations() {
+  return withFileLock(CONFIRMATION_STORE_LOCK_PATH, expireOldConfirmationsUnlocked);
+}
 
-  store.confirmations.push(confirmation);
-  saveConfirmationStore(store);
-  return confirmation;
+export function createPendingConfirmation(input: CreatePendingConfirmationInput): PendingConfirmation {
+  return withFileLock(CONFIRMATION_STORE_LOCK_PATH, () => {
+    const store = expireOldConfirmationsUnlocked();
+    const createdAt = nowIso();
+    const confirmation: PendingConfirmation = {
+      id: createId("confirm"),
+      chatId: input.chatId,
+      requesterId: input.requesterId,
+      actionType: input.actionType,
+      projectId: input.projectId,
+      payload: input.payload,
+      evidence: input.evidence,
+      status: "pending",
+      createdAt,
+      expiresAt: input.expiresAt || new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString(),
+    };
+
+    store.confirmations.push(confirmation);
+    saveConfirmationStore(store);
+    return confirmation;
+  });
 }
 
 export function getLatestPendingConfirmation(chatId?: string, requesterId?: string): PendingConfirmation | undefined {
-  if (!chatId) {
+  if (!chatId || !requesterId) {
     return undefined;
   }
 
@@ -100,7 +99,7 @@ export function getLatestPendingConfirmation(chatId?: string, requesterId?: stri
         confirmation.chatId === chatId &&
         confirmation.status === "pending" &&
         !isExpired(confirmation) &&
-        (!requesterId || confirmation.requesterId === requesterId),
+        confirmation.requesterId === requesterId,
     )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
@@ -121,28 +120,34 @@ function updateLatestPending(
   status: PendingConfirmation["status"],
   requesterId?: string,
 ): PendingConfirmation | undefined {
+  if (!requesterId) {
+    return undefined;
+  }
+
   const matcher = status === "confirmed" ? matchesConfirmText : matchesCancelText;
   if (!matcher(text)) {
     return undefined;
   }
 
-  const store = expireOldConfirmations();
-  const pending = store.confirmations
-    .filter(
-      (confirmation) =>
-        confirmation.chatId === chatId &&
-        confirmation.status === "pending" &&
-        !isExpired(confirmation) &&
-        (!requesterId || confirmation.requesterId === requesterId),
-    )
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  if (!pending) {
-    return undefined;
-  }
+  return withFileLock(CONFIRMATION_STORE_LOCK_PATH, () => {
+    const store = expireOldConfirmationsUnlocked();
+    const pending = store.confirmations
+      .filter(
+        (confirmation) =>
+          confirmation.chatId === chatId &&
+          confirmation.status === "pending" &&
+          !isExpired(confirmation) &&
+          confirmation.requesterId === requesterId,
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (!pending) {
+      return undefined;
+    }
 
-  pending.status = status;
-  saveConfirmationStore(store);
-  return pending;
+    pending.status = status;
+    saveConfirmationStore(store);
+    return pending;
+  });
 }
 
 export function confirmPendingConfirmation(chatId: string, text: string, requesterId?: string) {
