@@ -1,0 +1,32 @@
+{
+  "name": "meeting-atlas",
+  "version": "0.1.0",
+  "description": "MeetingAtlas / 会脉 Agent: meeting-minutes driven personal execution and topic knowledge-base agent.",
+  "main": "dist/src/index.js",
+  "scripts": {
+    "dev": "npm run build --silent && node dist/src/index.js",
+    "build": "tsc",
+    "start": "node dist/src/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "feishu",
+    "lark",
+    "meeting-minutes",
+    "agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "pino": "^9.6.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

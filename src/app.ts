@@ -21,6 +21,7 @@ import {
 import { handleRiskWorkflow } from "./workflows/risk.workflow";
 import { handleTaskWorkflow } from "./workflows/task.workflow";
 import { shouldEnterCalendarWorkflow } from "./workflows/calendar.workflow";
+import { handleMvpMessage } from "./mvp/orchestrator";
 
 const execFileAsync = promisify(execFile);
 
@@ -5103,6 +5104,15 @@ async function maybeHandleProjectConfirmation(event: NormalizedMessageEvent, act
 async function routeMessage(event: NormalizedMessageEvent) {
   if (!event.text.trim()) {
     return { type: "silent", reason: "非文本或空文本" } satisfies BotAction;
+  }
+
+  if (process.env.PROJECTPILOT_MVP_MODE === "1") {
+    const mvp = await handleMvpMessage(event);
+    if (mvp.handled) {
+      return mvp.replyText
+        ? ({ type: "text", content: mvp.replyText } satisfies BotAction)
+        : ({ type: "silent", reason: "MVP 主链路已处理" } satisfies BotAction);
+    }
   }
 
   const context = getRecentContext(event);
