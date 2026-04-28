@@ -1,133 +1,78 @@
-# 系统架构
+# Architecture
 
-## 总览
+MeetingAtlas 当前是一个 CLI-first、确认优先、本地 dry-run 可演示的 TypeScript 服务。根目录就是主工程，不再依赖旧 ProjectPilot 架构。
 
-ProjectPilot 的架构按四层组织：
-
-```text
-交互层
-  飞书群聊 / 知识库 / 多维表格 / 日历 / 任务 / 妙记
-
-Agent 编排层
-  Project Agent / Planner Agent / Meeting Agent / Task Agent / Risk Agent / Onboarding Agent
-
-能力调用层
-  lark-cli Skills / Feishu OpenAPI / LLM / 本地运行时
-
-状态层
-  项目知识包 / 任务池 / 风险表 / 决策记录 / 会议记录 / 变更日志
-```
-
-## Agent 分工
-
-| Agent | 职责 | 典型输入 | 典型输出 |
-| --- | --- | --- | --- |
-| Project Agent | 识别项目、维护项目总览和作战室 | 立项文本、群聊指令、项目配置 | 项目总览、知识库节点、多维表格记录 |
-| Planner Agent | 拆解节点、模块、任务和子任务 | 项目目标、截止时间、成员分工 | 结构化计划草案、任务池记录 |
-| Meeting Agent | 处理纪要和妙记 | 会议纪要、妙记 AI 产物 | 总结、决策、Action Items、风险 |
-| Task Agent | 创建和同步飞书任务 | 已确认 Action Items、任务池记录 | 飞书任务、状态回写 |
-| Risk Agent | 识别逾期、无负责人、依赖阻塞 | 任务状态、会议阻塞、风险表 | 风险预警、项目状态灯 |
-| Onboarding Agent | 生成新人/中途加入上手包 | 项目知识包、当前进度、任务风险 | 上手简报、关键文档入口、待办摘要 |
-
-## 推荐数据对象
-
-| 对象 | 存储位置 | 说明 |
-| --- | --- | --- |
-| Project | 多维表格 / 知识库总览 | 项目名称、目标、状态、负责人、截止时间 |
-| Milestone | 多维表格 | 阶段节点、验收标准、时间范围 |
-| Module | 多维表格 | 功能模块、负责人、关联节点 |
-| Task | 飞书任务 + 多维表格 | 执行项、负责人、截止时间、状态、优先级 |
-| MeetingNote | 知识库 | 会议总结、决策、Action Items、风险 |
-| Risk | 多维表格 | 风险描述、等级、负责人、状态、来源 |
-| Decision | 知识库 / 多维表格 | 决策内容、影响范围、时间、来源 |
-
-## 事件流
-
-### 1. 项目立项
+## Runtime
 
 ```text
-群聊指令 / 立项文本
--> Project Agent 解析项目元信息
--> Planner Agent 生成节点和任务草案
--> 创建知识库、项目总览、多维表格
--> 群聊发送确认消息
+Fastify server
+  -> GET /health
+  -> POST /dev/meetings/manual
+  -> GET /dev/confirmations
+  -> POST /dev/confirmations/:id/confirm
+  -> POST /dev/confirmations/:id/reject
+  -> GET /dev/state
+
+Workflow layer
+  -> processMeetingWorkflow
+  -> createKnowledgeBaseWorkflow
+
+Agents as functions
+  -> MeetingExtractionAgent
+  -> PersonalActionAgent
+  -> CalendarAgent
+  -> TopicClusteringAgent
+  -> KnowledgeCuratorAgent
+
+State and tools
+  -> SQLite repositories
+  -> larkCli.ts
+  -> larkTask.ts
+  -> larkCalendar.ts
 ```
 
-### 2. 会后 Action Items
+## Core Rules
 
-```text
-会议纪要 / 妙记
--> Meeting Agent 提取总结、决策、待办、风险
--> 群聊发送确认卡片或文本
--> Task Agent 创建飞书任务
--> Project Agent 回写项目总览和任务池
-```
+- Orchestrating workflows do not call Feishu write APIs directly.
+- All side effects start from a `confirmation_requests` row.
+- LLM-shaped outputs are parsed through Zod before being persisted or executed.
+- `FEISHU_DRY_RUN=true` is the default and blocks real Feishu writes.
+- Long transcript text is stored in SQLite; downstream agents receive structured summaries and references.
 
-### 3. 风险预警
+## SQLite Tables
 
-```text
-定时扫描任务池和会议阻塞
--> Risk Agent 识别异常
--> 写入风险表
--> 群聊主动推送项目状态和建议动作
-```
+MVP tables:
 
-## 运行策略
+- `meetings`
+- `action_items`
+- `calendar_drafts`
+- `knowledge_bases`
+- `sources`
+- `confirmation_requests`
+- `knowledge_updates`
+- `cli_runs`
 
-MVP 先用 `lark-cli` 和 TypeScript 运行时串联能力。MCP 可以作为后续界面层或补充能力，不作为当前 Demo 的主路径。
+## Topic Clustering
 
-## Agent Runtime vNext
+Phase 5 intentionally uses a simple explainable algorithm:
 
-群聊 Agent 不能继续依赖“最近几十条消息 + 一个大 Skill”来判断所有事情。下一版运行时采用状态化工作流，把每个逐渐成形的安排、会议、任务或项目讨论拆成独立 topic，再让模型只看与当前 topic 有关的短上下文。
+- title keyword overlap
+- meeting keyword overlap
+- participant overlap
+- source mention overlap
 
-```text
-Message Gate
--> Topic Router / Line Compactor
--> Tool Decision Specialist
--> Tool Guard
--> Feishu Action
-```
+The first related meeting only enters `observe`; the second strongly related meeting can generate a `create_kb` confirmation.
 
-| 阶段 | 职责 |
-| --- | --- |
-| Message Gate | 判断是否需要处理：未 @ 默认静默，@ 必须进入自然回复或动作判断 |
-| Topic Router / Line Compactor | 把群聊压缩成多条 topic line，判断当前消息属于新 topic、已有 topic 更新，还是普通聊天 |
-| Tool Decision Specialist | 只看单条干净 topic line 和当前指令，判断是否需要调用日程、任务、文档等工具 |
-| Tool Guard | 校验 grounding evidence、权限、确认状态、幂等和安全边界 |
-| Feishu Action | 真正调用飞书 API / `lark-cli`，并把结果回写 topic |
+## Knowledge Dry-Run
 
-Topic 状态：
+Phase 6 creates local records and Markdown content only:
 
-| 状态 | 含义 |
-| --- | --- |
-| `observing` | 未 @ 的早期讨论，只观察，不打扰 |
-| `proposed` | 已形成候选事项，但还缺共识或关键字段 |
-| `confirming` | 已准备好卡片/文本确认，等待用户确认写入 |
-| `committed` | 已创建飞书日程、任务、文档或项目记录 |
-| `updating` | 正在修改已存在的飞书对象 |
-| `closed` | 已取消、过期或完成，不再承接短句 |
+- `knowledge_bases`
+- `knowledge_updates`
+- homepage Markdown
+- default section structure
+- meeting summaries
+- transcript references
+- action/calendar index
 
-每个 topic 至少绑定：
-
-- 来源消息和 `message_id`。
-- grounding evidence：标题、时间、地点、参与人、用户明确指令。
-- 参与人候选及其证据来源。
-- 飞书对象 ID，例如 calendar `event_id`。
-- 更新时间、过期时间和最后一次确认状态。
-
-这样可以避免“新总结会议”被误判成“旧聚餐更新”，也能防止玩笑、吐槽或反讽触发真实工具调用。
-
-### 双模型/三模型分层
-
-运行时支持把模型按职责拆开：
-
-- `ROUTER`：便宜、快、JSON 稳，负责话题线路压缩和归类。
-- `TOOL`：最强、最稳，负责是否调用工具、工具参数、grounding 和安全标签。
-- `CHAT`：更会自然表达，负责被 @ 后的同事式聊天、追问和建议。
-
-默认三者都回退到 `OPENAI_*` 配置；需要分开时使用 `PROJECTPILOT_ROUTER_*`、`PROJECTPILOT_TOOL_*`、`PROJECTPILOT_CHAT_*`。这让 ProjectPilot 不再把“聊天上下文压缩”和“真实工具调用判断”塞给同一个模型一次性完成。
-
-## 设计参考
-
-- Anthropic 的 [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) 强调用 routing、prompt chaining、tool interface 和 human checkpoints 组合出可靠 Agent，而不是把所有复杂度塞进一个 Prompt。
-- LangGraph 的 [Durable Execution](https://docs.langchain.com/oss/javascript/langgraph/durable-execution) 提供了 thread/checkpoint/human-in-the-loop 的状态化工作流思路；本项目先用轻量 Topic Store 借鉴该模式，不直接引入重框架。
+Real Wiki / Doc creation belongs to Phase 7 after inspecting the local Feishu CLI command surface.

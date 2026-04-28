@@ -7,7 +7,7 @@ on:
       - main
 
 jobs:
-  build:
+  build-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -26,5 +26,5 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Eval
-        run: npm run eval
+      - name: Test
+        run: npm run test

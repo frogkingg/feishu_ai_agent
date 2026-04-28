@@ -1,14 +1,20 @@
 # Dependencies
 node_modules/
 
-# Build outputs
+# Build and coverage outputs
 dist/
 coverage/
 
-# Local runtime state
+# Local runtime state and databases
 .runtime/
-*.log
-*.pid
+.data/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
 
 # Secrets and local environment
 .env
@@ -19,13 +25,19 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+
+# Local assistant/tooling caches
 .agents/
 .claude/
 .trae/
 
-# Temporary files
+# Old local source-material drop folders are intentionally not part of the clean repo.
+文档/
+skills/
+meeting-atlas/
+
+# Logs and temporary files
+*.log
+*.pid
 tmp/
 temp/
-
-# Generated local lark skill shortcuts. Keep project-owned skill specs in skills/.
-skills/lark-*
