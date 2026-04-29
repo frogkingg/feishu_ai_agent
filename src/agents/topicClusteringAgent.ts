@@ -187,6 +187,10 @@ function hasStrongSharedTopicSignature(left: string[], right: string[]): boolean
   return sharedDistinctiveSignals(left, right).length >= 2;
 }
 
+function hasNonGenericTopicSignal(extraction: MeetingExtractionResult): boolean {
+  return distinctiveSignals(extraction.topic_keywords).length > 0;
+}
+
 function candidateMeetingIds(
   scored: { meeting: MeetingRow; score: number }[],
   currentMeetingId: string,
@@ -318,7 +322,7 @@ export async function runTopicClusteringAgent(input: {
     });
   }
 
-  if (input.extraction.topic_keywords.length > 0 || currentText.includes("无人机")) {
+  if (hasNonGenericTopicSignal(input.extraction)) {
     return TopicMatchResultSchema.parse({
       current_meeting_id: input.meeting.id,
       matched_kb_id: null,

@@ -152,6 +152,32 @@ async function processSecondProductReviewMeeting(
   });
 }
 
+async function processEvaluationMeeting(
+  repos: ReturnType<typeof createRepositories>,
+  llm: LlmClient,
+  meeting: {
+    title: string;
+    participants: string[];
+    organizer: string;
+    started_at: string;
+    ended_at: string;
+    fixtureName: string;
+  }
+) {
+  return processMeetingWorkflow({
+    repos,
+    llm,
+    meeting: {
+      title: meeting.title,
+      participants: meeting.participants,
+      organizer: meeting.organizer,
+      started_at: meeting.started_at,
+      ended_at: meeting.ended_at,
+      transcript_text: readEvaluationFixture(meeting.fixtureName)
+    }
+  });
+}
+
 describe("TopicClusteringAgent", () => {
   it("observes the first drone meeting and creates a KB confirmation after the second related meeting", async () => {
     const repos = createRepositories(createMemoryDatabase());
@@ -269,4 +295,60 @@ describe("TopicClusteringAgent", () => {
       expect.arrayContaining(["发现至少一场强相关历史会议"])
     );
   });
+
+  it.each([
+    {
+      title: "产品原型评审会",
+      participants: ["刘敏", "陈一", "Henry"],
+      organizer: "刘敏",
+      started_at: "2026-04-30T14:00:00+08:00",
+      ended_at: "2026-04-30T15:00:00+08:00",
+      fixtureName: "product_review_01.txt",
+      extractionName: "product_review_01.extraction.json",
+      expectedAction: "observe"
+    },
+    {
+      title: "校园比赛 Demo 冲刺会",
+      participants: ["Henry", "孙同学", "赵同学"],
+      organizer: "Henry",
+      started_at: "2026-05-03T19:00:00+08:00",
+      ended_at: "2026-05-03T20:00:00+08:00",
+      fixtureName: "campus_competition_01.txt",
+      extractionName: "campus_competition_01.extraction.json",
+      expectedAction: "observe"
+    },
+    {
+      title: "接口对齐沟通",
+      participants: ["Henry", "周宁"],
+      organizer: "Henry",
+      started_at: "2026-05-04T15:00:00+08:00",
+      ended_at: "2026-05-04T15:30:00+08:00",
+      fixtureName: "ambiguous_schedule_01.txt",
+      extractionName: "ambiguous_schedule_01.extraction.json",
+      expectedAction: "observe"
+    },
+    {
+      title: "午后闲聊",
+      participants: ["Henry", "小林"],
+      organizer: "Henry",
+      started_at: "2026-05-04T13:00:00+08:00",
+      ended_at: "2026-05-04T13:20:00+08:00",
+      fixtureName: "no_action_chitchat_01.txt",
+      extractionName: "no_action_chitchat_01.extraction.json",
+      expectedAction: "no_action"
+    }
+  ])(
+    "uses generic first-meeting fallback for $title",
+    async ({ extractionName, expectedAction, ...meeting }) => {
+      const repos = createRepositories(createMemoryDatabase());
+      const llm = new QueueLlmClient([readEvaluationExtraction(extractionName)]);
+
+      const result = await processEvaluationMeeting(repos, llm, meeting);
+
+      expect(result.topic_match.suggested_action).toBe(expectedAction);
+      expect(
+        repos.listConfirmationRequests().some((request) => request.request_type === "create_kb")
+      ).toBe(false);
+    }
+  );
 });
