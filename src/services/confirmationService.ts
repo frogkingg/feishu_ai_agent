@@ -5,6 +5,7 @@ import { nowIso } from "../utils/dates";
 import { createTask } from "../tools/larkTask";
 import { createCalendarEvent } from "../tools/larkCalendar";
 import { AppConfig } from "../config";
+import { buildConfirmationCard } from "../agents/cardInteractionAgent";
 import { createKnowledgeBaseWorkflow } from "../workflows/createKnowledgeBaseWorkflow";
 import { ActionItemDraftSchema, CalendarEventDraftSchema } from "../schemas";
 
@@ -12,6 +13,32 @@ function asObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function withCardPreview(input: {
+  id: string;
+  requestType: ConfirmationRequestType;
+  targetId: string;
+  recipient: string | null;
+  status: "sent";
+  originalPayload: unknown;
+}): Record<string, unknown> {
+  const payload = asObject(input.originalPayload);
+  const originalPayload =
+    Object.keys(payload).length > 0 ? payload : { value: input.originalPayload };
+  const cardPreview = buildConfirmationCard({
+    id: input.id,
+    request_type: input.requestType,
+    target_id: input.targetId,
+    recipient: input.recipient,
+    status: input.status,
+    original_payload: originalPayload
+  });
+
+  return {
+    ...originalPayload,
+    card_preview: cardPreview
+  };
 }
 
 function parseJsonArray(value: string): unknown[] {
@@ -139,14 +166,25 @@ export function createConfirmationRequest(input: {
   recipient: string | null;
   originalPayload: unknown;
 }): ConfirmationRequestRow {
+  const id = createId("conf");
+  const status = "sent" as const;
+  const originalPayloadWithCardPreview = withCardPreview({
+    id,
+    requestType: input.requestType,
+    targetId: input.targetId,
+    recipient: input.recipient,
+    status,
+    originalPayload: input.originalPayload
+  });
+
   return input.repos.createConfirmationRequest({
-    id: createId("conf"),
+    id,
     request_type: input.requestType,
     target_id: input.targetId,
     recipient: input.recipient,
     card_message_id: null,
-    status: "sent",
-    original_payload_json: JSON.stringify(input.originalPayload),
+    status,
+    original_payload_json: JSON.stringify(originalPayloadWithCardPreview),
     edited_payload_json: null,
     confirmed_at: null,
     executed_at: null,

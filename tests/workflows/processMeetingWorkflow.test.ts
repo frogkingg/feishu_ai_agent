@@ -42,9 +42,41 @@ describe("processMeetingWorkflow", () => {
     });
 
     const confirmations = repos.listConfirmationRequests();
+    const actionRequest = confirmations.find((item) => item.request_type === "action");
+    const calendarRequest = confirmations.find((item) => item.request_type === "calendar");
+    const actionPayload = JSON.parse(actionRequest!.original_payload_json) as {
+      draft?: unknown;
+      meeting_id?: string;
+      card_preview?: { card_type: string; request_id: string; actions: Array<{ key: string }> };
+    };
+    const calendarPayload = JSON.parse(calendarRequest!.original_payload_json) as {
+      draft?: unknown;
+      meeting_id?: string;
+      card_preview?: { card_type: string; request_id: string; actions: Array<{ key: string }> };
+    };
+
     expect(result.confirmation_requests).toHaveLength(3);
     expect(confirmations.some((item) => item.request_type === "action")).toBe(true);
     expect(confirmations.some((item) => item.request_type === "calendar")).toBe(true);
+    expect(actionPayload.draft).toBeTruthy();
+    expect(actionPayload.meeting_id).toBe(result.meeting_id);
+    expect(actionPayload.card_preview).toMatchObject({
+      card_type: "action_confirmation",
+      request_id: actionRequest!.id
+    });
+    expect(actionPayload.card_preview?.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject",
+      "not_mine",
+      "remind_later"
+    ]);
+    expect(calendarPayload.draft).toBeTruthy();
+    expect(calendarPayload.meeting_id).toBe(result.meeting_id);
+    expect(calendarPayload.card_preview).toMatchObject({
+      card_type: "calendar_confirmation",
+      request_id: calendarRequest!.id
+    });
     expect(repos.listCliRuns()).toHaveLength(0);
   });
 

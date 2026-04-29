@@ -39,6 +39,26 @@ export interface ConfirmationRequest {
   target_id: string;
   status: string;
   original_payload_json: string;
+  dry_run_card?: {
+    card_type: string;
+    title: string;
+    summary: string;
+    sections: unknown[];
+    editable_fields: unknown[];
+    actions: Array<{ key: string }>;
+    dry_run: true;
+  };
+}
+
+export interface DryRunCardPreview {
+  request_id: string;
+  card_type: string;
+  title: string;
+  summary: string;
+  sections: unknown[];
+  editable_fields: unknown[];
+  actions: Array<{ key: string }>;
+  dry_run: true;
 }
 
 export interface ConfirmResponse {
@@ -100,6 +120,10 @@ export interface DemoReportSummary {
   action_confirmations_executed: number;
   calendar_confirmations_executed: number;
   knowledge_base_confirmations_executed: number;
+  card_previews_generated: number;
+  action_cards: number;
+  calendar_cards: number;
+  knowledge_base_cards: number;
   knowledge_base_name: string;
   knowledge_base_url: string;
   knowledge_update: string;
@@ -195,6 +219,10 @@ const KNOWLEDGE_BASE_ACTION_PATTERNS = [
   /归档到.{0,12}知识库/,
   /建立.{0,12}知识库/
 ];
+const ACTION_CARD_ACTION_KEYS = ["confirm", "confirm_with_edits", "reject", "not_mine", "remind_later"];
+const CALENDAR_CARD_ACTION_KEYS = ["confirm", "confirm_with_edits", "reject", "convert_to_task", "remind_later"];
+const CREATE_KB_CARD_ACTION_KEYS = ["create_kb", "edit_and_create", "append_current_only", "reject", "never_remind_topic"];
+const DEFAULT_CARD_ACTION_KEYS = ["confirm", "reject"];
 
 function createDemoContext(options: RunFullP0DemoOptions): DemoContext {
   const outputDir = options.outputDir ?? DEFAULT_DEMO_OUTPUT_DIR;
@@ -304,8 +332,39 @@ async function submitMeeting(context: DemoContext, payload: {
 async function listConfirmations(context: DemoContext): Promise<ConfirmationRequest[]> {
   step(context, "GET /dev/confirmations");
   const confirmations = await requestJson<ConfirmationRequest[]>(context, "GET", "/dev/confirmations");
-  ok(context, `confirmations=${confirmations.length}`);
+  const cardCount = confirmations.filter((confirmation) => confirmation.dry_run_card?.dry_run === true).length;
+  assertDemo(
+    cardCount === confirmations.length,
+    "Every confirmation should include a dry-run card"
+  );
+  assertDemo(
+    confirmations.every((confirmation) => {
+      const actionKeys = confirmation.dry_run_card?.actions.map((action) => action.key) ?? [];
+      const expectedKeys =
+        confirmation.request_type === "action"
+          ? ACTION_CARD_ACTION_KEYS
+          : confirmation.request_type === "calendar"
+            ? CALENDAR_CARD_ACTION_KEYS
+            : confirmation.request_type === "create_kb"
+              ? CREATE_KB_CARD_ACTION_KEYS
+              : DEFAULT_CARD_ACTION_KEYS;
+      return expectedKeys.every((key) => actionKeys.includes(key));
+    }),
+    "Dry-run cards should include the expected action buttons"
+  );
+  ok(context, `confirmations=${confirmations.length}, dry_run_cards=${cardCount}`);
   return confirmations;
+}
+
+async function listCards(context: DemoContext): Promise<DryRunCardPreview[]> {
+  step(context, "GET /dev/cards");
+  const cards = await requestJson<DryRunCardPreview[]>(context, "GET", "/dev/cards");
+  assertDemo(
+    cards.every((card) => card.dry_run === true),
+    "Every /dev/cards item should be a dry-run card"
+  );
+  ok(context, `cards=${cards.length}`);
+  return cards;
 }
 
 async function confirmRequest(context: DemoContext, id: string, editedPayload?: unknown): Promise<ConfirmResponse> {
@@ -350,6 +409,11 @@ function requestsForMeeting(
   return confirmations.filter((confirmation) => ids.has(confirmation.id) && confirmation.request_type === requestType);
 }
 
+function cardsForMeeting(result: MeetingResponse, cards: DryRunCardPreview[], cardType: string): DryRunCardPreview[] {
+  const ids = new Set(result.confirmation_requests);
+  return cards.filter((card) => ids.has(card.request_id) && card.card_type === cardType);
+}
+
 function buildReportSummary(input: {
   context: DemoContext;
   health: HealthResponse;
@@ -358,6 +422,11 @@ function buildReportSummary(input: {
   confirmedActionIds: string[];
   confirmedCalendarIds: string[];
   confirmedCreateKbId: string;
+  cardStats: {
+    actionCards: number;
+    calendarCards: number;
+    knowledgeBaseCards: number;
+  };
   state: StateResponse;
 }): DemoReportSummary {
   const dryRunCliCount = input.state.cli_runs.filter((run) => run.dry_run === 1).length;
@@ -375,6 +444,13 @@ function buildReportSummary(input: {
     action_confirmations_executed: input.confirmedActionIds.length,
     calendar_confirmations_executed: input.confirmedCalendarIds.length,
     knowledge_base_confirmations_executed: 1,
+    card_previews_generated:
+      input.cardStats.actionCards +
+      input.cardStats.calendarCards +
+      input.cardStats.knowledgeBaseCards,
+    action_cards: input.cardStats.actionCards,
+    calendar_cards: input.cardStats.calendarCards,
+    knowledge_base_cards: input.cardStats.knowledgeBaseCards,
     knowledge_base_name: latestKnowledgeBase?.name ?? "n/a",
     knowledge_base_url: latestKnowledgeBase?.wiki_url ?? latestKnowledgeBase?.homepage_url ?? "n/a",
     knowledge_update: latestKnowledgeUpdate?.update_type ?? "n/a",
@@ -405,6 +481,10 @@ function formatTerminalReport(summary: DemoReportSummary): string {
     `Action confirmations executed: ${summary.action_confirmations_executed}`,
     `Calendar confirmations executed: ${summary.calendar_confirmations_executed}`,
     `Knowledge base confirmations executed: ${summary.knowledge_base_confirmations_executed}`,
+    `Card previews generated: ${summary.card_previews_generated}`,
+    `Action cards: ${summary.action_cards}`,
+    `Calendar cards: ${summary.calendar_cards}`,
+    `Knowledge base cards: ${summary.knowledge_base_cards}`,
     `Knowledge base name: ${summary.knowledge_base_name}`,
     `Knowledge base URL: ${summary.knowledge_base_url}`,
     `Knowledge update: ${summary.knowledge_update}`,
@@ -426,6 +506,10 @@ function formatMarkdownReport(summary: DemoReportSummary): string {
     `- Action confirmations executed: ${summary.action_confirmations_executed}`,
     `- Calendar confirmations executed: ${summary.calendar_confirmations_executed}`,
     `- Knowledge base confirmations executed: ${summary.knowledge_base_confirmations_executed}`,
+    `- Card previews generated: ${summary.card_previews_generated}`,
+    `- Action cards: ${summary.action_cards}`,
+    `- Calendar cards: ${summary.calendar_cards}`,
+    `- Knowledge base cards: ${summary.knowledge_base_cards}`,
     `- Knowledge base name: ${summary.knowledge_base_name}`,
     `- Knowledge base URL: ${summary.knowledge_base_url}`,
     `- Knowledge update: ${summary.knowledge_update}`,
@@ -497,6 +581,9 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
   const firstConfirmations = await listConfirmations(context);
   const actionRequests = requestsForMeeting(first, firstConfirmations, "action");
   const calendarRequests = requestsForMeeting(first, firstConfirmations, "calendar");
+  const firstCards = await listCards(context);
+  const firstActionCards = cardsForMeeting(first, firstCards, "action_confirmation");
+  const firstCalendarCards = cardsForMeeting(first, firstCards, "calendar_confirmation");
   assertDemo(
     actionRequests.length >= 2,
     "First meeting should create at least two action confirmations"
@@ -504,6 +591,18 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
   assertDemo(
     calendarRequests.length >= 1,
     "First meeting should create at least one calendar confirmation"
+  );
+  assertDemo(
+    firstActionCards.length >= 2,
+    `First meeting should create at least two action cards, got ${firstActionCards.length}`
+  );
+  assertDemo(
+    firstCalendarCards.length >= 1,
+    `First meeting should create at least one calendar card, got ${firstCalendarCards.length}`
+  );
+  ok(
+    context,
+    `first meeting card previews verified: action=${firstActionCards.length}, calendar=${firstCalendarCards.length}`
   );
 
   await confirmRequest(context, actionRequests[0].id);
@@ -536,12 +635,18 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
 
   const secondConfirmations = await listConfirmations(context);
   const createKbRequests = requestsForMeeting(second, secondConfirmations, "create_kb");
+  const secondCards = await listCards(context);
+  const secondCreateKbCards = cardsForMeeting(second, secondCards, "create_kb_confirmation");
   const duplicateKnowledgeBaseActionRequests = requestsForMeeting(
     second,
     secondConfirmations,
     "action"
   ).filter(isKnowledgeBaseActionConfirmation);
   assertDemo(createKbRequests.length >= 1, "Second meeting should create a create_kb confirmation");
+  assertDemo(
+    secondCreateKbCards.length === 1,
+    `Second meeting should expose exactly one create_kb card, got ${secondCreateKbCards.length}`
+  );
   assertDemo(
     duplicateKnowledgeBaseActionRequests.length === 0,
     "Second meeting should not create duplicate action confirmations for knowledge-base creation tasks"
@@ -602,6 +707,11 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
     confirmedActionIds: [actionRequests[0].id, actionRequests[1].id],
     confirmedCalendarIds: [calendarRequests[0].id],
     confirmedCreateKbId: createKbRequests[0].id,
+    cardStats: {
+      actionCards: 2,
+      calendarCards: 1,
+      knowledgeBaseCards: secondCreateKbCards.length
+    },
     state
   });
   await writeDemoOutputs(context, summary);

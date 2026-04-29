@@ -134,14 +134,26 @@ describe("demo-full-p0 script", () => {
       const latestJson = JSON.parse(await readFile(join(outputDir, "p0-demo-latest.json"), "utf8")) as {
         status: string;
         knowledge_base_confirmations_executed: number;
+        card_previews_generated: number;
+        action_cards: number;
+        calendar_cards: number;
+        knowledge_base_cards: number;
         knowledge_update: string;
       };
       expect(latestJson).toMatchObject({
         status: "passed",
         knowledge_base_confirmations_executed: 1,
+        card_previews_generated: 4,
+        action_cards: 2,
+        calendar_cards: 1,
+        knowledge_base_cards: 1,
         knowledge_update: "kb_created"
       });
       expect(result.summary.knowledge_base_confirmations_executed).toBe(1);
+      expect(result.summary.card_previews_generated).toBe(4);
+      expect(result.summary.action_cards).toBe(2);
+      expect(result.summary.calendar_cards).toBe(1);
+      expect(result.summary.knowledge_base_cards).toBe(1);
       expect(result.state.knowledge_bases).toHaveLength(1);
       expect(result.state.knowledge_updates).toHaveLength(1);
     } finally {

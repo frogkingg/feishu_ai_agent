@@ -32,6 +32,61 @@ describe("confirmation dev APIs", () => {
     const action = repos.listConfirmationRequests().find((item) => item.request_type === "action");
     const calendar = repos.listConfirmationRequests().find((item) => item.request_type === "calendar");
 
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/dev/confirmations"
+    });
+    const confirmations = listResponse.json() as Array<{
+      request_type: string;
+      dry_run_card?: { card_type: string; actions: Array<{ key: string }> };
+    }>;
+    expect(listResponse.statusCode).toBe(200);
+    expect(confirmations.find((item) => item.request_type === "action")?.dry_run_card).toMatchObject({
+      card_type: "action_confirmation"
+    });
+    expect(confirmations.find((item) => item.request_type === "calendar")?.dry_run_card).toMatchObject({
+      card_type: "calendar_confirmation"
+    });
+    expect(confirmations.find((item) => item.request_type === "action")?.dry_run_card?.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject",
+      "not_mine",
+      "remind_later"
+    ]);
+    expect(confirmations.find((item) => item.request_type === "calendar")?.dry_run_card?.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject",
+      "convert_to_task",
+      "remind_later"
+    ]);
+
+    const cardsResponse = await app.inject({
+      method: "GET",
+      url: "/dev/cards"
+    });
+    const cards = cardsResponse.json() as Array<{ request_id: string; card_type: string }>;
+    expect(cardsResponse.statusCode).toBe(200);
+    expect(cards).toHaveLength(confirmations.length);
+    expect(cards.map((card) => card.request_id)).toEqual(
+      expect.arrayContaining([action!.id, calendar!.id])
+    );
+    expect(cards.map((card) => card.card_type)).toEqual(
+      expect.arrayContaining(["action_confirmation", "calendar_confirmation"])
+    );
+
+    const actionCardResponse = await app.inject({
+      method: "GET",
+      url: `/dev/confirmations/${action!.id}/card`
+    });
+    expect(actionCardResponse.statusCode).toBe(200);
+    expect(actionCardResponse.json()).toMatchObject({
+      card_type: "action_confirmation",
+      request_id: action!.id,
+      dry_run: true
+    });
+
     const confirmResponse = await app.inject({
       method: "POST",
       url: `/dev/confirmations/${action!.id}/confirm`,
@@ -45,6 +100,15 @@ describe("confirmation dev APIs", () => {
       payload: { reason: "稍后再约" }
     });
     expect(rejectResponse.statusCode).toBe(200);
+
+    const unfinishedCardsResponse = await app.inject({
+      method: "GET",
+      url: "/dev/cards"
+    });
+    const unfinishedCards = unfinishedCardsResponse.json() as Array<{ request_id: string }>;
+    expect(unfinishedCardsResponse.statusCode).toBe(200);
+    expect(unfinishedCards.map((card) => card.request_id)).not.toContain(action!.id);
+    expect(unfinishedCards.map((card) => card.request_id)).not.toContain(calendar!.id);
 
     const stateResponse = await app.inject({
       method: "GET",

@@ -1,5 +1,6 @@
 export * from "./actionItem";
 export * from "./calendarDraft";
+export * from "./card";
 export * from "./confirmation";
 export * from "./dev";
 export * from "./knowledgeBase";

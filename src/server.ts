@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { z, ZodError } from "zod";
 import { AppConfig } from "./config";
 import { ManualMeetingInputSchema } from "./schemas";
+import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
 import { confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
@@ -22,6 +23,21 @@ function briefError(error: unknown): string {
   }
 
   return error instanceof Error ? error.message : String(error);
+}
+
+function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest"]>) {
+  if (request === null) {
+    return null;
+  }
+
+  return {
+    ...request,
+    dry_run_card: buildConfirmationCardFromRequest(request)
+  };
+}
+
+function isUnfinishedConfirmation(request: ReturnType<Repositories["listConfirmationRequests"]>[number]): boolean {
+  return !["executed", "rejected", "failed"].includes(request.status);
 }
 
 export function buildServer(input: {
@@ -109,7 +125,29 @@ export function buildServer(input: {
     });
   });
 
-  app.get("/dev/confirmations", async () => input.repos.listConfirmationRequests());
+  app.get("/dev/confirmations", async () =>
+    input.repos.listConfirmationRequests().map((request) => ({
+      ...request,
+      dry_run_card: buildConfirmationCardFromRequest(request)
+    }))
+  );
+
+  app.get("/dev/cards", async () =>
+    input.repos
+      .listConfirmationRequests()
+      .filter(isUnfinishedConfirmation)
+      .map((request) => buildConfirmationCardFromRequest(request))
+  );
+
+  app.get("/dev/confirmations/:id/card", async (request, reply) => {
+    const params = request.params as { id: string };
+    const confirmation = withDryRunCard(input.repos.getConfirmationRequest(params.id));
+    if (!confirmation) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    return confirmation.dry_run_card;
+  });
 
   app.post("/dev/confirmations/:id/confirm", async (request) => {
     const params = request.params as { id: string };
