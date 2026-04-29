@@ -195,6 +195,12 @@ export interface ScenarioCoverage {
   by_scenario: Record<RequiredScenario, string[]>;
 }
 
+export interface EvaluationRunContext {
+  evaluation_type: "mock_fixture_pipeline" | "real_llm_extraction";
+  provider: EvaluationLlmProvider;
+  model: string | null;
+}
+
 const MetricDefinitions: Record<string, string> = {
   action_item_recall: "人工标注 action item 中，标题被生成结果命中的比例。",
   action_item_precision: "生成 action item 中，标题能命中人工标注的比例；这是粗略 precision。",
@@ -217,6 +223,7 @@ export interface EffectivenessEvaluationResult {
   generated_at: string;
   dry_run_only: true;
   llm_provider: EvaluationLlmProvider;
+  evaluation_context: EvaluationRunContext;
   manifest_path: string;
   output_dir: string;
   metric_definitions: Record<string, string>;
@@ -294,16 +301,30 @@ function parseEvaluationLlmProvider(value: string | undefined): EvaluationLlmPro
 function createEvaluationLlmClient(input: {
   provider: EvaluationLlmProvider;
   fixtureExtractions: MeetingExtractionResult[];
-}): LlmClient {
+}): { llm: LlmClient; context: EvaluationRunContext } {
   if (input.provider === "mock") {
-    return new FixtureEvaluationLlmClient(input.fixtureExtractions);
+    return {
+      llm: new FixtureEvaluationLlmClient(input.fixtureExtractions),
+      context: {
+        evaluation_type: "mock_fixture_pipeline",
+        provider: "mock",
+        model: "fixture extraction corpus"
+      }
+    };
   }
 
-  return createLlmClient(
-    loadConfig({
-      llmProvider: "openai-compatible"
-    })
-  );
+  const config = loadConfig({
+    llmProvider: "openai-compatible"
+  });
+
+  return {
+    llm: createLlmClient(config),
+    context: {
+      evaluation_type: "real_llm_extraction",
+      provider: "openai-compatible",
+      model: config.llmModel
+    }
+  };
 }
 
 function ratio(numerator: number, denominator: number): number {
@@ -692,17 +713,44 @@ function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function renderEvaluationModeBlock(result: EffectivenessEvaluationResult): string[] {
+  if (result.evaluation_context.evaluation_type === "mock_fixture_pipeline") {
+    return [
+      "## Mock Fixture 流程验证",
+      "",
+      `- Mock Fixture 流程通过率：${formatPercent(result.metrics.overall_accuracy)} (${result.metrics.matched_units}/${result.metrics.expected_units})`,
+      "- 该指标验证：人工标签、fixture extraction、workflow、topic clustering、confirmation 生成和指标计算是否按预期工作。",
+      "- 该指标不代表真实 LLM 在未知会议上的准确率，也不应被解读为模型准确率。",
+      `- Provider：${result.evaluation_context.provider}`,
+      `- Fixture model：${result.evaluation_context.model}`,
+      `- 运行时间：${result.metrics.agent_runtime_seconds.toFixed(2)} 秒`,
+      ""
+    ];
+  }
+
+  return [
+    "## Real LLM Extraction Evaluation",
+    "",
+    `- Provider：${result.evaluation_context.provider}`,
+    `- Model：${result.evaluation_context.model ?? "unknown"}`,
+    `- 运行时间：${result.metrics.agent_runtime_seconds.toFixed(2)} 秒`,
+    `- Extraction evaluation score：${formatPercent(result.metrics.overall_accuracy)} (${result.metrics.matched_units}/${result.metrics.expected_units})`,
+    "- 该指标来自本次真实模型对固定评测集的抽取结果，不等同于生产环境泛化准确率。",
+    ""
+  ];
+}
+
 function renderMarkdown(result: EffectivenessEvaluationResult): string {
   const lines = [
     "# MeetingAtlas 效果验证评测报告",
     "",
     `生成时间：${result.generated_at}`,
-    `执行方式：${result.llm_provider === "mock" ? "fixture mock LLM" : "openai-compatible LLM"} + 内存 SQLite；不连接真实飞书，不修改 FEISHU_DRY_RUN。`,
+    `执行方式：${result.llm_provider === "mock" ? "fixture mock extraction" : "openai-compatible LLM extraction"} + 内存 SQLite；不连接真实飞书，不修改 FEISHU_DRY_RUN。`,
     "",
-    "## 核心指标",
+    ...renderEvaluationModeBlock(result),
+    "## 指标明细",
     "",
     `- 样本数：${result.metrics.samples}`,
-    `- 总体准确率：${formatPercent(result.metrics.overall_accuracy)} (${result.metrics.matched_units}/${result.metrics.expected_units})`,
     `- Action item 召回率：${formatPercent(result.metrics.action_item_recall)}`,
     `- Action item precision 粗略估算：${formatPercent(result.metrics.action_item_precision)}`,
     `- Owner 准确率：${formatPercent(result.metrics.owner_accuracy)}`,
@@ -775,7 +823,7 @@ function renderMarkdown(result: EffectivenessEvaluationResult): string {
     lines.push("");
   }
 
-  return `${lines.join("\n")}\n`;
+  return `${lines.join("\n").trimEnd()}\n`;
 }
 
 function resultStatus(
@@ -803,7 +851,7 @@ export async function runEffectivenessEvaluation(
     options.llmProvider ?? parseEvaluationLlmProvider(process.env.EVALUATION_LLM_PROVIDER);
   const { manifest, labels, extractions, meetingTexts } = readEvaluationFixtureSet(manifestPath);
   const repos = createRepositories(createMemoryDatabase());
-  const llm = createEvaluationLlmClient({
+  const { llm, context } = createEvaluationLlmClient({
     provider: llmProvider,
     fixtureExtractions: extractions
   });
@@ -929,6 +977,7 @@ export async function runEffectivenessEvaluation(
     generated_at: options.generatedAt ?? new Date().toISOString(),
     dry_run_only: true,
     llm_provider: llmProvider,
+    evaluation_context: context,
     manifest_path: manifestPath,
     output_dir: outputDir,
     metric_definitions: MetricDefinitions,
@@ -1005,7 +1054,9 @@ export async function runFixtureEvaluationCli(): Promise<void> {
         `Status: ${result.status}`,
         `Samples: ${result.metrics.samples}`,
         `LLM provider: ${result.llm_provider}`,
-        `Overall accuracy: ${formatPercent(result.metrics.overall_accuracy)}`,
+        result.evaluation_context.evaluation_type === "mock_fixture_pipeline"
+          ? `Mock fixture pipeline pass rate: ${formatPercent(result.metrics.overall_accuracy)}`
+          : `Real LLM extraction evaluation: ${formatPercent(result.metrics.overall_accuracy)}`,
         `Scenario coverage: ${result.scenario_coverage.covered.length}/${result.scenario_coverage.required.length}`,
         `User acceptance proxy: ${formatPercent(result.metrics.user_acceptance_proxy)}`,
         `Agent dry-run runtime: ${result.metrics.agent_runtime_seconds.toFixed(2)}s`,

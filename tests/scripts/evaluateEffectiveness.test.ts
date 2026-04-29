@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   calculateEvaluationMetrics,
   calculateMatchStats,
@@ -136,6 +139,11 @@ describe("effectiveness evaluation", () => {
     expect(result.status).toBe("passed");
     expect(result.dry_run_only).toBe(true);
     expect(result.llm_provider).toBe("mock");
+    expect(result.evaluation_context).toEqual({
+      evaluation_type: "mock_fixture_pipeline",
+      provider: "mock",
+      model: "fixture extraction corpus"
+    });
     expect(result.metrics.samples).toBe(8);
     expect(result.metrics.overall_accuracy).toBe(1);
     expect(result.metrics.action_item_recall).toBe(1);
@@ -201,5 +209,26 @@ describe("effectiveness evaluation", () => {
     expect(secondDrone.generated_create_kb).toBe(true);
     expect(secondDrone.topic_action).toBe("ask_create");
     expect(secondDrone.kb_route_correct).toBe(true);
+  });
+
+  it("labels mock reports as fixture pipeline validation, not real model accuracy", async () => {
+    const outputDir = mkdtempSync(join(tmpdir(), "meeting-atlas-eval-"));
+    try {
+      const reportResult = await runEffectivenessEvaluation({
+        outputDir,
+        writeOutputs: true,
+        generatedAt: "2026-04-29T00:00:00.000Z",
+        llmProvider: "mock"
+      });
+      expect(reportResult.report_paths.markdown).not.toBeNull();
+
+      const markdown = readFileSync(reportResult.report_paths.markdown!, "utf8");
+      expect(markdown).toContain("Mock Fixture 流程通过率：100.0% (50/50)");
+      expect(markdown).toContain("不代表真实 LLM 在未知会议上的准确率");
+      expect(markdown).not.toContain("总体准确率");
+      expect(markdown).not.toContain("Real LLM Extraction Evaluation");
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,12 +1,20 @@
 # MeetingAtlas 效果验证评测报告
 
-生成时间：2026-04-29T11:14:01.418Z
-执行方式：fixture mock LLM + 内存 SQLite；不连接真实飞书，不修改 FEISHU_DRY_RUN。
+生成时间：2026-04-29T12:19:50.493Z
+执行方式：fixture mock extraction + 内存 SQLite；不连接真实飞书，不修改 FEISHU_DRY_RUN。
 
-## 核心指标
+## Mock Fixture 流程验证
+
+- Mock Fixture 流程通过率：100.0% (50/50)
+- 该指标验证：人工标签、fixture extraction、workflow、topic clustering、confirmation 生成和指标计算是否按预期工作。
+- 该指标不代表真实 LLM 在未知会议上的准确率，也不应被解读为模型准确率。
+- Provider：mock
+- Fixture model：fixture extraction corpus
+- 运行时间：0.01 秒
+
+## 指标明细
 
 - 样本数：8
-- 总体准确率：100.0% (50/50)
 - Action item 召回率：100.0%
 - Action item precision 粗略估算：100.0%
 - Owner 准确率：100.0%

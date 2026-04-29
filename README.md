@@ -231,10 +231,15 @@ npm run demo:full-p0 -- --send-cards --chat-id oc_xxx
 
 ## 效果验证评测
 
-`npm run evaluate` 会运行离线效果评测集：8 条人工标注会议样本、fixture LLM 抽取结果、
+`npm run evaluate` 会运行离线效果评测集：8 条人工标注会议样本、fixture mock extraction、
 内存 SQLite workflow，不连接真实飞书，也不修改 `FEISHU_DRY_RUN`。默认使用评测 mock；
 如需手动对比真实模型，可设置 `EVALUATION_LLM_PROVIDER=openai-compatible`，并提供
 `LLM_BASE_URL`、`LLM_API_KEY` 和 `LLM_MODEL`。自动化测试始终固定为 mock。
+
+默认报告的汇总项叫 `Mock Fixture 流程通过率`：它验证人工标签、fixture extraction、
+workflow、topic clustering、confirmation 生成和指标计算是否按预期工作，不代表真实
+LLM 在未知会议上的准确率。真实模型复测报告会标注 `Real LLM Extraction Evaluation`、
+provider、model 和运行时间。
 
 输出报告：
 
@@ -243,7 +248,7 @@ evaluation-output/evaluation-latest.json
 evaluation-output/evaluation-report.md
 ```
 
-报告覆盖准确性、用户接受度代理指标、估算效率提升，以及 8 类关键评测场景：
+报告覆盖 fixture/real extraction matching、用户接受度代理指标、估算效率提升，以及 8 类关键评测场景：
 明确待办、明确日程、截止时间非日程、模糊表达不生成任务、相关会议触发知识库、
 不相关会议不触发知识库、有决策但无待办、有风险但无明确负责人。
 核心指标会单独列出 action item recall、粗略 precision、owner / due date 准确率、

@@ -79,7 +79,7 @@ evaluation/fixtures/
 
 ## 如何运行
 
-默认 mock 评测：
+默认 mock fixture 流程验证：
 
 ```bash
 npm run evaluate
@@ -96,15 +96,20 @@ evaluation-output/evaluation-report.md
 
 自动化测试调用 `runEffectivenessEvaluation({ llmProvider: "mock" })`，因此不会依赖真实 LLM 或本机 `.env`。
 
-## 当前 Mock 评测结果
+默认报告会将核心汇总写为 `Mock Fixture 流程通过率`。这个指标验证人工标签、fixture extraction、workflow、topic clustering、confirmation 生成和指标计算是否按预期工作，不代表真实 LLM 在未知会议上的准确率。
 
-当前 mock 结果见 `docs/EVALUATION_REPORT.md` 和 `evaluation-output/evaluation-report.md`。核心结论：
+## 当前 Mock Fixture 流程验证结果
+
+当前 mock fixture 结果见 `docs/EVALUATION_REPORT.md` 和 `evaluation-output/evaluation-report.md`。核心结论：
 
 - 8 条样本全部通过。
 - 关键场景覆盖：8/8。
-- Action item、calendar、owner、due date、knowledge base trigger 相关指标均为 100%。
+- Mock Fixture 流程通过率为 100%。
+- Fixture action item、calendar、owner、due date、knowledge base trigger 路由检查均与人工标签一致。
 - False positive count 为 0。
 - Confirmation burden 为 1.88 / meeting。
+
+这些结果只能证明固定 fixture pipeline 可复现，不能写成真实 LLM 准确率。
 
 ## 如何用真实 LLM 复测
 
@@ -122,6 +127,7 @@ npm run evaluate
 
 - `EVALUATION_LLM_PROVIDER` 默认是 `mock`。
 - 设置为 `openai-compatible` 时，脚本使用现有 `MeetingExtractionAgent` 调用真实兼容模型。
+- 真实 LLM 报告会显示 `Real LLM Extraction Evaluation`、provider、model 和运行时间。
 - 若缺少 `LLM_BASE_URL`、`LLM_API_KEY` 或 `LLM_MODEL`，配置会 fail fast。
 - 测试环境仍固定为 mock，不会因为本机 `.env` 中有真实模型配置而变得不稳定。
 

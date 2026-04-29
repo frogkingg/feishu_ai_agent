@@ -11,16 +11,23 @@ npm run evaluate
 The default provider is the fixture-backed mock evaluator. To compare against a real
 OpenAI-compatible model manually, set `EVALUATION_LLM_PROVIDER=openai-compatible`
 and provide `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`. Tests always pin the
-provider back to `mock`.
+provider back to `mock`. Real LLM reports are labeled as `Real LLM Extraction
+Evaluation` and include provider, model, and runtime.
 
 The command writes:
 
 - `evaluation-output/evaluation-latest.json` (ignored by git)
 - `evaluation-output/evaluation-report.md`
 
-The report covers three competition-facing metrics:
+The default report is a mock fixture pipeline validation report. Its headline
+number is a pipeline pass rate for manual labels, fixture extractions, workflow,
+topic clustering, confirmation generation, and metric calculation. It is not a
+real LLM accuracy claim for unknown meetings.
 
-- Accuracy: action items, calendar drafts, decisions, topic keywords, and create_kb routing.
+The report covers three competition-facing views:
+
+- Fixture/real extraction matching: action items, calendar drafts, decisions,
+  topic keywords, and create_kb routing.
 - User acceptance proxy: generated confirmations that match the manual labels.
 - Efficiency lift: estimated manual processing time versus confirmation review time.
 - Scenario coverage: the required edge cases for tasks, schedules, decisions, risks, and KB routing.
