@@ -4,7 +4,8 @@ Phase 4 wired confirmation execution into the tool layer.
 
 Phase 6 still keeps knowledge-base creation as local dry-run Markdown.
 The current card-send phase adds a `lark.im.send_card` wrapper for confirmation cards.
-Real Feishu writes remain disabled by default through `FEISHU_DRY_RUN=true`.
+Real Feishu writes remain disabled by default through `FEISHU_DRY_RUN=true`;
+card sending has its own `FEISHU_CARD_DRY_RUN` switch and defaults to the global value.
 
 ## Current Tool Commands
 
@@ -25,8 +26,11 @@ lark-cli im +messages-send --chat-id oc_xxx --msg-type interactive --content <ca
 lark-cli im +messages-send --user-id ou_xxx --msg-type interactive --content <card-json> --as bot
 ```
 
-In `FEISHU_DRY_RUN=true`, MeetingAtlas does not execute the binary; it records
-the planned command in `cli_runs` with tool `lark.im.send_card`.
+In `FEISHU_CARD_DRY_RUN=true`, MeetingAtlas does not execute the binary; it records
+the planned command in `cli_runs` with tool `lark.im.send_card`. To verify real card
+sending while keeping tasks, calendars, and knowledge-base writes dry-run, run with
+`FEISHU_DRY_RUN=true FEISHU_CARD_DRY_RUN=false` after the bot and CLI command shape
+are calibrated.
 
 Before enabling real writes, calibrate command names and payload shape with the
 local CLI:
@@ -44,6 +48,8 @@ The default `LARK_CLI_BIN` is `lark-cli`.
 
 - All write actions must originate from a confirmation request.
 - Dry-run must not execute `execFile`.
+- `FEISHU_CARD_DRY_RUN` only controls IM card sending; action/calendar/create_kb
+  execution still follows `FEISHU_DRY_RUN`.
 - Every CLI plan or execution is recorded in `cli_runs`.
 - Token, secret, authorization, and access token values are redacted before recording.
 - Sending a confirmation card is not the same as confirming the action. It must

@@ -23,6 +23,8 @@ describe("GET /health", () => {
       ok: true,
       service: "meeting-atlas",
       phase: "phase-6",
+      dry_run: true,
+      card_dry_run: true,
       llm_provider: "mock"
     });
   });

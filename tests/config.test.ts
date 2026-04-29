@@ -30,6 +30,19 @@ describe("loadConfig", () => {
     });
   });
 
+  it("lets card sending dry-run follow or override the global Feishu dry-run flag", () => {
+    expect(loadConfig({ feishuDryRun: true }).feishuCardDryRun).toBe(true);
+    expect(loadConfig({ feishuDryRun: false }).feishuCardDryRun).toBe(false);
+    expect(loadConfig({ feishuDryRun: true, feishuCardDryRun: false })).toMatchObject({
+      feishuDryRun: true,
+      feishuCardDryRun: false
+    });
+    expect(loadConfig({ feishuDryRun: false, feishuCardDryRun: true })).toMatchObject({
+      feishuDryRun: false,
+      feishuCardDryRun: true
+    });
+  });
+
   it("throws a clear error when OpenAI-compatible config is incomplete", () => {
     expect(() =>
       loadConfig({

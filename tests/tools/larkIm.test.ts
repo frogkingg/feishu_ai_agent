@@ -105,6 +105,62 @@ describe("larkIm.sendCard", () => {
     });
   });
 
+  it("can attempt real card sending while other Feishu writes stay dry-run", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const result = await sendCard({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCardDryRun: false,
+        larkCliBin: "definitely-not-real-lark"
+      }),
+      card,
+      chatId: "oc_test_chat"
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "failed",
+      dry_run: false,
+      card_message_id: null,
+      chat_id: "oc_test_chat"
+    });
+    expect(repos.listCliRuns()).toHaveLength(1);
+    expect(repos.listCliRuns()[0]).toMatchObject({
+      tool: "lark.im.send_card",
+      dry_run: 0,
+      status: "failed"
+    });
+  });
+
+  it("can keep card sending dry-run even when other Feishu writes are real", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const result = await sendCard({
+      repos,
+      config: loadConfig({
+        feishuDryRun: false,
+        feishuCardDryRun: true,
+        larkCliBin: "definitely-not-real-lark"
+      }),
+      card,
+      chatId: "oc_test_chat"
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: "planned",
+      dry_run: true,
+      card_message_id: null,
+      chat_id: "oc_test_chat"
+    });
+    expect(repos.listCliRuns()).toHaveLength(1);
+    expect(repos.listCliRuns()[0]).toMatchObject({
+      tool: "lark.im.send_card",
+      dry_run: 1,
+      status: "planned"
+    });
+  });
+
   it("fails without a destination instead of pretending to send", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const result = await sendCard({

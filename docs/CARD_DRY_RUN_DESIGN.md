@@ -8,9 +8,11 @@
 创建知识库或改变后续协作状态的动作，都必须先生成 confirmation request 和
 card preview，用户确认后才进入执行流程。
 
-当前实现会生成 dry-run card JSON，并提供 `larkIm.sendCard` 的 dry-run 集成。
-在 `FEISHU_DRY_RUN=true` 下，发送卡片只会记录 `cli_runs`，不会真实发送飞书消息，
-也不会调用真实飞书任务、日程、Wiki 或 Doc 写入能力。
+当前实现会生成 dry-run card JSON，并提供 `larkIm.sendCard` 集成。
+`FEISHU_CARD_DRY_RUN` 独立控制确认卡片是否真实发送，默认跟随 `FEISHU_DRY_RUN`。
+在 `FEISHU_CARD_DRY_RUN=true` 下，发送卡片只会记录 `cli_runs`，不会真实发送飞书消息，
+也不会调用真实飞书任务、日程、Wiki 或 Doc 写入能力。需要只验证真实卡片发送时，可以保持
+`FEISHU_DRY_RUN=true`，并显式设置 `FEISHU_CARD_DRY_RUN=false`。
 
 Demo 报告资产拆分为两类：完整 P0 主链路继续写入
 `demo-output/p0-demo-report.md`；send-cards dry-run 验收写入
@@ -76,15 +78,16 @@ POST 前失败。刚跑过 `full-p0` 后，如需验证 `send-cards`，请换新
 { "chat_id": "oc_xxx" }
 ```
 
-在 dry-run 下不会执行 `lark-cli`，只会记录一条 tool 为 `lark.im.send_card` 的
-`cli_runs`。在 real mode 下会调用：
+在 card dry-run 下不会执行 `lark-cli`，只会记录一条 tool 为 `lark.im.send_card` 的
+`cli_runs`。当 `FEISHU_CARD_DRY_RUN=false` 时会调用：
 
 ```text
 lark-cli im +messages-send --msg-type interactive --content <card-json> --as bot
 ```
 
 如果 CLI 不存在、命令未校准或返回结果中没有 `message_id`，接口必须返回失败，
-不得写入假的 `card_message_id`。
+不得写入假的 `card_message_id`。这个开关只影响卡片发送；任务、日程和知识库写入
+仍由 `FEISHU_DRY_RUN` 控制。
 
 `POST /dev/cards/send-all`
 
@@ -94,6 +97,7 @@ lark-cli im +messages-send --msg-type interactive --content <card-json> --as bot
 `npm run demo:full-p0 -- --send-cards --chat-id <chat_id>` 会调用这个接口。该模式
 只发送确认卡片，不执行 confirm/reject，因此 action、calendar、create_kb 的
 confirmations executed 为 `0` 是预期结果。
+默认 Demo 服务应保持 `FEISHU_CARD_DRY_RUN=true`；只有真实发卡验收时才显式关闭。
 `--allow-dirty` 仅用于开发调试，不推荐录 Demo 使用。
 
 `POST /dev/confirmations/:id/remind-later`

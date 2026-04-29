@@ -8,6 +8,7 @@ export interface AppConfig {
   port: number;
   sqlitePath: string;
   feishuDryRun: boolean;
+  feishuCardDryRun: boolean;
   larkCliBin: string;
   llmProvider: "mock" | "openai-compatible";
   llmApiKey: string | null;
@@ -66,12 +67,14 @@ function validateConfig(config: AppConfig): AppConfig {
 
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const sqlitePath = process.env.SQLITE_PATH ?? "./data/meeting-atlas.db";
+  const defaultFeishuDryRun = parseBoolean(process.env.FEISHU_DRY_RUN, true);
 
   const config: AppConfig = {
     nodeEnv: process.env.NODE_ENV ?? "development",
     port: Number(process.env.PORT ?? 3000),
     sqlitePath: path.isAbsolute(sqlitePath) ? sqlitePath : path.join(process.cwd(), sqlitePath),
-    feishuDryRun: parseBoolean(process.env.FEISHU_DRY_RUN, true),
+    feishuDryRun: defaultFeishuDryRun,
+    feishuCardDryRun: parseBoolean(process.env.FEISHU_CARD_DRY_RUN, defaultFeishuDryRun),
     larkCliBin: process.env.LARK_CLI_BIN || "lark-cli",
     llmProvider: parseLlmProvider(process.env.LLM_PROVIDER),
     llmApiKey: process.env.LLM_API_KEY || null,
@@ -83,6 +86,9 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     llmDebugRaw: parseBoolean(process.env.LLM_DEBUG_RAW, false),
     ...overrides
   };
+  if (overrides.feishuCardDryRun === undefined && process.env.FEISHU_CARD_DRY_RUN === undefined) {
+    config.feishuCardDryRun = config.feishuDryRun;
+  }
 
   return validateConfig(config);
 }

@@ -90,6 +90,7 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
     service: "meeting-atlas",
     phase: "phase-6",
     dry_run: input.config.feishuDryRun,
+    card_dry_run: input.config.feishuCardDryRun,
     llm_provider: input.config.llmProvider,
     sqlite_path: input.config.sqlitePath
   }));
