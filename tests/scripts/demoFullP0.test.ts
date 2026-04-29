@@ -1,7 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runFullP0Demo } from "../../scripts/demo-full-p0";
+import { runFullP0Demo, type StateResponse } from "../../scripts/demo-full-p0";
 import { loadConfig } from "../../src/config";
 import { buildServer } from "../../src/server";
 import { MeetingExtractionResult } from "../../src/schemas";
@@ -54,6 +54,71 @@ function fetchViaInject(app: ReturnType<typeof buildServer>): typeof fetch {
 }
 
 describe("demo-full-p0 script", () => {
+  it("rejects a dirty database before posting the first meeting", async () => {
+    let postedMeeting = false;
+    const dirtyState = {
+      meetings: [{ id: "mtg_existing_1" }, { id: "mtg_existing_2" }],
+      action_items: [{ id: "act_1" }, { id: "act_2" }, { id: "act_3" }],
+      calendar_drafts: [{ id: "cal_1" }],
+      knowledge_bases: [{ id: "kb_1" }],
+      knowledge_updates: [],
+      confirmation_requests: Array.from({ length: 5 }, (_, index) => ({
+        id: `confirm_${index}`
+      })),
+      cli_runs: []
+    } as unknown as StateResponse;
+    const fetchFn: typeof fetch = async (input, init) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const url = new URL(rawUrl);
+      const method = init?.method ?? "GET";
+
+      if (method === "GET" && url.pathname === "/health") {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            service: "MeetingAtlas",
+            dry_run: true,
+            llm_provider: "mock",
+            sqlite_path: "/tmp/dirty-demo.db"
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (method === "GET" && url.pathname === "/dev/state") {
+        return new Response(JSON.stringify(dirtyState), { status: 200 });
+      }
+
+      if (method === "POST" && url.pathname === "/dev/meetings/manual") {
+        postedMeeting = true;
+      }
+
+      return new Response(JSON.stringify({ error: "unexpected request" }), { status: 500 });
+    };
+
+    const error = await runFullP0Demo({
+      baseUrl: "http://meeting-atlas.test",
+      fetchFn,
+      log: () => undefined,
+      writeOutputs: false
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught
+    );
+
+    expect(postedMeeting).toBe(false);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("Demo requires a clean dry-run database.");
+    expect(message).toContain("meetings=2");
+    expect(message).toContain("action_items=3");
+    expect(message).toContain("calendar_drafts=1");
+    expect(message).toContain("knowledge_bases=1");
+    expect(message).toContain("confirmation_requests=5");
+    expect(message).toContain("SQLITE_PATH=/tmp/meeting-atlas-demo-$(date +%s).db");
+  });
+
   it("auto-confirms create_kb, writes knowledge state, and avoids duplicate knowledge-base action confirmations", async () => {
     const firstExtraction = {
       ...(await readExpectedExtraction("drone_interview_01.extraction.json")),

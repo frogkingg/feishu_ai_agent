@@ -17,6 +17,12 @@ Demo 报告资产拆分为两类：完整 P0 主链路继续写入
 `demo-output/send-cards-demo-report.md`。前者证明确认后执行闭环，后者证明确认卡片
 发送计划进入 `lark.im.send_card`，两者互补而不是替代关系。
 
+`full-p0`、`cards-only` 和 `send-cards` 默认都要求干净 SQLite DB。脚本启动时会先
+读取 `/dev/state`，确认 `meetings`、`action_items`、`calendar_drafts`、
+`knowledge_bases`、`confirmation_requests` 全部为空；dirty DB 会在第一场会议
+POST 前失败。刚跑过 `full-p0` 后，如需验证 `send-cards`，请换新的 `SQLITE_PATH`
+重新启动 dry-run 服务。
+
 ## 当前输出
 
 每个 confirmation request 会在 `original_payload_json` 中保留原始业务 payload，
@@ -88,6 +94,7 @@ lark-cli im +messages-send --msg-type interactive --content <card-json> --as bot
 `npm run demo:full-p0 -- --send-cards --chat-id <chat_id>` 会调用这个接口。该模式
 只发送确认卡片，不执行 confirm/reject，因此 action、calendar、create_kb 的
 confirmations executed 为 `0` 是预期结果。
+`--allow-dirty` 仅用于开发调试，不推荐录 Demo 使用。
 
 `POST /dev/confirmations/:id/remind-later`
 `POST /dev/confirmations/:id/convert-to-task`

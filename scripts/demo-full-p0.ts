@@ -173,6 +173,7 @@ export interface RunFullP0DemoOptions {
   mode?: DemoMode;
   recipient?: string;
   chatId?: string;
+  allowDirty?: boolean;
 }
 
 export interface RunFullP0DemoResult {
@@ -193,11 +194,14 @@ interface DemoContext {
   mode: DemoMode;
   recipient?: string;
   chatId?: string;
+  allowDirty: boolean;
 }
 
 const DEFAULT_BASE_URL = process.env.MEETING_ATLAS_BASE_URL ?? "http://127.0.0.1:3000";
 const CONTENT_TYPE_JSON = { "Content-Type": "application/json" };
 const DEFAULT_DEMO_OUTPUT_DIR = join(process.cwd(), "demo-output");
+const CLEAN_DATABASE_SERVICE_COMMAND =
+  "PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo-$(date +%s).db FEISHU_DRY_RUN=true LLM_PROVIDER=mock npm run dev";
 
 const FIRST_MEETING_TRANSCRIPT = `
 会议主题：无人机操作方案初步访谈
@@ -296,7 +300,8 @@ function createDemoContext(options: RunFullP0DemoOptions): DemoContext {
     writeOutputs: options.writeOutputs ?? true,
     mode,
     recipient: options.recipient,
-    chatId: options.chatId
+    chatId: options.chatId,
+    allowDirty: options.allowDirty ?? false
   };
 }
 
@@ -377,6 +382,55 @@ async function getHealth(context: DemoContext): Promise<HealthResponse> {
   );
   ok(context, `service=${health.service}, dry_run=${health.dry_run}, sqlite=${health.sqlite_path}`);
   return health;
+}
+
+function getCleanStateCounts(state: StateResponse): Array<[string, number]> {
+  return [
+    ["meetings", state.meetings.length],
+    ["action_items", state.action_items.length],
+    ["calendar_drafts", state.calendar_drafts.length],
+    ["knowledge_bases", state.knowledge_bases.length],
+    ["confirmation_requests", state.confirmation_requests.length]
+  ];
+}
+
+function formatStateCounts(counts: Array<[string, number]>): string {
+  return counts.map(([name, count]) => `${name}=${count}`).join("\n");
+}
+
+function formatDirtyDatabaseError(state: StateResponse): string {
+  return [
+    "Demo requires a clean dry-run database.",
+    "",
+    "Current state:",
+    formatStateCounts(getCleanStateCounts(state)),
+    "",
+    "Start a clean service with:",
+    CLEAN_DATABASE_SERVICE_COMMAND,
+    "",
+    "For development debugging only, rerun with --allow-dirty to bypass this guard."
+  ].join("\n");
+}
+
+async function assertCleanDatabase(context: DemoContext): Promise<StateResponse> {
+  step(context, "GET /dev/state (clean database check)");
+  const state = await requestJson<StateResponse>(context, "GET", "/dev/state");
+  const counts = getCleanStateCounts(state);
+  const isClean = counts.every(([, count]) => count === 0);
+
+  if (!isClean && !context.allowDirty) {
+    throw new Error(formatDirtyDatabaseError(state));
+  }
+
+  ok(
+    context,
+    isClean
+      ? "clean dry-run database verified"
+      : `dirty database allowed by --allow-dirty (${counts
+          .map(([name, count]) => `${name}=${count}`)
+          .join(", ")})`
+  );
+  return state;
 }
 
 async function submitMeeting(
@@ -740,6 +794,7 @@ async function writeDemoOutputs(context: DemoContext, summary: DemoReportSummary
 async function runCardPhaseDemo(options: RunFullP0DemoOptions): Promise<RunFullP0DemoResult> {
   const context = createDemoContext(options);
   const health = await getHealth(context);
+  await assertCleanDatabase(context);
 
   const first = await submitMeeting(context, {
     title: "无人机操作方案真实 LLM 测试",
@@ -863,6 +918,7 @@ export async function runFullP0Demo(
 
   const context = createDemoContext(options);
   const health = await getHealth(context);
+  await assertCleanDatabase(context);
 
   const first = await submitMeeting(context, {
     title: "无人机操作方案真实 LLM 测试",
@@ -1082,7 +1138,8 @@ function parseMainOptions(args: string[]): RunFullP0DemoOptions {
   return {
     mode: parseDemoMode(args),
     recipient: readArgValue(args, "--recipient"),
-    chatId: readArgValue(args, "--chat-id")
+    chatId: readArgValue(args, "--chat-id"),
+    allowDirty: args.includes("--allow-dirty")
   };
 }
 
@@ -1093,12 +1150,15 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   main().catch((error) => {
-    console.error("\n[failed] MeetingAtlas P0 demo did not complete.");
-    console.error(error instanceof Error ? error.message : String(error));
-    console.error("\nStart a clean dry-run service with, for example:");
-    console.error(
-      "PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev"
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith("Demo requires a clean dry-run database.")) {
+      console.error(`\n[failed] ${message}`);
+    } else {
+      console.error("\n[failed] MeetingAtlas P0 demo did not complete.");
+      console.error(message);
+      console.error("\nStart a clean dry-run service with, for example:");
+      console.error(CLEAN_DATABASE_SERVICE_COMMAND);
+    }
     process.exit(1);
   });
 }

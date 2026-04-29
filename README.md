@@ -221,6 +221,16 @@ POST /webhooks/feishu/event
 `npm run demo:full-p0` 会额外校验卡片预览：第一场会议后至少 2 张 action card 和
 1 张 calendar card，第二场会议后 1 张 create_kb card，并在报告里输出
 `Card previews generated: 4`。
+`full-p0` 和卡片阶段脚本启动时都会先读取 `/dev/state`，默认要求干净 SQLite DB：
+`meetings`、`action_items`、`calendar_drafts`、`knowledge_bases`、
+`confirmation_requests` 必须全部为空。刚跑过 `full-p0` 后，请换新的
+`SQLITE_PATH` 再跑 `--send-cards`。
+
+推荐每次演示用新的 dry-run 数据库启动服务：
+
+```bash
+PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo-$(date +%s).db FEISHU_DRY_RUN=true LLM_PROVIDER=mock npm run dev
+```
 
 卡片阶段也可以只跑确认卡片链路：
 
@@ -228,6 +238,10 @@ POST /webhooks/feishu/event
 npm run demo:full-p0 -- --cards-only
 npm run demo:full-p0 -- --send-cards --chat-id oc_xxx
 ```
+
+`--send-cards` 只验证卡片发送 dry-run，会记录 `lark.im.send_card` 的 dry-run
+`cli_runs`，不执行 confirmations，也不创建任务、日程或知识库。开发调试可以加
+`--allow-dirty` 绕过干净库检查，但不推荐录 Demo 使用。
 
 ## 效果验证评测
 
