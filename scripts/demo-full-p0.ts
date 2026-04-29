@@ -270,17 +270,31 @@ const CREATE_KB_CARD_ACTION_KEYS = [
 ];
 const DEFAULT_CARD_ACTION_KEYS = ["confirm", "reject"];
 
+function getDemoOutputStem(mode: DemoMode): string {
+  switch (mode) {
+    case "full-p0":
+      return "p0-demo";
+    case "cards-only":
+      return "cards-only-demo";
+    case "send-cards":
+      return "send-cards-demo";
+  }
+}
+
 function createDemoContext(options: RunFullP0DemoOptions): DemoContext {
   const outputDir = options.outputDir ?? DEFAULT_DEMO_OUTPUT_DIR;
+  const mode = options.mode ?? "full-p0";
+  const outputStem = getDemoOutputStem(mode);
+
   return {
     baseUrl: (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, ""),
     outputDir,
-    latestJsonPath: join(outputDir, "p0-demo-latest.json"),
-    reportPath: join(outputDir, "p0-demo-report.md"),
+    latestJsonPath: join(outputDir, `${outputStem}-latest.json`),
+    reportPath: join(outputDir, `${outputStem}-report.md`),
     fetchFn: options.fetchFn ?? fetch,
     log: options.log ?? ((message) => console.log(message)),
     writeOutputs: options.writeOutputs ?? true,
-    mode: options.mode ?? "full-p0",
+    mode,
     recipient: options.recipient,
     chatId: options.chatId
   };
@@ -596,7 +610,9 @@ function buildCardPhaseReportSummary(input: {
     llm_provider: input.health.llm_provider,
     feishu_write_mode: "dry-run",
     dry_run_note:
-      "FEISHU_DRY_RUN=true; this demo generated or dry-run sent confirmation cards only.",
+      input.context.mode === "send-cards"
+        ? "FEISHU_DRY_RUN=true; this demo dry-run sends confirmation cards only and does not execute confirmations."
+        : "FEISHU_DRY_RUN=true; this demo generates confirmation cards only and does not execute confirmations.",
     meetings_processed: 2,
     action_confirmations_executed: 0,
     calendar_confirmations_executed: 0,
@@ -634,6 +650,7 @@ function formatTerminalReport(summary: DemoReportSummary): string {
     `Mode: ${summary.mode}`,
     `LLM Provider: ${summary.llm_provider}`,
     `Feishu Write Mode: ${summary.feishu_write_mode}`,
+    `Mode note: ${summary.dry_run_note}`,
     `Meetings processed: ${summary.meetings_processed}`,
     `Action confirmations executed: ${summary.action_confirmations_executed}`,
     `Calendar confirmations executed: ${summary.calendar_confirmations_executed}`,
@@ -650,9 +667,20 @@ function formatTerminalReport(summary: DemoReportSummary): string {
   ].join("\n");
 }
 
+function getMarkdownReportTitle(mode: DemoMode): string {
+  switch (mode) {
+    case "full-p0":
+      return "MeetingAtlas P0 Demo Report";
+    case "cards-only":
+      return "MeetingAtlas Cards-only Demo Report";
+    case "send-cards":
+      return "MeetingAtlas Send-cards Demo Report";
+  }
+}
+
 function formatMarkdownReport(summary: DemoReportSummary): string {
   return [
-    "# MeetingAtlas P0 Demo Report",
+    `# ${getMarkdownReportTitle(summary.mode)}`,
     "",
     "✅ MeetingAtlas P0 Demo passed",
     "",
@@ -661,6 +689,7 @@ function formatMarkdownReport(summary: DemoReportSummary): string {
     `- Base URL: ${summary.base_url}`,
     `- LLM Provider: ${summary.llm_provider}`,
     `- Feishu Write Mode: ${summary.feishu_write_mode}`,
+    `- Mode note: ${summary.dry_run_note}`,
     `- Meetings processed: ${summary.meetings_processed}`,
     `- Action confirmations executed: ${summary.action_confirmations_executed}`,
     `- Calendar confirmations executed: ${summary.calendar_confirmations_executed}`,

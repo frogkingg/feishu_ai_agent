@@ -54,6 +54,12 @@ npm run demo:full-p0 -- --send-cards --chat-id oc_xxx
 npm run demo:full-p0 -- --send-cards --recipient ou_xxx
 ```
 
+完整 P0 和 send-cards 是互补验收，不是互相替代：
+
+- `full-p0` 用来证明 action、calendar、create_kb confirmation 的完整执行闭环。
+- `send-cards` 用来证明确认卡片可以进入 `larkIm.sendCard` dry-run wrapper。
+- `cards-only` 只证明卡片 preview 生成，不执行确认也不发送卡片。
+
 推荐使用干净的 dry-run 数据库做演示：
 
 ```bash
@@ -121,6 +127,8 @@ PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev
 
 `--cards-only` 会跑到第二场卡片生成后停止，不调用 confirm/reject。
 `--send-cards` 会在此基础上调用 `POST /dev/cards/send-all`，只验证 send-card dry-run CLI 记录。
+因此 `--send-cards` 的 confirmations executed 为 `0` 是预期结果，它只发送确认卡片，
+不执行确认动作。
 
 ## 卡片 Dry-run 说明
 
@@ -158,6 +166,7 @@ PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev
 Mode: full-p0
 LLM Provider: openai-compatible
 Feishu Write Mode: dry-run
+Mode note: FEISHU_DRY_RUN=true; this demo did not perform real Feishu writes.
 Meetings processed: 2
 Action confirmations executed: 2
 Calendar confirmations executed: 1
@@ -176,8 +185,13 @@ Knowledge update: kb_created
 
 成功运行后会生成：
 
-- `demo-output/p0-demo-latest.json`: 最近一次 Demo 的结构化结果，已加入 `.gitignore`。
-- `demo-output/p0-demo-report.md`: 最近一次 Demo 的人类可读报告，可以作为阶段成果留存。
+- `full-p0`: `demo-output/p0-demo-latest.json` 和 `demo-output/p0-demo-report.md`。
+- `cards-only`: `demo-output/cards-only-demo-latest.json` 和 `demo-output/cards-only-demo-report.md`。
+- `send-cards`: `demo-output/send-cards-demo-latest.json` 和 `demo-output/send-cards-demo-report.md`。
+
+`demo-output/*.json` 已加入 `.gitignore`，不作为报告资产提交。
+Markdown 报告可以提交：`p0-demo-report.md` 代表完整 P0 主链路，
+`send-cards-demo-report.md` 代表卡片发送 dry-run 链路。
 
 报告不会写入 API Key，也不会写入 `.env` 内容。
 

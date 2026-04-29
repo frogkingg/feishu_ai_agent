@@ -12,6 +12,11 @@ card preview，用户确认后才进入执行流程。
 在 `FEISHU_DRY_RUN=true` 下，发送卡片只会记录 `cli_runs`，不会真实发送飞书消息，
 也不会调用真实飞书任务、日程、Wiki 或 Doc 写入能力。
 
+Demo 报告资产拆分为两类：完整 P0 主链路继续写入
+`demo-output/p0-demo-report.md`；send-cards dry-run 验收写入
+`demo-output/send-cards-demo-report.md`。前者证明确认后执行闭环，后者证明确认卡片
+发送计划进入 `lark.im.send_card`，两者互补而不是替代关系。
+
 ## 当前输出
 
 每个 confirmation request 会在 `original_payload_json` 中保留原始业务 payload，
@@ -79,6 +84,10 @@ lark-cli im +messages-send --msg-type interactive --content <card-json> --as bot
 
 对所有未完成 confirmation 批量执行同样的 send-card dry-run/real wrapper。未指定
 `chat_id` 或 `recipient` 时，会使用每条 confirmation 自身的 `recipient`。
+
+`npm run demo:full-p0 -- --send-cards --chat-id <chat_id>` 会调用这个接口。该模式
+只发送确认卡片，不执行 confirm/reject，因此 action、calendar、create_kb 的
+confirmations executed 为 `0` 是预期结果。
 
 `POST /dev/confirmations/:id/remind-later`
 `POST /dev/confirmations/:id/convert-to-task`

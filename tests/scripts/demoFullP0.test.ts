@@ -217,14 +217,15 @@ describe("demo-full-p0 script", () => {
         repos,
         llm: new QueueLlmClient([firstExtraction, secondExtraction])
       });
+      const outputDir = await mkdtemp(join(tmpdir(), `meeting-atlas-${mode}-demo-`));
 
       await app.ready();
       try {
         const result = await runFullP0Demo({
           baseUrl: "http://meeting-atlas.test",
+          outputDir,
           fetchFn: fetchViaInject(app),
           log: () => undefined,
-          writeOutputs: false,
           mode,
           chatId: mode === "send-cards" ? "oc_demo_chat" : undefined
         });
@@ -243,6 +244,21 @@ describe("demo-full-p0 script", () => {
         expect(
           result.state.cli_runs.filter((run) => run.tool === "lark.im.send_card")
         ).toHaveLength(expectedCardSendRuns);
+
+        const outputStem = mode === "cards-only" ? "cards-only-demo" : "send-cards-demo";
+        const latestJson = JSON.parse(
+          await readFile(join(outputDir, `${outputStem}-latest.json`), "utf8")
+        ) as {
+          mode: string;
+          card_send_cli_records: number;
+        };
+        const markdownReport = await readFile(join(outputDir, `${outputStem}-report.md`), "utf8");
+
+        expect(latestJson.mode).toBe(mode);
+        expect(latestJson.card_send_cli_records).toBe(expectedCardSendRuns);
+        expect(markdownReport).toContain(`Mode: ${mode}`);
+        expect(markdownReport).toContain("does not execute confirmations");
+        await expect(readFile(join(outputDir, "p0-demo-report.md"), "utf8")).rejects.toThrow();
       } finally {
         await app.close();
       }

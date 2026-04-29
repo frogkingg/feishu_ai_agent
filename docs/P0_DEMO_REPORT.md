@@ -5,6 +5,11 @@
 最新一次实际运行结果由 `npm run demo:full-p0` 写入
 `demo-output/p0-demo-report.md`。
 
+`demo-output/p0-demo-report.md` 只保留完整 P0 主链路结果。send-cards dry-run
+链路会写入 `demo-output/send-cards-demo-report.md`，用于证明确认卡片发送计划能进入
+`lark.im.send_card` 工具层。两份报告互补：前者证明完整执行闭环，后者证明卡片发送
+dry-run 链路，不互相替代。
+
 ## Demo 目标
 
 MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
@@ -90,6 +95,7 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 
 LLM Provider: openai-compatible
 Feishu Write Mode: dry-run
+Mode note: FEISHU_DRY_RUN=true; this demo did not perform real Feishu writes.
 Meetings processed: 2
 Action confirmations executed: 2
 Calendar confirmations executed: 1
