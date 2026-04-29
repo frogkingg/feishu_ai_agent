@@ -202,7 +202,7 @@ const DEFAULT_BASE_URL = process.env.MEETING_ATLAS_BASE_URL ?? "http://127.0.0.1
 const CONTENT_TYPE_JSON = { "Content-Type": "application/json" };
 const DEFAULT_DEMO_OUTPUT_DIR = join(process.cwd(), "demo-output");
 const CLEAN_DATABASE_SERVICE_COMMAND =
-  "PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo-$(date +%s).db FEISHU_DRY_RUN=true LLM_PROVIDER=mock npm run dev";
+  "PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo-$(date +%s).db FEISHU_DRY_RUN=true FEISHU_CARD_SEND_DRY_RUN=true LLM_PROVIDER=mock npm run dev";
 
 const FIRST_MEETING_TRANSCRIPT = `
 会议主题：无人机操作方案初步访谈
