@@ -1,10 +1,13 @@
 # MeetingAtlas Demo Script
 
-本文档说明 `npm run demo:full-p0` 的自动化验收流程。脚本只验证 P0 Demo 主链路，不会接真实飞书写入。
+本文档说明 `npm run demo:full-p0` 的自动化验收流程。
+
+脚本只验证 P0 Demo 主链路，不会接真实飞书写入。
 
 ## Demo 目标
 
-演示 MeetingAtlas 从两场会议转写中自动抽取待办和日程，经过用户确认后进入 Feishu dry-run 执行记录，并在第二场高度相关会议后建议创建知识库。
+演示 MeetingAtlas 从两场会议转写中自动抽取待办和日程，经过用户确认后进入
+Feishu dry-run 执行记录，并在第二场高度相关会议后建议创建知识库。
 
 核心验证点：
 
@@ -53,7 +56,9 @@ PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev
 
 - title: `无人机操作员访谈`
 - participants: `张三`, `王五`, `Henry`
-- transcript highlights: 继续讨论无人机操作方案、操作流程不统一、试飞前权限确认分散、建立统一无人机操作 SOP、整理风险清单
+- transcript highlights:
+  继续讨论无人机操作方案、操作流程不统一、试飞前权限确认分散、
+  建立统一无人机操作 SOP、整理风险清单
 - 显式知识库意图：`后续要把这两次访谈整理成一个无人机操作方案知识库`
 - 预期主题动作：`ask_create`
 
@@ -83,17 +88,17 @@ PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev
 | Step | 调用 | 预期输出 |
 | --- | --- | --- |
 | 1 | `GET /health` | `ok=true`，`dry_run=true`，返回当前 `llm_provider` |
-| 2 | `POST /dev/meetings/manual` 提交第一场会议 | 返回 `meeting_id`，`extraction.action_items.length >= 2`，`extraction.calendar_drafts.length >= 1` |
+| 2 | `POST /dev/meetings/manual` 提交第一场会议 | 返回 `meeting_id`，至少 2 条 action 和 1 条 calendar |
 | 3 | 校验第一场 topic match | `topic_match.suggested_action = observe`，不创建 `create_kb` |
 | 4 | `GET /dev/confirmations` | 能看到第一场 action/calendar confirmation |
-| 5 | `POST /dev/confirmations/:id/confirm` 确认第一条 action | action 进入 executed/confirmed 状态，并产生 dry-run CLI 记录 |
+| 5 | 确认第一条 action | action executed，并产生 dry-run CLI 记录 |
 | 6 | 使用 edited payload 确认第二条 action | 最终 action owner/due_date/priority/title 使用用户确认值 |
 | 7 | 使用 edited payload 确认 calendar | calendar participants/location/duration 使用用户确认值 |
 | 8 | `POST /dev/meetings/manual` 提交第二场会议 | 返回第二个 `meeting_id` |
-| 9 | 校验第二场 topic match | `score >= 0.9`，`suggested_action = ask_create`，`candidate_meeting_ids.length >= 2` |
+| 9 | 校验第二场 topic match | `score >= 0.9`，`suggested_action = ask_create` |
 | 10 | `GET /dev/confirmations` | 能看到 `request_type=create_kb` 的 confirmation |
 | 11 | 确认 `create_kb` | 创建 mock 知识库记录 |
-| 12 | `GET /dev/state` | `knowledge_bases.length >= 1`，`knowledge_updates.length >= 1`，最新 update 为 `kb_created` |
+| 12 | `GET /dev/state` | 有 knowledge base，最新 update 为 `kb_created` |
 
 ## 成功标准
 
@@ -126,10 +131,12 @@ Knowledge update: kb_created
 
 | 项目 | Dry-run Demo | 真实飞书模式 |
 | --- | --- | --- |
-| 飞书写入 | 不写真实飞书，只记录 dry-run CLI run | 后续接入真实 CLI/API 后才会写任务、日程、知识库或消息 |
+| 飞书写入 | 不写真实飞书，只记录 dry-run CLI run | 未来才写任务、日程、知识库或消息 |
 | URL | 知识库 URL 为 `mock://...` | 应返回真实飞书 Wiki/Doc URL |
-| 安全边界 | `demo:full-p0` 要求 `FEISHU_DRY_RUN=true`，检测到真实写入模式会拒绝执行 | 需要单独的真实写入验收脚本和权限确认 |
+| 安全边界 | 要求 `FEISHU_DRY_RUN=true` | 真实写入需要单独验收和权限确认 |
 | LLM | 可以使用 `mock` 或 `openai-compatible` | 推荐继续保持 LLM 与飞书写入开关解耦 |
 | Demo 报告 | 记录流程结果，不含密钥或 `.env` | 真实模式报告同样不应包含密钥 |
 
-当前 P0 Demo 的目标是证明确认链路、状态一致性、主题聚类和知识库建议闭环已经跑通；真实飞书写入、真实卡片和真实 Wiki/Doc 创建不在本脚本范围内。
+当前 P0 Demo 的目标是证明确认链路、状态一致性、主题聚类和知识库建议闭环已经跑通。
+
+真实飞书写入、真实卡片和真实 Wiki/Doc 创建不在本脚本范围内。

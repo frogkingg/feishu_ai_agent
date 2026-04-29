@@ -1,6 +1,8 @@
 # Architecture
 
-MeetingAtlas 当前是一个 CLI-first、确认优先、本地 dry-run 可演示的 TypeScript 服务。根目录就是主工程，不再依赖旧 ProjectPilot 架构。
+MeetingAtlas 当前是一个 CLI-first、确认优先、本地 dry-run 可演示的 TypeScript 服务。
+
+根目录就是主工程，不再依赖旧 ProjectPilot 架构。
 
 ## Runtime
 

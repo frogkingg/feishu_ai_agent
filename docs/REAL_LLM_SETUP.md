@@ -1,6 +1,10 @@
 # Real LLM Setup
 
-MeetingAtlas 先接真实 LLM，但继续保持 `FEISHU_DRY_RUN=true`。这样可以先验证会议转写抽取质量、schema 稳定性和确认请求生成效果，同时避免还没校准好的飞书任务、日历、Wiki、Doc 命令产生真实写入。
+MeetingAtlas 先接真实 LLM，但继续保持 `FEISHU_DRY_RUN=true`。
+
+这样可以先验证会议转写抽取质量、schema 稳定性和确认请求生成效果。
+
+同时也能避免还没校准好的飞书任务、日历、Wiki、Doc 命令产生真实写入。
 
 ## 1. 准备环境变量
 
@@ -53,7 +57,8 @@ curl http://127.0.0.1:3000/health
 
 ## 4. 先跑 LLM Smoke Test
 
-这个接口只验证真实 LLM 是否能产出合法 `MeetingExtractionResult`，不写数据库、不创建确认请求。
+这个接口只验证真实 LLM 是否能产出合法 `MeetingExtractionResult`，
+不写数据库、不创建确认请求。
 
 ```bash
 curl -X POST http://127.0.0.1:3000/dev/llm/smoke-test \
@@ -78,11 +83,17 @@ curl -X POST http://127.0.0.1:3000/dev/llm/smoke-test \
 }
 ```
 
-如果返回 500，先看 `error` 字段。常见原因是模型没有输出合法 JSON，或输出字段没有通过 schema。
+如果返回 500，先看 `error` 字段。
+
+常见原因是模型没有输出合法 JSON，或输出字段没有通过 schema。
 
 ## 5. 用真实 LLM 生成确认请求
 
-`/dev/meetings/manual` 会使用当前配置的 LLM 处理会议转写，并把 action/calendar/create_kb 生成确认请求。因为 `FEISHU_DRY_RUN=true`，后续确认也只会记录 dry-run CLI payload，不会真实写飞书。
+`/dev/meetings/manual` 会使用当前配置的 LLM 处理会议转写，并把
+action/calendar/create_kb 生成确认请求。
+
+因为 `FEISHU_DRY_RUN=true`，后续确认也只会记录 dry-run CLI payload，
+不会真实写飞书。
 
 ```bash
 curl -X POST http://127.0.0.1:3000/dev/meetings/manual \

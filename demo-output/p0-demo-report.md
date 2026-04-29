@@ -2,7 +2,7 @@
 
 ✅ MeetingAtlas P0 Demo passed
 
-- Generated at: 2026-04-29T04:33:50.301Z
+- Generated at: 2026-04-29T04:58:46.544Z
 - Base URL: http://127.0.0.1:3000
 - LLM Provider: mock
 - Feishu Write Mode: dry-run
@@ -17,13 +17,13 @@
 
 ## Topic Flow
 
-- First meeting: mtg_094ef7647cde44439406
+- First meeting: mtg_29d02f36539b4d049b6e
 - First topic action: observe
 - First extraction: actions=2, calendars=1
-- Second meeting: mtg_0f4e998b1eab443cb2ba
+- Second meeting: mtg_286816d5638445798bce
 - Second topic action: ask_create
 - Second topic score: 0.9
-- Candidate meetings: mtg_094ef7647cde44439406, mtg_0f4e998b1eab443cb2ba
+- Candidate meetings: mtg_29d02f36539b4d049b6e, mtg_286816d5638445798bce
 
 ## Safety Notes
 

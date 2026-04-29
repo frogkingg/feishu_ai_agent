@@ -1,30 +1,44 @@
 import { z } from "zod";
-import { renderKnowledgeBaseMarkdown, runKnowledgeCuratorAgent } from "../agents/knowledgeCuratorAgent";
+import {
+  renderKnowledgeBaseMarkdown,
+  runKnowledgeCuratorAgent
+} from "../agents/knowledgeCuratorAgent";
 import { AppConfig } from "../config";
 import { KnowledgeBaseDraft, KnowledgeUpdateSchema, TopicMatchResultSchema } from "../schemas";
-import { ConfirmationRequestRow, KnowledgeBaseRow, KnowledgeUpdateRow, Repositories } from "../services/store/repositories";
+import {
+  ConfirmationRequestRow,
+  KnowledgeBaseRow,
+  KnowledgeUpdateRow,
+  Repositories
+} from "../services/store/repositories";
 import { nowIso } from "../utils/dates";
 import { createId } from "../utils/id";
 
-const CreateKnowledgeBasePayloadSchema = z.object({
-  topic_name: z.string().min(1),
-  suggested_goal: z.string().min(1).optional(),
-  candidate_meeting_ids: z.array(z.string().min(1)).min(1).optional(),
-  match_reasons: z.array(z.string()).optional(),
-  score: z.number().min(0).max(1).optional(),
-  default_structure: z.array(z.string()).optional(),
-  topic_match: TopicMatchResultSchema,
-  meeting_ids: z.array(z.string().min(1)).min(1).optional(),
-  reason: z.string().min(1).optional()
-}).transform((payload) => ({
-  ...payload,
-  meeting_ids: payload.meeting_ids ?? payload.candidate_meeting_ids ?? payload.topic_match.candidate_meeting_ids,
-  match_reasons: payload.match_reasons ?? payload.topic_match.match_reasons,
-  score: payload.score ?? payload.topic_match.score
-})).refine((payload) => payload.meeting_ids.length >= 1, {
-  message: "create_kb requires at least one candidate meeting",
-  path: ["meeting_ids"]
-});
+const CreateKnowledgeBasePayloadSchema = z
+  .object({
+    topic_name: z.string().min(1),
+    suggested_goal: z.string().min(1).optional(),
+    candidate_meeting_ids: z.array(z.string().min(1)).min(1).optional(),
+    match_reasons: z.array(z.string()).optional(),
+    score: z.number().min(0).max(1).optional(),
+    default_structure: z.array(z.string()).optional(),
+    topic_match: TopicMatchResultSchema,
+    meeting_ids: z.array(z.string().min(1)).min(1).optional(),
+    reason: z.string().min(1).optional()
+  })
+  .transform((payload) => ({
+    ...payload,
+    meeting_ids:
+      payload.meeting_ids ??
+      payload.candidate_meeting_ids ??
+      payload.topic_match.candidate_meeting_ids,
+    match_reasons: payload.match_reasons ?? payload.topic_match.match_reasons,
+    score: payload.score ?? payload.topic_match.score
+  }))
+  .refine((payload) => payload.meeting_ids.length >= 1, {
+    message: "create_kb requires at least one candidate meeting",
+    path: ["meeting_ids"]
+  });
 
 type CreateKnowledgeBasePayload = z.infer<typeof CreateKnowledgeBasePayloadSchema>;
 
@@ -38,12 +52,16 @@ export interface CreateKnowledgeBaseWorkflowResult {
 }
 
 function asObject(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function parsePayload(request: ConfirmationRequestRow): CreateKnowledgeBasePayload {
   const original = JSON.parse(request.original_payload_json) as unknown;
-  const edited = request.edited_payload_json ? (JSON.parse(request.edited_payload_json) as unknown) : {};
+  const edited = request.edited_payload_json
+    ? (JSON.parse(request.edited_payload_json) as unknown)
+    : {};
   return CreateKnowledgeBasePayloadSchema.parse({
     ...asObject(original),
     ...asObject(edited)
@@ -73,17 +91,22 @@ export async function createKnowledgeBaseWorkflow(input: {
     throw new Error("create_kb requires at least one existing meeting");
   }
   if (meetings.length < 2 && !explicitCreateRequest) {
-    throw new Error("create_kb requires at least two existing meetings unless the user explicitly requested a knowledge base");
+    throw new Error(
+      "create_kb requires at least two existing meetings unless the user explicitly requested a knowledge base"
+    );
   }
 
   const meetingIds = new Set(meetings.map((meeting) => meeting.id));
   const actions = input.repos.listActionItems().filter((action) => meetingIds.has(action.meeting_id));
-  const calendars = input.repos.listCalendarDrafts().filter((calendar) => meetingIds.has(calendar.meeting_id));
+  const calendars = input.repos
+    .listCalendarDrafts()
+    .filter((calendar) => meetingIds.has(calendar.meeting_id));
   const owner = meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? request.recipient;
   const dryRun = input.config?.feishuDryRun ?? true;
 
   if (!dryRun) {
-    const error = "Real knowledge-base creation is not implemented until Phase 7 larkWiki/larkDoc integration";
+    const error =
+      "Real knowledge-base creation is not implemented until Phase 7 larkWiki/larkDoc integration";
     input.repos.updateConfirmationRequest({
       id: request.id,
       status: "failed",

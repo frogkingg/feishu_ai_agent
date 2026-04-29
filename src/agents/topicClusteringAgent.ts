@@ -79,7 +79,12 @@ function unique(values: string[]): string[] {
 }
 
 function meetingTopicText(meeting: MeetingRow): string {
-  return [meeting.title, meeting.summary ?? "", meeting.transcript_text, parseStringArray(meeting.keywords_json).join(" ")].join(" ");
+  return [
+    meeting.title,
+    meeting.summary ?? "",
+    meeting.transcript_text,
+    parseStringArray(meeting.keywords_json).join(" ")
+  ].join(" ");
 }
 
 function extractionText(extraction: MeetingExtractionResult): string {
@@ -125,13 +130,32 @@ function hasExplicitKnowledgeBaseIntent(text: string): boolean {
 
 function hasCoreDroneTopic(currentText: string, candidateText: string): boolean {
   const combined = `${currentText} ${candidateText}`;
-  const relatedSignals = ["操作方案", "操作流程", "试飞权限", "权限确认", "权限审批", "风险控制", "风险清单", "SOP", "操作员访谈"];
-  const overlap = relatedSignals.filter((signal) => currentText.includes(signal) && candidateText.includes(signal)).length;
+  const relatedSignals = [
+    "操作方案",
+    "操作流程",
+    "试飞权限",
+    "权限确认",
+    "权限审批",
+    "风险控制",
+    "风险清单",
+    "SOP",
+    "操作员访谈"
+  ];
+  const overlap = relatedSignals.filter(
+    (signal) => currentText.includes(signal) && candidateText.includes(signal)
+  ).length;
   return combined.includes("无人机") && overlap >= 2;
 }
 
-function candidateMeetingIds(scored: { meeting: MeetingRow; score: number }[], currentMeetingId: string, minimumScore = 0.6): string[] {
-  return unique([...scored.filter((item) => item.score >= minimumScore).map((item) => item.meeting.id), currentMeetingId]);
+function candidateMeetingIds(
+  scored: { meeting: MeetingRow; score: number }[],
+  currentMeetingId: string,
+  minimumScore = 0.6
+): string[] {
+  return unique([
+    ...scored.filter((item) => item.score >= minimumScore).map((item) => item.meeting.id),
+    currentMeetingId
+  ]);
 }
 
 export async function runTopicClusteringAgent(input: {
@@ -143,7 +167,10 @@ export async function runTopicClusteringAgent(input: {
   const currentText = [meetingTopicText(input.meeting), extractionText(input.extraction)].join(" ");
   const explicitKnowledgeBaseIntent = hasExplicitKnowledgeBaseIntent(currentText);
   const candidates = meetings.filter(
-    (meeting) => meeting.id !== input.meeting.id && meeting.archive_status !== "rejected" && hasTopicContent(meeting)
+    (meeting) =>
+      meeting.id !== input.meeting.id &&
+      meeting.archive_status !== "rejected" &&
+      hasTopicContent(meeting)
   );
   const participants = parseStringArray(input.meeting.participants_json);
   const sourceNames = sourceMentionNames(input.extraction);
@@ -159,7 +186,12 @@ export async function runTopicClusteringAgent(input: {
       const signalScore = overlapRatio(currentSignals, candidateSignals);
       const participantScore = overlapRatio(participants, parseStringArray(candidate.participants_json));
       const sourceScore = sourceMentionScore(sourceNames, candidate.transcript_text);
-      const weighted = titleScore * 0.2 + keywordScore * 0.35 + signalScore * 0.3 + participantScore * 0.1 + sourceScore * 0.05;
+      const weighted =
+        titleScore * 0.2 +
+        keywordScore * 0.35 +
+        signalScore * 0.3 +
+        participantScore * 0.1 +
+        sourceScore * 0.05;
       const score = hasCoreDroneTopic(currentText, candidateText) ? Math.max(0.82, weighted) : weighted;
 
       return {
@@ -171,7 +203,9 @@ export async function runTopicClusteringAgent(input: {
           signalScore >= 0.5 ? "会议摘要/转写围绕相同主题信号" : null,
           participantScore > 0 ? `参会人重叠 ${Math.round(participantScore * 100)}%` : null,
           sourceScore > 0 ? "资料引用重叠" : null,
-          hasCoreDroneTopic(currentText, candidateText) ? "两场会议均围绕无人机操作方案、操作流程、试飞权限和风险控制" : null
+          hasCoreDroneTopic(currentText, candidateText)
+            ? "两场会议均围绕无人机操作方案、操作流程、试飞权限和风险控制"
+            : null
         ].filter((reason): reason is string => reason !== null)
       };
     })

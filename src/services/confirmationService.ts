@@ -9,7 +9,9 @@ import { createKnowledgeBaseWorkflow } from "../workflows/createKnowledgeBaseWor
 import { ActionItemDraftSchema, CalendarEventDraftSchema } from "../schemas";
 
 function asObject(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function parseJsonArray(value: string): unknown[] {
@@ -84,7 +86,11 @@ function actionChangedFields(input: {
   };
 }): string[] {
   const fields = ["owner", "title", "due_date", "priority"] as const;
-  return fields.filter((field) => Object.prototype.hasOwnProperty.call(input.patch, field) && input.draft[field] !== input.original[field]);
+  return fields.filter(
+    (field) =>
+      Object.prototype.hasOwnProperty.call(input.patch, field) &&
+      input.draft[field] !== input.original[field]
+  );
 }
 
 function appendActionSuggestedReason(suggestedReason: string, changedFields: string[]): string {
@@ -94,7 +100,9 @@ function appendActionSuggestedReason(suggestedReason: string, changedFields: str
 
   const notes = [`用户确认时已修改字段：${changedFields.join(", ")}。`];
   if (changedFields.includes("owner")) {
-    notes.push("原始会议证据中的负责人可能与最终确认负责人不同，以用户确认结果为准。");
+    notes.push(
+      "原始会议证据中的负责人可能与最终确认负责人不同，以用户确认结果为准。"
+    );
   }
 
   return [suggestedReason, ...notes].join("\n");
@@ -104,7 +112,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function failRequest(input: { repos: Repositories; request: ConfirmationRequestRow; error: unknown }): ConfirmationRequestRow {
+function failRequest(input: {
+  repos: Repositories;
+  request: ConfirmationRequestRow;
+  error: unknown;
+}): ConfirmationRequestRow {
   const message = errorMessage(input.error);
   input.repos.updateConfirmationRequest({
     id: input.request.id,
@@ -169,7 +181,8 @@ export async function confirmRequest(input: {
   input.repos.updateConfirmationRequest({
     id: request.id,
     status: "confirmed",
-    edited_payload_json: input.editedPayload === undefined ? null : JSON.stringify(input.editedPayload),
+    edited_payload_json:
+      input.editedPayload === undefined ? null : JSON.stringify(input.editedPayload),
     confirmed_at: confirmedAt,
     error: null
   });
