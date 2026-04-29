@@ -20,16 +20,20 @@ export const TopicMatchResultSchema = z
     if (result.score >= 0.6 && result.score < 0.78 && action !== "observe") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "0.60 <= score < 0.78 requires observe", path: ["suggested_action"] });
     }
-    if (result.score >= 0.78 && result.score < 0.9 && action !== "ask_append") {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "0.78 <= score < 0.90 requires ask_append", path: ["suggested_action"] });
+    if (result.score >= 0.78 && result.score < 0.9 && action !== "ask_append" && action !== "ask_create") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "0.78 <= score < 0.90 requires ask_append or ask_create",
+        path: ["suggested_action"]
+      });
     }
     if (result.score >= 0.9 && action !== "ask_append" && action !== "ask_create") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "score >= 0.90 requires ask_append or ask_create", path: ["suggested_action"] });
     }
-    if (action === "ask_create" && result.candidate_meeting_ids.length < 2) {
+    if (action === "ask_create" && result.candidate_meeting_ids.length < 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "ask_create requires at least two candidate meetings unless an explicit user request is handled by a later workflow",
+        message: "ask_create requires at least one candidate meeting",
         path: ["candidate_meeting_ids"]
       });
     }

@@ -8,9 +8,22 @@ import { createId } from "../utils/id";
 
 const CreateKnowledgeBasePayloadSchema = z.object({
   topic_name: z.string().min(1),
+  suggested_goal: z.string().min(1).optional(),
+  candidate_meeting_ids: z.array(z.string().min(1)).min(1).optional(),
+  match_reasons: z.array(z.string()).optional(),
+  score: z.number().min(0).max(1).optional(),
+  default_structure: z.array(z.string()).optional(),
   topic_match: TopicMatchResultSchema,
-  meeting_ids: z.array(z.string().min(1)).min(2),
+  meeting_ids: z.array(z.string().min(1)).min(1).optional(),
   reason: z.string().min(1).optional()
+}).transform((payload) => ({
+  ...payload,
+  meeting_ids: payload.meeting_ids ?? payload.candidate_meeting_ids ?? payload.topic_match.candidate_meeting_ids,
+  match_reasons: payload.match_reasons ?? payload.topic_match.match_reasons,
+  score: payload.score ?? payload.topic_match.score
+})).refine((payload) => payload.meeting_ids.length >= 1, {
+  message: "create_kb requires at least one candidate meeting",
+  path: ["meeting_ids"]
 });
 
 type CreateKnowledgeBasePayload = z.infer<typeof CreateKnowledgeBasePayloadSchema>;
@@ -55,8 +68,12 @@ export async function createKnowledgeBaseWorkflow(input: {
     .map((meetingId) => input.repos.getMeeting(meetingId))
     .filter((meeting): meeting is NonNullable<typeof meeting> => meeting !== null);
 
-  if (meetings.length < 2) {
-    throw new Error("create_kb requires at least two existing meetings");
+  const explicitCreateRequest = payload.match_reasons.some((reason) => reason.includes("显式提出"));
+  if (meetings.length < 1) {
+    throw new Error("create_kb requires at least one existing meeting");
+  }
+  if (meetings.length < 2 && !explicitCreateRequest) {
+    throw new Error("create_kb requires at least two existing meetings unless the user explicitly requested a knowledge base");
   }
 
   const meetingIds = new Set(meetings.map((meeting) => meeting.id));
@@ -64,6 +81,17 @@ export async function createKnowledgeBaseWorkflow(input: {
   const calendars = input.repos.listCalendarDrafts().filter((calendar) => meetingIds.has(calendar.meeting_id));
   const owner = meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? request.recipient;
   const dryRun = input.config?.feishuDryRun ?? true;
+
+  if (!dryRun) {
+    const error = "Real knowledge-base creation is not implemented until Phase 7 larkWiki/larkDoc integration";
+    input.repos.updateConfirmationRequest({
+      id: request.id,
+      status: "failed",
+      error
+    });
+    throw new Error(error);
+  }
+
   const draft = runKnowledgeCuratorAgent({
     topicName: payload.topic_name,
     owner,
@@ -73,8 +101,8 @@ export async function createKnowledgeBaseWorkflow(input: {
     confidenceOrigin: payload.topic_match.score
   });
   const markdown = renderKnowledgeBaseMarkdown(draft);
-  const wikiUrl = dryRun ? `mock://feishu/wiki/${draft.kb_id}` : null;
-  const homepageUrl = dryRun ? `mock://feishu/wiki/${draft.kb_id}/00-home` : null;
+  const wikiUrl = `mock://feishu/wiki/${draft.kb_id}`;
+  const homepageUrl = `mock://feishu/wiki/${draft.kb_id}/00-home`;
 
   const existing = input.repos.getKnowledgeBase(draft.kb_id);
   const knowledgeBase =

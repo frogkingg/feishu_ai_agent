@@ -44,10 +44,18 @@ export async function createTask(input: {
     };
   }
 
+  if (result.status === "failed") {
+    throw new Error(`lark.task.create failed: ${result.error ?? "unknown error"}`);
+  }
+
   const parsed = result.parsed as { task_guid?: string; task_url?: string } | null;
+  if (!parsed?.task_guid || !parsed?.task_url) {
+    throw new Error("lark.task.create succeeded without task_guid/task_url");
+  }
+
   return {
-    feishu_task_guid: parsed?.task_guid ?? `unknown_task_${input.draft.id}`,
-    task_url: parsed?.task_url ?? `mock://feishu/task/${input.draft.id}`,
+    feishu_task_guid: parsed.task_guid,
+    task_url: parsed.task_url,
     dry_run: false,
     cli_run_id: result.id
   };

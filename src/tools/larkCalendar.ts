@@ -47,10 +47,18 @@ export async function createCalendarEvent(input: {
     };
   }
 
+  if (result.status === "failed") {
+    throw new Error(`lark.calendar.create failed: ${result.error ?? "unknown error"}`);
+  }
+
   const parsed = result.parsed as { event_id?: string; event_url?: string } | null;
+  if (!parsed?.event_id || !parsed?.event_url) {
+    throw new Error("lark.calendar.create succeeded without event_id/event_url");
+  }
+
   return {
-    calendar_event_id: parsed?.event_id ?? `unknown_event_${input.draft.id}`,
-    event_url: parsed?.event_url ?? `mock://feishu/calendar/${input.draft.id}`,
+    calendar_event_id: parsed.event_id,
+    event_url: parsed.event_url,
     dry_run: false,
     cli_run_id: result.id
   };

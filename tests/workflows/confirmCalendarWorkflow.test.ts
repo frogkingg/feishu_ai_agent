@@ -1,11 +1,33 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config";
-import { confirmRequest } from "../../src/services/confirmationService";
+import { confirmRequest, createConfirmationRequest } from "../../src/services/confirmationService";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
 import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkflow";
+
+function createCalendarTestMeeting(repos: ReturnType<typeof createRepositories>) {
+  return repos.createMeeting({
+    id: "mtg_calendar_confirmation",
+    external_meeting_id: null,
+    title: "无人机操作方案初步访谈",
+    started_at: "2026-04-28T10:00:00+08:00",
+    ended_at: "2026-04-28T11:00:00+08:00",
+    organizer: "张三",
+    participants_json: JSON.stringify(["张三", "李四"]),
+    minutes_url: null,
+    transcript_url: null,
+    transcript_text: "下周二上午十点再约操作员访谈。",
+    summary: null,
+    keywords_json: JSON.stringify([]),
+    matched_kb_id: null,
+    match_score: null,
+    archive_status: "not_archived",
+    action_count: 0,
+    calendar_count: 1
+  });
+}
 
 describe("confirm calendar request", () => {
   it("marks calendar draft executed and records cli_runs in dry-run mode", async () => {
@@ -40,5 +62,96 @@ describe("confirm calendar request", () => {
     expect(calendar?.confirmation_status).toBe("created");
     expect(calendar?.calendar_event_id).toContain("dry_event_");
     expect(repos.listCliRuns()).toHaveLength(1);
+  });
+
+  it("merges edited start time and participants before dry-run calendar creation", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+
+    await processMeetingWorkflow({
+      repos,
+      llm: new MockLlmClient(),
+      meeting: {
+        title: "无人机操作方案初步访谈",
+        participants: ["张三", "李四"],
+        organizer: "张三",
+        started_at: "2026-04-28T10:00:00+08:00",
+        ended_at: "2026-04-28T11:00:00+08:00",
+        transcript_text: transcript
+      }
+    });
+
+    const request = repos.listConfirmationRequests().find((item) => item.request_type === "calendar");
+    expect(request).toBeTruthy();
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: true, larkCliBin: "definitely-not-real-lark" }),
+      id: request!.id,
+      editedPayload: {
+        start_time: "2026-05-06T14:30:00+08:00",
+        participants: ["王五", "赵六"]
+      }
+    });
+
+    const calendar = repos.getCalendarDraft(request!.target_id);
+    const cliRun = repos.listCliRuns()[0];
+    const args = JSON.parse(cliRun.args_json) as string[];
+
+    expect(calendar).toMatchObject({
+      start_time: "2026-05-06T14:30:00+08:00",
+      participants_json: JSON.stringify(["王五", "赵六"]),
+      confirmation_status: "created"
+    });
+    expect(args).toContain("2026-05-06T14:30:00+08:00");
+    expect(args).toContain(JSON.stringify(["王五", "赵六"]));
+  });
+
+  it("removes filled participants and location while keeping still-missing end time", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createCalendarTestMeeting(repos);
+    const calendar = repos.createCalendarDraft({
+      id: "cal_missing_participants_location",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "无人机操作员访谈",
+      start_time: "2026-05-05T10:00:00+08:00",
+      end_time: null,
+      duration_minutes: null,
+      participants_json: JSON.stringify([]),
+      agenda: "确认真实操作步骤和限制",
+      location: null,
+      evidence: "下周二上午 10 点再约操作员访谈。",
+      confidence: 0.82,
+      missing_fields_json: JSON.stringify(["participants", "end_time", "location"]),
+      confirmation_status: "sent",
+      calendar_event_id: null,
+      event_url: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "calendar",
+      targetId: calendar.id,
+      recipient: meeting.organizer,
+      originalPayload: { draft: calendar }
+    });
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: true, larkCliBin: "definitely-not-real-lark" }),
+      id: request.id,
+      editedPayload: {
+        participants: ["王五", "赵六"],
+        location: "线上会议室"
+      }
+    });
+
+    const updatedCalendar = repos.getCalendarDraft(calendar.id);
+    const missingFields = JSON.parse(updatedCalendar!.missing_fields_json) as string[];
+
+    expect(missingFields).not.toContain("participants");
+    expect(missingFields).not.toContain("location");
+    expect(missingFields).toContain("end_time");
+    expect(missingFields).toEqual(["end_time"]);
   });
 });

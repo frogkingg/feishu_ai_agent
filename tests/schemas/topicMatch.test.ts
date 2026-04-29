@@ -27,17 +27,17 @@ describe("TopicMatchResultSchema", () => {
     ).toThrow(/observe/);
   });
 
-  it("requires at least two meetings for ask_create", () => {
-    expect(() =>
+  it("allows ask_create for high-confidence create suggestions", () => {
+    expect(
       TopicMatchResultSchema.parse({
         current_meeting_id: "m_001",
         matched_kb_id: null,
         matched_kb_name: null,
-        score: 0.92,
+        score: 0.82,
         match_reasons: ["强相关"],
         suggested_action: "ask_create",
-        candidate_meeting_ids: ["m_001"]
-      })
-    ).toThrow(/at least two/);
+        candidate_meeting_ids: ["m_000", "m_001"]
+      }).suggested_action
+    ).toBe("ask_create");
   });
 });
