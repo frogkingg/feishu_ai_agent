@@ -1,6 +1,6 @@
 # MeetingAtlas 效果验证评测报告
 
-生成时间：2026-04-29T12:26:48.816Z
+生成时间：2026-04-29T12:31:55.092Z
 执行方式：fixture mock extraction + 内存 SQLite；不连接真实飞书，不修改 FEISHU_DRY_RUN。
 
 ## Mock Fixture 流程验证
