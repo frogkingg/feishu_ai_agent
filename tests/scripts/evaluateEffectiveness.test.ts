@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -221,8 +221,12 @@ describe("effectiveness evaluation", () => {
         llmProvider: "mock"
       });
       expect(reportResult.report_paths.markdown).not.toBeNull();
+      expect(reportResult.report_paths.markdown).toContain("mock-fixture-evaluation-report.md");
+      expect(existsSync(join(outputDir, "evaluation-report.md"))).toBe(true);
+      expect(existsSync(join(process.cwd(), "docs/REAL_LLM_EVALUATION_PLAN.md"))).toBe(true);
 
       const markdown = readFileSync(reportResult.report_paths.markdown!, "utf8");
+      expect(markdown).toContain("# MeetingAtlas P0 Mock Fixture 评测报告");
       expect(markdown).toContain("Mock Fixture 流程通过率：100.0% (50/50)");
       expect(markdown).toContain("不代表真实 LLM 在未知会议上的准确率");
       expect(markdown).toMatch(/不代表真实 LLM.*准确率/);

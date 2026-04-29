@@ -89,10 +89,11 @@ npm run evaluate
 
 ```text
 evaluation-output/evaluation-latest.json
+evaluation-output/mock-fixture-evaluation-report.md
 evaluation-output/evaluation-report.md
 ```
 
-其中 `evaluation-output/evaluation-latest.json` 已加入 `.gitignore`，不提交；`evaluation-output/evaluation-report.md` 可作为阶段产物提交。
+其中 `evaluation-output/evaluation-latest.json` 已加入 `.gitignore`，不提交；`evaluation-output/mock-fixture-evaluation-report.md` 是默认 mock fixture 主报告，可作为阶段产物提交。`evaluation-output/evaluation-report.md` 是兼容入口，用来说明当前默认报告是 mock fixture，真实 LLM 报告需要另跑。
 
 自动化测试调用 `runEffectivenessEvaluation({ llmProvider: "mock" })`，因此不会依赖真实 LLM 或本机 `.env`。
 
@@ -100,7 +101,7 @@ evaluation-output/evaluation-report.md
 
 ## 当前 Mock Fixture 流程验证结果
 
-当前 mock fixture 结果见 `docs/EVALUATION_REPORT.md` 和 `evaluation-output/evaluation-report.md`。核心结论：
+当前 mock fixture 结果见 `docs/EVALUATION_REPORT.md` 和 `evaluation-output/mock-fixture-evaluation-report.md`。核心结论：
 
 - 8 条样本全部通过。
 - 关键场景覆盖：8/8。
@@ -128,8 +129,10 @@ npm run evaluate
 - `EVALUATION_LLM_PROVIDER` 默认是 `mock`。
 - 设置为 `openai-compatible` 时，脚本使用现有 `MeetingExtractionAgent` 调用真实兼容模型。
 - 真实 LLM 报告会显示 `Real LLM Extraction Evaluation`、provider、model 和运行时间。
+- 真实 LLM 报告会输出到 `evaluation-output/real-llm-evaluation-report.md`。
 - 若缺少 `LLM_BASE_URL`、`LLM_API_KEY` 或 `LLM_MODEL`，配置会 fail fast。
 - 测试环境仍固定为 mock，不会因为本机 `.env` 中有真实模型配置而变得不稳定。
+- 真实 LLM 复测和合并前人工抽查计划见 `docs/REAL_LLM_EVALUATION_PLAN.md`。
 
 ## 局限性
 

@@ -17,14 +17,18 @@ Evaluation` and include provider, model, and runtime.
 The command writes:
 
 - `evaluation-output/evaluation-latest.json` (ignored by git)
-- `evaluation-output/evaluation-report.md`
+- `evaluation-output/mock-fixture-evaluation-report.md` for the default mock run
+- `evaluation-output/real-llm-evaluation-report.md` for real LLM runs
+- `evaluation-output/evaluation-report.md` as a compatibility entry/index
 
-The default report is a mock fixture pipeline validation report. Its headline
+The default report title is `MeetingAtlas P0 Mock Fixture 评测报告`. Its headline
 number is a pipeline pass rate for manual labels, fixture extractions, workflow,
 topic clustering, confirmation generation, and metric calculation. It is not a
-real LLM accuracy claim for unknown meetings.
+real LLM accuracy claim for unknown meetings. See
+`docs/REAL_LLM_EVALUATION_PLAN.md` before using real LLM results in a delivery
+report.
 
-The report covers three competition-facing views:
+The report covers four competition-facing views:
 
 - Fixture/real extraction matching: action items, calendar drafts, decisions,
   topic keywords, and create_kb routing.

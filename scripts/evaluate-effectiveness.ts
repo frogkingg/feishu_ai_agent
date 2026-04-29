@@ -27,7 +27,9 @@ import { processMeetingWorkflow } from "../src/workflows/processMeetingWorkflow"
 const DEFAULT_MANIFEST_PATH = join(process.cwd(), "evaluation/fixtures/manifest.json");
 const DEFAULT_OUTPUT_DIR = join(process.cwd(), "evaluation-output");
 const DEFAULT_JSON_REPORT_NAME = "evaluation-latest.json";
-const DEFAULT_MARKDOWN_REPORT_NAME = "evaluation-report.md";
+const MOCK_FIXTURE_MARKDOWN_REPORT_NAME = "mock-fixture-evaluation-report.md";
+const REAL_LLM_MARKDOWN_REPORT_NAME = "real-llm-evaluation-report.md";
+const COMPATIBILITY_MARKDOWN_REPORT_NAME = "evaluation-report.md";
 export type EvaluationLlmProvider = "mock" | "openai-compatible";
 const RequiredScenarioSchema = z.enum([
   "explicit_action_owner_due",
@@ -754,9 +756,21 @@ function renderLimitationsBlock(): string[] {
   ];
 }
 
+function markdownReportNameFor(result: EffectivenessEvaluationResult): string {
+  return result.evaluation_context.evaluation_type === "mock_fixture_pipeline"
+    ? MOCK_FIXTURE_MARKDOWN_REPORT_NAME
+    : REAL_LLM_MARKDOWN_REPORT_NAME;
+}
+
+function renderMarkdownTitle(result: EffectivenessEvaluationResult): string {
+  return result.evaluation_context.evaluation_type === "mock_fixture_pipeline"
+    ? "# MeetingAtlas P0 Mock Fixture 评测报告"
+    : "# MeetingAtlas Real LLM 效果评测报告";
+}
+
 function renderMarkdown(result: EffectivenessEvaluationResult): string {
   const lines = [
-    "# MeetingAtlas 效果验证评测报告",
+    renderMarkdownTitle(result),
     "",
     `生成时间：${result.generated_at}`,
     `执行方式：${result.llm_provider === "mock" ? "fixture mock extraction" : "openai-compatible LLM extraction"} + 内存 SQLite；不连接真实飞书，不修改 FEISHU_DRY_RUN。`,
@@ -853,6 +867,38 @@ function renderMarkdown(result: EffectivenessEvaluationResult): string {
     }
     lines.push("");
   }
+
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function renderCompatibilityIndex(
+  result: EffectivenessEvaluationResult,
+  mainReportName: string
+): string {
+  const isMock = result.evaluation_context.evaluation_type === "mock_fixture_pipeline";
+  const modeLine = isMock
+    ? "当前默认 `npm run evaluate` 生成的是 mock fixture pipeline validation，不代表真实 LLM 在未知会议上的准确率。"
+    : "本次运行使用 openai-compatible provider 生成真实 LLM 抽取评测；该结果仍需人工抽查样本输出后再用于合并判断。";
+
+  const lines = [
+    "# MeetingAtlas 评测报告入口",
+    "",
+    `生成时间：${result.generated_at}`,
+    "",
+    modeLine,
+    "",
+    `- 当前主报告：\`evaluation-output/${mainReportName}\``,
+    `- Mock fixture 报告：\`evaluation-output/${MOCK_FIXTURE_MARKDOWN_REPORT_NAME}\``,
+    `- 真实 LLM 报告：\`evaluation-output/${REAL_LLM_MARKDOWN_REPORT_NAME}\``,
+    "",
+    "真实 LLM 评测运行方式：",
+    "",
+    "```bash",
+    "EVALUATION_LLM_PROVIDER=openai-compatible npm run evaluate",
+    "```",
+    "",
+    "详见 `docs/REAL_LLM_EVALUATION_PLAN.md`。"
+  ];
 
   return `${lines.join("\n").trimEnd()}\n`;
 }
@@ -1023,11 +1069,14 @@ export async function runEffectivenessEvaluation(
 
   if (options.writeOutputs ?? true) {
     const jsonPath = join(outputDir, DEFAULT_JSON_REPORT_NAME);
-    const markdownPath = join(outputDir, DEFAULT_MARKDOWN_REPORT_NAME);
+    const markdownReportName = markdownReportNameFor(result);
+    const markdownPath = join(outputDir, markdownReportName);
+    const compatibilityMarkdownPath = join(outputDir, COMPATIBILITY_MARKDOWN_REPORT_NAME);
     if (!existsSync(dirname(jsonPath))) {
       mkdirSync(dirname(jsonPath), { recursive: true });
     }
     writeFileSync(markdownPath, renderMarkdown(result));
+    writeFileSync(compatibilityMarkdownPath, renderCompatibilityIndex(result, markdownReportName));
     result.report_paths = {
       json: jsonPath,
       markdown: markdownPath
