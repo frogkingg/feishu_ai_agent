@@ -28,4 +28,9 @@ Depending on the installed binary, `LARK_CLI_BIN` may need to be `lark-cli` inst
 - Dry-run must not execute `execFile`.
 - Every CLI plan or execution is recorded in `cli_runs`.
 - Token, secret, authorization, and access token values are redacted before recording.
-- If the CLI is unavailable in real mode, the wrapper records a mock fallback instead of crashing the service.
+- If the CLI is unavailable or exits with an error in real mode, the confirmation request must become `failed`; action/calendar rows must not be marked `created`.
+- Knowledge-base creation remains dry-run only until Phase 7 wires `larkWiki` / `larkDoc`; real mode must fail instead of creating mock wiki URLs.
+
+## Webhook Boundary
+
+`POST /webhooks/feishu/event` currently supports Feishu challenge response and logs unrecognized payloads before returning accepted. Signature verification, event de-duplication, and mapping real meeting/minutes events into MeetingAtlas inputs are Phase 7 work.

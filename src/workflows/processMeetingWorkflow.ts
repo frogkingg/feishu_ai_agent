@@ -8,6 +8,13 @@ import { createConfirmationRequest } from "../services/confirmationService";
 import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
 import { createId } from "../utils/id";
 
+const KnowledgeBaseActionIntentPatterns = [
+  /创建.{0,12}知识库/,
+  /整理.{0,12}知识库/,
+  /归档到.{0,12}知识库/,
+  /建立.{0,12}知识库/
+];
+
 export interface ProcessMeetingResult {
   meeting_id: string;
   extraction: MeetingExtractionResult;
@@ -23,6 +30,28 @@ function suggestTopicName(input: { title: string; keywords: string[] }): string 
 
   const primaryKeywords = input.keywords.slice(0, 2).join("");
   return primaryKeywords ? `${primaryKeywords}主题知识库` : `${input.title}主题知识库`;
+}
+
+function suggestGoal(topicName: string): string {
+  return `沉淀${topicName}相关会议结论、行动项、日程与资料来源，形成可持续更新的项目知识库。`;
+}
+
+function defaultKnowledgeBaseStructure(): string[] {
+  return [
+    "00 首页 / 总览",
+    "01 整体目标",
+    "02 整体分析",
+    "03 当前进度",
+    "04 风险与决策",
+    "05 待办与日程索引",
+    "06 单个会议总结",
+    "07 会议转写记录"
+  ];
+}
+
+function isKnowledgeBaseCreationAction(item: MeetingExtractionResult["action_items"][number]): boolean {
+  const text = `${item.title} ${item.description ?? ""}`;
+  return KnowledgeBaseActionIntentPatterns.some((pattern) => pattern.test(text));
 }
 
 export async function processMeetingWorkflow(input: {
@@ -63,10 +92,28 @@ export async function processMeetingWorkflow(input: {
     calendar_count: extraction.calendar_drafts.length
   });
 
+  const refreshedMeeting = input.repos.getMeeting(meeting.id) ?? meeting;
+  const topicMatch = await runTopicClusteringAgent({
+    repos: input.repos,
+    meeting: refreshedMeeting,
+    extraction
+  });
+  input.repos.updateMeetingTopic({
+    id: meeting.id,
+    matched_kb_id: topicMatch.matched_kb_id,
+    match_score: topicMatch.score,
+    archive_status: topicMatch.suggested_action === "ask_create" ? "suggested" : "not_archived"
+  });
+
+  const actionItemsForConfirmation =
+    topicMatch.suggested_action === "ask_create"
+      ? extraction.action_items.filter((item) => !isKnowledgeBaseCreationAction(item))
+      : extraction.action_items;
+
   const actionRecords = await runPersonalActionAgent({
     repos: input.repos,
     meeting,
-    actionItems: extraction.action_items
+    actionItems: actionItemsForConfirmation
   });
   const calendarRecords = await runCalendarAgent({
     repos: input.repos,
@@ -105,19 +152,6 @@ export async function processMeetingWorkflow(input: {
     );
   }
 
-  const refreshedMeeting = input.repos.getMeeting(meeting.id) ?? meeting;
-  const topicMatch = await runTopicClusteringAgent({
-    repos: input.repos,
-    meeting: refreshedMeeting,
-    extraction
-  });
-  input.repos.updateMeetingTopic({
-    id: meeting.id,
-    matched_kb_id: topicMatch.matched_kb_id,
-    match_score: topicMatch.score,
-    archive_status: topicMatch.suggested_action === "ask_create" ? "suggested" : "not_archived"
-  });
-
   if (topicMatch.suggested_action === "ask_create") {
     const topicName = suggestTopicName({
       title: input.meeting.title,
@@ -131,6 +165,11 @@ export async function processMeetingWorkflow(input: {
         recipient: input.meeting.organizer,
         originalPayload: {
           topic_name: topicName,
+          suggested_goal: suggestGoal(topicName),
+          candidate_meeting_ids: topicMatch.candidate_meeting_ids,
+          match_reasons: topicMatch.match_reasons,
+          score: topicMatch.score,
+          default_structure: defaultKnowledgeBaseStructure(),
           topic_match: topicMatch,
           meeting_ids: topicMatch.candidate_meeting_ids,
           reason: "检测到至少两场强相关会议，建议创建主题知识库。"

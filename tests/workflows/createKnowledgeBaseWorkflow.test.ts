@@ -83,4 +83,23 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(archivedMeetings).toHaveLength(2);
     expect(repos.getConfirmationRequest(request!.id)?.status).toBe("executed");
   });
+
+  it("fails in real mode while larkWiki/larkDoc are not implemented", async () => {
+    const repos = await processDroneMeetings();
+    const request = repos.listConfirmationRequests().find((item) => item.request_type === "create_kb");
+    expect(request).toBeTruthy();
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: false, sqlitePath: ":memory:" }),
+      id: request!.id
+    });
+
+    const confirmation = repos.getConfirmationRequest(request!.id);
+    expect(confirmation?.status).toBe("failed");
+    expect(confirmation?.error).toContain("larkWiki/larkDoc");
+    expect(repos.listKnowledgeBases()).toHaveLength(0);
+    expect(repos.listKnowledgeUpdates()).toHaveLength(0);
+    expect(repos.listMeetings().filter((meeting) => meeting.archive_status === "archived")).toHaveLength(0);
+  });
 });

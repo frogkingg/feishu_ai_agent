@@ -18,6 +18,8 @@ data/
 
 # Secrets and local environment
 .env
+.env.local
+.env.*.local
 .env.*
 !.env.example
 
@@ -41,3 +43,6 @@ meeting-atlas/
 *.pid
 tmp/
 temp/
+
+# Demo run snapshots
+demo-output/*.json

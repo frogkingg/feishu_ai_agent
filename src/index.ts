@@ -1,8 +1,8 @@
 import { loadConfig } from "./config";
 import { buildServer } from "./server";
+import { createLlmClient } from "./services/llm/createLlmClient";
 import { createDatabase } from "./services/store/db";
 import { createRepositories } from "./services/store/repositories";
-import { MockLlmClient } from "./services/llm/mockLlmClient";
 
 async function main() {
   const config = loadConfig();
@@ -11,7 +11,7 @@ async function main() {
   const server = buildServer({
     config,
     repos,
-    llm: new MockLlmClient()
+    llm: createLlmClient(config)
   });
 
   await server.listen({

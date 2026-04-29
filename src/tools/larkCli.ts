@@ -76,7 +76,7 @@ export async function runLarkCli(args: string[], options: LarkCliRunOptions): Pr
   const redactedArgs = redactArgs(args);
   const runId = createId("cli");
 
-  if (dryRun || options.mockMode) {
+  if (dryRun) {
     const stdout = JSON.stringify({
       dry_run: dryRun,
       mock_mode: Boolean(options.mockMode),
@@ -144,16 +144,15 @@ export async function runLarkCli(args: string[], options: LarkCliRunOptions): Pr
     const stdout = redactText(err.stdout ?? "");
     const stderr = redactText(err.stderr ?? "");
     const message = redactText(err.message);
-    const fallbackToMock = err.code === "ENOENT";
     options.repos.createCliRun({
       id: runId,
       tool,
       args_json: JSON.stringify(redactedArgs),
       dry_run: 0,
-      status: fallbackToMock ? "planned" : "failed",
+      status: "failed",
       stdout,
       stderr,
-      error: fallbackToMock ? `mock fallback: ${message}` : message
+      error: message
     });
 
     return {
@@ -161,17 +160,11 @@ export async function runLarkCli(args: string[], options: LarkCliRunOptions): Pr
       tool,
       args: redactedArgs,
       dryRun: false,
-      status: fallbackToMock ? "planned" : "failed",
+      status: "failed",
       stdout,
       stderr,
-      error: fallbackToMock ? `mock fallback: ${message}` : message,
-      parsed: fallbackToMock
-        ? {
-            mock_fallback: true,
-            tool,
-            args: redactedArgs
-          }
-        : null
+      error: message,
+      parsed: null
     };
   }
 }

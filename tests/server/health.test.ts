@@ -22,7 +22,8 @@ describe("GET /health", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       service: "meeting-atlas",
-      phase: "phase-6"
+      phase: "phase-6",
+      llm_provider: "mock"
     });
   });
 });

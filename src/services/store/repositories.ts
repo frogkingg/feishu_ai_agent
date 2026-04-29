@@ -281,6 +281,49 @@ export function createRepositories(db: MeetingAtlasDb) {
       ).run(input.confirmation_status, input.feishu_task_guid, input.task_url, nowIso(), input.id);
     },
 
+    updateActionItemDraft(input: {
+      id: string;
+      title: string;
+      description: string | null;
+      owner: string | null;
+      collaborators_json: string;
+      due_date: string | null;
+      priority: ActionItemRow["priority"];
+      evidence: string;
+      confidence: number;
+      suggested_reason: string;
+      missing_fields_json: string;
+    }): void {
+      db.prepare(
+        `UPDATE action_items
+        SET title = ?,
+            description = ?,
+            owner = ?,
+            collaborators_json = ?,
+            due_date = ?,
+            priority = ?,
+            evidence = ?,
+            confidence = ?,
+            suggested_reason = ?,
+            missing_fields_json = ?,
+            updated_at = ?
+        WHERE id = ?`
+      ).run(
+        input.title,
+        input.description,
+        input.owner,
+        input.collaborators_json,
+        input.due_date,
+        input.priority,
+        input.evidence,
+        input.confidence,
+        input.suggested_reason,
+        input.missing_fields_json,
+        nowIso(),
+        input.id
+      );
+    },
+
     updateActionItemRejection(input: { id: string; rejection_reason: string | null }): void {
       db.prepare(
         `UPDATE action_items
@@ -343,6 +386,49 @@ export function createRepositories(db: MeetingAtlasDb) {
         SET confirmation_status = ?, calendar_event_id = ?, event_url = ?, updated_at = ?
         WHERE id = ?`
       ).run(input.confirmation_status, input.calendar_event_id, input.event_url, nowIso(), input.id);
+    },
+
+    updateCalendarDraft(input: {
+      id: string;
+      title: string;
+      start_time: string | null;
+      end_time: string | null;
+      duration_minutes: number | null;
+      participants_json: string;
+      agenda: string | null;
+      location: string | null;
+      evidence: string;
+      confidence: number;
+      missing_fields_json: string;
+    }): void {
+      db.prepare(
+        `UPDATE calendar_drafts
+        SET title = ?,
+            start_time = ?,
+            end_time = ?,
+            duration_minutes = ?,
+            participants_json = ?,
+            agenda = ?,
+            location = ?,
+            evidence = ?,
+            confidence = ?,
+            missing_fields_json = ?,
+            updated_at = ?
+        WHERE id = ?`
+      ).run(
+        input.title,
+        input.start_time,
+        input.end_time,
+        input.duration_minutes,
+        input.participants_json,
+        input.agenda,
+        input.location,
+        input.evidence,
+        input.confidence,
+        input.missing_fields_json,
+        nowIso(),
+        input.id
+      );
     },
 
     updateCalendarDraftRejection(id: string): void {
