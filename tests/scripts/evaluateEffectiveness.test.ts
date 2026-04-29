@@ -199,6 +199,36 @@ describe("effectiveness evaluation", () => {
     expect(sample.false_positive_confirmations).toBe(0);
   });
 
+  it("keeps ambiguous interface alignment as a calendar draft without action items", () => {
+    const sample = sampleById("ambiguous_schedule_01");
+
+    expect(sample.covered_scenarios).toEqual(
+      expect.arrayContaining(["ambiguous_no_task", "decision_without_action"])
+    );
+    expect(sample.action_items.predicted).toBe(0);
+    expect(sample.action_items.false_positives).toBe(0);
+    expect(sample.calendar_drafts.predicted).toBe(1);
+    expect(sample.calendar_drafts.matched).toBe(1);
+    expect(sample.decisions.matched).toBe(1);
+    expect(sample.risks.matched).toBe(1);
+  });
+
+  it("keeps unowned SOP consensus as a decision instead of an action item", () => {
+    const fixtures = readEvaluationFixtureSet();
+    const droneSopIndex = fixtures.manifest.findIndex((item) => item.id === "drone_02");
+
+    expect(droneSopIndex).toBeGreaterThanOrEqual(0);
+    const extraction = fixtures.extractions[droneSopIndex]!;
+    expect(extraction.key_decisions.some((decision) => decision.decision.includes("SOP"))).toBe(
+      true
+    );
+    expect(
+      extraction.action_items.some((item) =>
+        [item.title, item.description ?? "", item.evidence].join(" ").includes("SOP")
+      )
+    ).toBe(false);
+  });
+
   it("triggers create_kb after the two drone meetings", () => {
     const firstDrone = sampleById("drone_01");
     const secondDrone = sampleById("drone_02");

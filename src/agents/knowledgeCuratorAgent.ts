@@ -41,16 +41,14 @@ function meetingLabel(meeting: MeetingRow): string {
 
 function extractSourceReferences(meetings: MeetingRow[]): string[] {
   const fromQuotedText = meetings.flatMap((meeting) => {
-    const matches = [...meeting.transcript_text.matchAll(/[“"]([^”"]+)[”"]/g)];
+    const matches = [
+      ...meeting.transcript_text.matchAll(/[“"]([^”"]+)[”"]/g),
+      ...meeting.transcript_text.matchAll(/《([^》]+)》/g)
+    ];
     return matches.map((match) => match[1]);
   });
-  const knownReferences = meetings.some((meeting) =>
-    meeting.transcript_text.includes("无人机安全规范")
-  )
-    ? ["无人机安全规范"]
-    : [];
 
-  return unique([...knownReferences, ...fromQuotedText]);
+  return unique(fromQuotedText);
 }
 
 function extractDecisions(meetings: MeetingRow[]): string[] {
@@ -268,9 +266,7 @@ export function runKnowledgeCuratorAgent(input: {
     input.meetings.flatMap((meeting) => parseStringArray(meeting.keywords_json))
   );
   const sources = extractSourceReferences(input.meetings);
-  const goal = input.topicName.includes("无人机")
-    ? "沉淀无人机当前操作流程、试飞权限、风险控制和统一操作 SOP 的会议结论与执行闭环。"
-    : `沉淀 ${input.topicName} 相关会议结论、执行事项和来源资料。`;
+  const goal = `沉淀 ${input.topicName} 相关会议结论、执行事项和来源资料。`;
   const pages = buildPages({
     name: input.topicName,
     goal,
