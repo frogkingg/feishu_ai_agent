@@ -20,7 +20,10 @@ type CardInput = ReturnType<typeof CardConfirmationInputSchema.parse>;
 function sanitizeText(value: string): string {
   return value
     .replace(/Authorization\s*[:=]\s*(?:Bearer\s+)?[^\s,;\n]+/gi, "[REDACTED]")
-    .replace(/\b[A-Z0-9_]*(?:API[_\s-]?KEY|APP_SECRET|TOKEN|SECRET)\b\s*[:=]\s*[^\s,;\n]+/gi, "[REDACTED]")
+    .replace(
+      /\b[A-Z0-9_]*(?:API[_\s-]?KEY|APP_SECRET|TOKEN|SECRET)\b\s*[:=]\s*[^\s,;\n]+/gi,
+      "[REDACTED]"
+    )
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, "[REDACTED]")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
     .replace(/API\s*Key/gi, "[REDACTED]")
@@ -486,9 +489,20 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
       })
     ],
     editable_fields: [
-      editableField({ key: "title", label: "标题", inputType: "text", value: draft.title, required: true }),
+      editableField({
+        key: "title",
+        label: "标题",
+        inputType: "text",
+        value: draft.title,
+        required: true
+      }),
       editableField({ key: "owner", label: "负责人", inputType: "text", value: draft.owner }),
-      editableField({ key: "due_date", label: "截止日期", inputType: "date", value: draft.due_date }),
+      editableField({
+        key: "due_date",
+        label: "截止日期",
+        inputType: "date",
+        value: draft.due_date
+      }),
       editableField({
         key: "priority",
         label: "优先级",
@@ -496,7 +510,12 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
         value: draft.priority,
         options: ["P0", "P1", "P2"]
       }),
-      editableField({ key: "collaborators", label: "协作人", inputType: "multi_text", value: draft.collaborators })
+      editableField({
+        key: "collaborators",
+        label: "协作人",
+        inputType: "multi_text",
+        value: draft.collaborators
+      })
     ],
     actions: actionConfirmationActions(parsed.id),
     dry_run: true,
@@ -504,7 +523,9 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   });
 }
 
-export function buildCalendarConfirmationCard(input: CardConfirmationInput): DryRunConfirmationCard {
+export function buildCalendarConfirmationCard(
+  input: CardConfirmationInput
+): DryRunConfirmationCard {
   const parsed = CardConfirmationInputSchema.parse(input);
   const { payload } = payloadAndDraft(parsed);
   const draft = normalizeCalendarDraft(parsed);
@@ -553,11 +574,37 @@ export function buildCalendarConfirmationCard(input: CardConfirmationInput): Dry
       })
     ],
     editable_fields: [
-      editableField({ key: "title", label: "标题", inputType: "text", value: draft.title, required: true }),
-      editableField({ key: "start_time", label: "开始时间", inputType: "datetime", value: draft.start_time }),
-      editableField({ key: "end_time", label: "结束时间", inputType: "datetime", value: draft.end_time }),
-      editableField({ key: "duration_minutes", label: "时长分钟", inputType: "number", value: draft.duration_minutes }),
-      editableField({ key: "participants", label: "参会人", inputType: "multi_text", value: draft.participants }),
+      editableField({
+        key: "title",
+        label: "标题",
+        inputType: "text",
+        value: draft.title,
+        required: true
+      }),
+      editableField({
+        key: "start_time",
+        label: "开始时间",
+        inputType: "datetime",
+        value: draft.start_time
+      }),
+      editableField({
+        key: "end_time",
+        label: "结束时间",
+        inputType: "datetime",
+        value: draft.end_time
+      }),
+      editableField({
+        key: "duration_minutes",
+        label: "时长分钟",
+        inputType: "number",
+        value: draft.duration_minutes
+      }),
+      editableField({
+        key: "participants",
+        label: "参会人",
+        inputType: "multi_text",
+        value: draft.participants
+      }),
       editableField({ key: "location", label: "地点", inputType: "text", value: draft.location }),
       editableField({ key: "agenda", label: "议程", inputType: "textarea", value: draft.agenda })
     ],
@@ -567,7 +614,9 @@ export function buildCalendarConfirmationCard(input: CardConfirmationInput): Dry
   });
 }
 
-export function buildCreateKbConfirmationCard(input: CardConfirmationInput): DryRunConfirmationCard {
+export function buildCreateKbConfirmationCard(
+  input: CardConfirmationInput
+): DryRunConfirmationCard {
   const parsed = CardConfirmationInputSchema.parse(input);
   const payload = asObject(parsed.original_payload);
   const topicName = firstString([payload.topic_name, payload.name], "新主题知识库");
@@ -575,7 +624,9 @@ export function buildCreateKbConfirmationCard(input: CardConfirmationInput): Dry
     [payload.suggested_goal, payload.goal],
     "沉淀相关会议结论、行动项、日程与资料来源。"
   );
-  const candidateMeetingIds = parseStringArray(payload.candidate_meeting_ids ?? payload.meeting_ids);
+  const candidateMeetingIds = parseStringArray(
+    payload.candidate_meeting_ids ?? payload.meeting_ids
+  );
   const matchReasons = parseStringArray(payload.match_reasons);
   const defaultStructure = parseStringArray(payload.default_structure);
   const score = asNumber(payload.score);
@@ -615,21 +666,33 @@ export function buildCreateKbConfirmationCard(input: CardConfirmationInput): Dry
       }),
       section({
         title: "默认结构",
-        fields: [
-          displayField("default_structure", "default_structure", defaultStructure)
-        ]
+        fields: [displayField("default_structure", "default_structure", defaultStructure)]
       }),
       section({
         title: "安全说明",
-        fields: [
-          displayField("safety_note", "安全说明", "用户确认前不会创建知识库")
-        ]
+        fields: [displayField("safety_note", "安全说明", "用户确认前不会创建知识库")]
       })
     ],
     editable_fields: [
-      editableField({ key: "topic_name", label: "主题名称", inputType: "text", value: topicName, required: true }),
-      editableField({ key: "suggested_goal", label: "知识库目标", inputType: "textarea", value: suggestedGoal }),
-      editableField({ key: "default_structure", label: "默认目录", inputType: "multi_text", value: defaultStructure })
+      editableField({
+        key: "topic_name",
+        label: "主题名称",
+        inputType: "text",
+        value: topicName,
+        required: true
+      }),
+      editableField({
+        key: "suggested_goal",
+        label: "知识库目标",
+        inputType: "textarea",
+        value: suggestedGoal
+      }),
+      editableField({
+        key: "default_structure",
+        label: "默认目录",
+        inputType: "multi_text",
+        value: defaultStructure
+      })
     ],
     actions: createKbConfirmationActions(parsed.id),
     dry_run: true,
@@ -687,7 +750,9 @@ export function buildConfirmationCard(input: CardConfirmationInput): DryRunConfi
   return buildGenericConfirmationCard(parsed);
 }
 
-export function buildConfirmationCardFromRequest(request: ConfirmationRequestRow): DryRunConfirmationCard {
+export function buildConfirmationCardFromRequest(
+  request: ConfirmationRequestRow
+): DryRunConfirmationCard {
   const input: CardConfirmationInput = {
     id: request.id,
     request_type: request.request_type,

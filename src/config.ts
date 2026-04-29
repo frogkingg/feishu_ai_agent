@@ -72,7 +72,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     port: Number(process.env.PORT ?? 3000),
     sqlitePath: path.isAbsolute(sqlitePath) ? sqlitePath : path.join(process.cwd(), sqlitePath),
     feishuDryRun: parseBoolean(process.env.FEISHU_DRY_RUN, true),
-    larkCliBin: process.env.LARK_CLI_BIN || "lark",
+    larkCliBin: process.env.LARK_CLI_BIN || "lark-cli",
     llmProvider: parseLlmProvider(process.env.LLM_PROVIDER),
     llmApiKey: process.env.LLM_API_KEY || null,
     llmBaseUrl: process.env.LLM_BASE_URL || null,

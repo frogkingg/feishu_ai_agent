@@ -8,7 +8,10 @@ import { createRepositories } from "../../src/services/store/repositories";
 
 describe("POST /dev/meetings/manual", () => {
   it("creates at least one action confirmation and one calendar confirmation", async () => {
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
     const repos = createRepositories(createMemoryDatabase());
     const app = buildServer({
       config: loadConfig({ sqlitePath: ":memory:" }),
@@ -62,7 +65,10 @@ describe("POST /dev/meetings/manual", () => {
         organizer: "张三",
         started_at: "2026-04-28T10:00:00+08:00",
         ended_at: "2026-04-28T11:00:00+08:00",
-        transcript_text: readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8")
+        transcript_text: readFileSync(
+          join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+          "utf8"
+        )
       }
     });
 
@@ -81,7 +87,10 @@ describe("POST /dev/meetings/manual", () => {
     });
 
     expect(secondResponse.statusCode).toBe(200);
-    const secondBody = secondResponse.json() as { confirmation_requests: string[]; topic_match: { suggested_action: string } };
+    const secondBody = secondResponse.json() as {
+      confirmation_requests: string[];
+      topic_match: { suggested_action: string };
+    };
     expect(secondBody.topic_match.suggested_action).toBe("ask_create");
 
     const confirmationsResponse = await app.inject({
@@ -89,7 +98,9 @@ describe("POST /dev/meetings/manual", () => {
       url: "/dev/confirmations"
     });
     const confirmations = confirmationsResponse.json() as { id: string; request_type: string }[];
-    const createKbRequest = confirmations.find((confirmation) => confirmation.request_type === "create_kb");
+    const createKbRequest = confirmations.find(
+      (confirmation) => confirmation.request_type === "create_kb"
+    );
 
     expect(confirmationsResponse.statusCode).toBe(200);
     expect(createKbRequest).toBeTruthy();

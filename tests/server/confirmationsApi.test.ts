@@ -22,18 +22,27 @@ class QueueLlmClient implements LlmClient {
 }
 
 function readExpectedExtraction(name: string): MeetingExtractionResult {
-  return JSON.parse(readFileSync(join(process.cwd(), "fixtures/expected", name), "utf8")) as MeetingExtractionResult;
+  return JSON.parse(
+    readFileSync(join(process.cwd(), "fixtures/expected", name), "utf8")
+  ) as MeetingExtractionResult;
 }
 
 describe("confirmation dev APIs", () => {
   it("confirms and rejects requests through HTTP", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const app = buildServer({
-      config: loadConfig({ feishuDryRun: true, larkCliBin: "definitely-not-real-lark", sqlitePath: ":memory:" }),
+      config: loadConfig({
+        feishuDryRun: true,
+        larkCliBin: "definitely-not-real-lark",
+        sqlitePath: ":memory:"
+      }),
       repos,
       llm: new MockLlmClient()
     });
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
 
     await app.inject({
       method: "POST",
@@ -49,7 +58,9 @@ describe("confirmation dev APIs", () => {
     });
 
     const action = repos.listConfirmationRequests().find((item) => item.request_type === "action");
-    const calendar = repos.listConfirmationRequests().find((item) => item.request_type === "calendar");
+    const calendar = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "calendar");
 
     const listResponse = await app.inject({
       method: "GET",
@@ -60,26 +71,26 @@ describe("confirmation dev APIs", () => {
       dry_run_card?: { card_type: string; actions: Array<{ key: string }> };
     }>;
     expect(listResponse.statusCode).toBe(200);
-    expect(confirmations.find((item) => item.request_type === "action")?.dry_run_card).toMatchObject({
+    expect(
+      confirmations.find((item) => item.request_type === "action")?.dry_run_card
+    ).toMatchObject({
       card_type: "action_confirmation"
     });
-    expect(confirmations.find((item) => item.request_type === "calendar")?.dry_run_card).toMatchObject({
+    expect(
+      confirmations.find((item) => item.request_type === "calendar")?.dry_run_card
+    ).toMatchObject({
       card_type: "calendar_confirmation"
     });
-    expect(confirmations.find((item) => item.request_type === "action")?.dry_run_card?.actions.map((action) => action.key)).toEqual([
-      "confirm",
-      "confirm_with_edits",
-      "reject",
-      "not_mine",
-      "remind_later"
-    ]);
-    expect(confirmations.find((item) => item.request_type === "calendar")?.dry_run_card?.actions.map((action) => action.key)).toEqual([
-      "confirm",
-      "confirm_with_edits",
-      "reject",
-      "convert_to_task",
-      "remind_later"
-    ]);
+    expect(
+      confirmations
+        .find((item) => item.request_type === "action")
+        ?.dry_run_card?.actions.map((action) => action.key)
+    ).toEqual(["confirm", "confirm_with_edits", "reject", "not_mine", "remind_later"]);
+    expect(
+      confirmations
+        .find((item) => item.request_type === "calendar")
+        ?.dry_run_card?.actions.map((action) => action.key)
+    ).toEqual(["confirm", "confirm_with_edits", "reject", "convert_to_task", "remind_later"]);
 
     const cardsResponse = await app.inject({
       method: "GET",
@@ -133,7 +144,10 @@ describe("confirmation dev APIs", () => {
       method: "GET",
       url: "/dev/state"
     });
-    const state = stateResponse.json() as { cli_runs: unknown[]; confirmation_requests: Array<{ status: string }> };
+    const state = stateResponse.json() as {
+      cli_runs: unknown[];
+      confirmation_requests: Array<{ status: string }>;
+    };
     expect(state.cli_runs).toHaveLength(1);
     expect(state.confirmation_requests.some((request) => request.status === "executed")).toBe(true);
     expect(state.confirmation_requests.some((request) => request.status === "rejected")).toBe(true);
@@ -147,12 +161,22 @@ describe("confirmation dev APIs", () => {
     };
     const secondExtraction = readExpectedExtraction("drone_interview_02.extraction.json");
     const app = buildServer({
-      config: loadConfig({ feishuDryRun: true, larkCliBin: "definitely-not-real-lark", sqlitePath: ":memory:" }),
+      config: loadConfig({
+        feishuDryRun: true,
+        larkCliBin: "definitely-not-real-lark",
+        sqlitePath: ":memory:"
+      }),
       repos,
       llm: new QueueLlmClient([firstExtraction, secondExtraction])
     });
-    const firstTranscript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
-    const secondTranscript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_02.txt"), "utf8");
+    const firstTranscript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
+    const secondTranscript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_02.txt"),
+      "utf8"
+    );
 
     await app.inject({
       method: "POST",
@@ -180,8 +204,12 @@ describe("confirmation dev APIs", () => {
     });
 
     const action = repos.listConfirmationRequests().find((item) => item.request_type === "action");
-    const calendar = repos.listConfirmationRequests().find((item) => item.request_type === "calendar");
-    const createKb = repos.listConfirmationRequests().find((item) => item.request_type === "create_kb");
+    const calendar = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "calendar");
+    const createKb = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "create_kb");
 
     const remindLaterResponse = await app.inject({
       method: "POST",
@@ -250,5 +278,153 @@ describe("confirmation dev APIs", () => {
         `/dev/confirmations/${createKb!.id}/append-current-only`
       ])
     );
+  });
+
+  it("dry-run sends one card or all cards through lark.im send-card without changing confirmation status", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        larkCliBin: "definitely-not-real-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new MockLlmClient()
+    });
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
+
+    await app.inject({
+      method: "POST",
+      url: "/dev/meetings/manual",
+      payload: {
+        title: "无人机操作方案初步访谈",
+        participants: ["张三", "李四"],
+        organizer: "张三",
+        started_at: "2026-04-28T10:00:00+08:00",
+        ended_at: "2026-04-28T11:00:00+08:00",
+        transcript_text: transcript
+      }
+    });
+
+    const action = repos.listConfirmationRequests().find((item) => item.request_type === "action");
+    expect(action).toBeTruthy();
+
+    const sendOneResponse = await app.inject({
+      method: "POST",
+      url: `/dev/confirmations/${action!.id}/send-card`,
+      payload: { recipient: "ou_override_user" }
+    });
+    expect(sendOneResponse.statusCode).toBe(200);
+    expect(sendOneResponse.json()).toMatchObject({
+      ok: true,
+      status: "planned",
+      dry_run: true,
+      confirmation_id: action!.id,
+      recipient: "ou_override_user",
+      card_message_id: null
+    });
+    expect(repos.getConfirmationRequest(action!.id)).toMatchObject({
+      status: "sent",
+      card_message_id: null
+    });
+
+    const totalUnfinished = repos
+      .listConfirmationRequests()
+      .filter((request) => request.status === "sent").length;
+    const sendAllResponse = await app.inject({
+      method: "POST",
+      url: "/dev/cards/send-all",
+      payload: { chat_id: "oc_demo_chat" }
+    });
+    const sendAll = sendAllResponse.json() as {
+      ok: boolean;
+      total: number;
+      planned: number;
+      failed: number;
+      results: Array<{ chat_id: string; status: string }>;
+    };
+    expect(sendAllResponse.statusCode).toBe(200);
+    expect(sendAll).toMatchObject({
+      ok: true,
+      total: totalUnfinished,
+      planned: totalUnfinished,
+      failed: 0
+    });
+    expect(sendAll.results.every((result) => result.chat_id === "oc_demo_chat")).toBe(true);
+
+    const cliRuns = repos.listCliRuns();
+    expect(cliRuns).toHaveLength(totalUnfinished + 1);
+    expect(
+      cliRuns.every(
+        (run) => run.tool === "lark.im.send_card" && run.dry_run === 1 && run.status === "planned"
+      )
+    ).toBe(true);
+    const sendAllArgs = JSON.parse(cliRuns.at(-1)!.args_json) as string[];
+    expect(sendAllArgs).toEqual(expect.arrayContaining(["--chat-id", "oc_demo_chat"]));
+    expect(repos.listConfirmationRequests().every((request) => request.status === "sent")).toBe(
+      true
+    );
+  });
+
+  it("fails send-card in real mode when lark CLI cannot execute", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: false,
+        larkCliBin: "definitely-not-real-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new MockLlmClient()
+    });
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
+
+    await app.inject({
+      method: "POST",
+      url: "/dev/meetings/manual",
+      payload: {
+        title: "无人机操作方案初步访谈",
+        participants: ["张三", "李四"],
+        organizer: "张三",
+        started_at: "2026-04-28T10:00:00+08:00",
+        ended_at: "2026-04-28T11:00:00+08:00",
+        transcript_text: transcript
+      }
+    });
+
+    const action = repos.listConfirmationRequests().find((item) => item.request_type === "action");
+    expect(action).toBeTruthy();
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/dev/confirmations/${action!.id}/send-card`,
+      payload: { chat_id: "oc_demo_chat" }
+    });
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      status: "failed",
+      dry_run: false,
+      confirmation_id: action!.id,
+      card_message_id: null
+    });
+
+    const updated = repos.getConfirmationRequest(action!.id);
+    expect(updated).toMatchObject({
+      status: "sent",
+      card_message_id: null
+    });
+    expect(repos.listCliRuns()).toHaveLength(1);
+    expect(repos.listCliRuns()[0]).toMatchObject({
+      tool: "lark.im.send_card",
+      dry_run: 0,
+      status: "failed"
+    });
   });
 });

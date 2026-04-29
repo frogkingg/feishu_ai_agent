@@ -11,7 +11,9 @@ function readFixture(name: string): string {
 }
 
 function readExpected(name: string): MeetingExtractionResult {
-  return JSON.parse(readFileSync(join(process.cwd(), "fixtures/expected", name), "utf8")) as MeetingExtractionResult;
+  return JSON.parse(
+    readFileSync(join(process.cwd(), "fixtures/expected", name), "utf8")
+  ) as MeetingExtractionResult;
 }
 
 class QueueLlmClient implements LlmClient {
@@ -37,7 +39,10 @@ function secondDroneExtraction(): MeetingExtractionResult {
   return readExpected("drone_interview_02.extraction.json");
 }
 
-async function processFirstDroneMeeting(repos: ReturnType<typeof createRepositories>, llm: LlmClient) {
+async function processFirstDroneMeeting(
+  repos: ReturnType<typeof createRepositories>,
+  llm: LlmClient
+) {
   return processMeetingWorkflow({
     repos,
     llm,
@@ -79,7 +84,9 @@ describe("TopicClusteringAgent", () => {
     const first = await processFirstDroneMeeting(repos, llm);
 
     expect(first.topic_match.suggested_action).toBe("observe");
-    expect(repos.listConfirmationRequests().some((request) => request.request_type === "create_kb")).toBe(false);
+    expect(
+      repos.listConfirmationRequests().some((request) => request.request_type === "create_kb")
+    ).toBe(false);
 
     const second = await processSecondDroneMeeting({ repos, llm });
 
@@ -89,7 +96,9 @@ describe("TopicClusteringAgent", () => {
 
     expect(second.topic_match.suggested_action).toBe("ask_create");
     expect(second.topic_match.score).toBeGreaterThanOrEqual(0.78);
-    expect(second.topic_match.candidate_meeting_ids).toEqual(expect.arrayContaining([first.meeting_id, second.meeting_id]));
+    expect(second.topic_match.candidate_meeting_ids).toEqual(
+      expect.arrayContaining([first.meeting_id, second.meeting_id])
+    );
     expect(createKbRequests).toHaveLength(1);
     expect(second.confirmation_requests).toContain(createKbRequests[0].id);
     expect(JSON.parse(createKbRequests[0].original_payload_json)).toMatchObject({
@@ -135,7 +144,9 @@ describe("TopicClusteringAgent", () => {
 
     expect(second.topic_match.suggested_action).toBe("ask_create");
     expect(second.topic_match.score).toBeGreaterThanOrEqual(0.9);
-    expect(second.topic_match.candidate_meeting_ids).toEqual(expect.arrayContaining([first.meeting_id, second.meeting_id]));
+    expect(second.topic_match.candidate_meeting_ids).toEqual(
+      expect.arrayContaining([first.meeting_id, second.meeting_id])
+    );
     expect(second.topic_match.match_reasons).toContain("当前会议显式提出整理成知识库");
   });
 });

@@ -9,7 +9,10 @@ import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkfl
 describe("reject confirmation request", () => {
   it("updates status and does not execute CLI", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
 
     await processMeetingWorkflow({
       repos,

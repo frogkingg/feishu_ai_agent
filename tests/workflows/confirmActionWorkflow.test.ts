@@ -32,7 +32,10 @@ function createActionTestMeeting(repos: ReturnType<typeof createRepositories>) {
 describe("confirm action request", () => {
   it("marks action executed and records cli_runs in dry-run mode", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
 
     await processMeetingWorkflow({
       repos,
@@ -66,7 +69,10 @@ describe("confirm action request", () => {
 
   it("merges edited title, owner, and due date before dry-run task creation", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
 
     await processMeetingWorkflow({
       repos,
@@ -204,7 +210,10 @@ describe("confirm action request", () => {
 
   it("marks confirmation failed in real mode when lark CLI is missing", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
 
     await processMeetingWorkflow({
       repos,

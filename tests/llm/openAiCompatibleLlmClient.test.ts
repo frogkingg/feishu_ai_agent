@@ -112,7 +112,10 @@ describe("OpenAiCompatibleLlmClient", () => {
   });
 
   it("does not duplicate chat completions when base URL already includes it", async () => {
-    const { client, calls } = createClientWithResponses(['{"ok":true}'], "https://llm.example.com/v1/chat/completions/");
+    const { client, calls } = createClientWithResponses(
+      ['{"ok":true}'],
+      "https://llm.example.com/v1/chat/completions/"
+    );
 
     await generateTestJson(client);
 
@@ -136,7 +139,9 @@ describe("OpenAiCompatibleLlmClient", () => {
 
     await expect(generateTestJson(client)).resolves.toEqual({ ok: true });
     expect(calls).toHaveLength(2);
-    const repairBody = JSON.parse(String(calls[1].init.body)) as { messages: Array<{ role: string; content: string }> };
+    const repairBody = JSON.parse(String(calls[1].init.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
     expect(repairBody.messages[1].content).toContain("原始输出");
     expect(repairBody.messages[1].content).toContain("只返回修正后的 JSON");
     expect(repairBody.messages[1].content).toContain("not json");
@@ -145,7 +150,9 @@ describe("OpenAiCompatibleLlmClient", () => {
   it("throws a clear parse error after one failed repair retry", async () => {
     const { client, calls } = createClientWithResponses(["not json", "still not json"]);
 
-    await expect(generateTestJson(client)).rejects.toThrow("LLM JSON parse failed after repair retry");
+    await expect(generateTestJson(client)).rejects.toThrow(
+      "LLM JSON parse failed after repair retry"
+    );
     expect(calls).toHaveLength(2);
   });
 

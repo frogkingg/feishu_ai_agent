@@ -19,7 +19,9 @@ const DEFAULT_PAGE_TITLES = [
 function parseStringArray(value: string): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
   } catch {
     return [];
   }
@@ -42,7 +44,9 @@ function extractSourceReferences(meetings: MeetingRow[]): string[] {
     const matches = [...meeting.transcript_text.matchAll(/[“"]([^”"]+)[”"]/g)];
     return matches.map((match) => match[1]);
   });
-  const knownReferences = meetings.some((meeting) => meeting.transcript_text.includes("无人机安全规范"))
+  const knownReferences = meetings.some((meeting) =>
+    meeting.transcript_text.includes("无人机安全规范")
+  )
     ? ["无人机安全规范"]
     : [];
 
@@ -71,7 +75,10 @@ function extractRisks(meetings: MeetingRow[]): string[] {
       if (meeting.transcript_text.includes("试飞权限")) {
         risks.push("试飞权限仍需确认并纳入风险控制。");
       }
-      if (meeting.transcript_text.includes("天气") || meeting.transcript_text.includes("电池状态")) {
+      if (
+        meeting.transcript_text.includes("天气") ||
+        meeting.transcript_text.includes("电池状态")
+      ) {
         risks.push("天气、电池状态和现场安全员需要进入统一风险清单。");
       }
       return risks;
@@ -110,7 +117,9 @@ function buildPages(input: {
   const risks = extractRisks(input.meetings);
   const actionIndex = renderActionIndex(input.actions);
   const calendarIndex = renderCalendarIndex(input.calendars);
-  const meetingRefs = input.meetings.map((meeting) => `会议 ${meeting.id}：${meetingLabel(meeting)}`);
+  const meetingRefs = input.meetings.map(
+    (meeting) => `会议 ${meeting.id}：${meetingLabel(meeting)}`
+  );
 
   return [
     {
@@ -128,7 +137,10 @@ function buildPages(input: {
         bulletList(meetingRefs, "暂无会议"),
         "",
         "## 来源引用",
-        bulletList([...meetingRefs, ...input.sources.map((source) => `资料：${source}`)], "暂无来源")
+        bulletList(
+          [...meetingRefs, ...input.sources.map((source) => `资料：${source}`)],
+          "暂无来源"
+        )
       ].join("\n")
     },
     {
@@ -167,7 +179,11 @@ function buildPages(input: {
     {
       title: DEFAULT_PAGE_TITLES[4],
       page_type: "decisions",
-      markdown: [`# ${DEFAULT_PAGE_TITLES[4]}`, "", bulletList(decisions, "暂无关键结论与决策")].join("\n")
+      markdown: [
+        `# ${DEFAULT_PAGE_TITLES[4]}`,
+        "",
+        bulletList(decisions, "暂无关键结论与决策")
+      ].join("\n")
     },
     {
       title: DEFAULT_PAGE_TITLES[5],
@@ -185,7 +201,11 @@ function buildPages(input: {
     {
       title: DEFAULT_PAGE_TITLES[6],
       page_type: "meeting_summary",
-      markdown: [`# ${DEFAULT_PAGE_TITLES[6]}`, "", bulletList(meetingSummaries, "暂无会议总结")].join("\n")
+      markdown: [
+        `# ${DEFAULT_PAGE_TITLES[6]}`,
+        "",
+        bulletList(meetingSummaries, "暂无会议总结")
+      ].join("\n")
     },
     {
       title: DEFAULT_PAGE_TITLES[7],
@@ -196,7 +216,10 @@ function buildPages(input: {
         "会议全文不直接塞入模型上下文；这里仅保留转写记录引用。",
         "",
         bulletList(
-          input.meetings.map((meeting) => `会议 ${meeting.id}：${meeting.title}，transcript_text 已存入本地 meetings 表`),
+          input.meetings.map(
+            (meeting) =>
+              `会议 ${meeting.id}：${meeting.title}，transcript_text 已存入本地 meetings 表`
+          ),
           "暂无转写记录引用"
         )
       ].join("\n")
@@ -204,12 +227,18 @@ function buildPages(input: {
     {
       title: DEFAULT_PAGE_TITLES[8],
       page_type: "sources",
-      markdown: [`# ${DEFAULT_PAGE_TITLES[8]}`, "", bulletList(input.sources, "暂无关联资料")].join("\n")
+      markdown: [`# ${DEFAULT_PAGE_TITLES[8]}`, "", bulletList(input.sources, "暂无关联资料")].join(
+        "\n"
+      )
     },
     {
       title: DEFAULT_PAGE_TITLES[9],
       page_type: "risks",
-      markdown: [`# ${DEFAULT_PAGE_TITLES[9]}`, "", bulletList(risks, "暂无风险、问题与待验证假设")].join("\n")
+      markdown: [
+        `# ${DEFAULT_PAGE_TITLES[9]}`,
+        "",
+        bulletList(risks, "暂无风险、问题与待验证假设")
+      ].join("\n")
     },
     {
       title: DEFAULT_PAGE_TITLES[10],
@@ -235,7 +264,9 @@ export function runKnowledgeCuratorAgent(input: {
   calendars: CalendarDraftRow[];
   confidenceOrigin: number;
 }): KnowledgeBaseDraft {
-  const keywords = unique(input.meetings.flatMap((meeting) => parseStringArray(meeting.keywords_json)));
+  const keywords = unique(
+    input.meetings.flatMap((meeting) => parseStringArray(meeting.keywords_json))
+  );
   const sources = extractSourceReferences(input.meetings);
   const goal = input.topicName.includes("无人机")
     ? "沉淀无人机当前操作流程、试飞权限、风险控制和统一操作 SOP 的会议结论与执行闭环。"

@@ -22,12 +22,15 @@ class QueueLlmClient implements LlmClient {
 }
 
 async function readExpectedExtraction(name: string): Promise<MeetingExtractionResult> {
-  return JSON.parse(await readFile(join(process.cwd(), "fixtures/expected", name), "utf8")) as MeetingExtractionResult;
+  return JSON.parse(
+    await readFile(join(process.cwd(), "fixtures/expected", name), "utf8")
+  ) as MeetingExtractionResult;
 }
 
 function fetchViaInject(app: ReturnType<typeof buildServer>): typeof fetch {
   return async (input, init) => {
-    const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const rawUrl =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const url = new URL(rawUrl);
     const requestHeaders = new Headers(init?.headers);
     const injected = await app.inject({
@@ -106,7 +109,9 @@ describe("demo-full-p0 script", () => {
         log: () => undefined
       });
 
-      const createKbRequests = repos.listConfirmationRequests().filter((request) => request.request_type === "create_kb");
+      const createKbRequests = repos
+        .listConfirmationRequests()
+        .filter((request) => request.request_type === "create_kb");
       expect(createKbRequests).toHaveLength(1);
       expect(createKbRequests[0].status).toBe("executed");
 
@@ -131,7 +136,9 @@ describe("demo-full-p0 script", () => {
       expect(secondMeetingActionTitles).toEqual(["整理风险清单"]);
       expect(secondMeetingActionTitles).not.toContain("整理无人机操作方案知识库");
 
-      const latestJson = JSON.parse(await readFile(join(outputDir, "p0-demo-latest.json"), "utf8")) as {
+      const latestJson = JSON.parse(
+        await readFile(join(outputDir, "p0-demo-latest.json"), "utf8")
+      ) as {
         status: string;
         knowledge_base_confirmations_executed: number;
         card_previews_generated: number;
@@ -160,4 +167,101 @@ describe("demo-full-p0 script", () => {
       await app.close();
     }
   });
+
+  it.each([
+    ["cards-only", 0],
+    ["send-cards", 5]
+  ] as const)(
+    "runs %s mode without executing confirmations",
+    async (mode, expectedCardSendRuns) => {
+      const firstExtraction = {
+        ...(await readExpectedExtraction("drone_interview_01.extraction.json")),
+        topic_keywords: ["无人机", "操作流程", "试飞权限", "操作员访谈"]
+      };
+      const secondExtraction: MeetingExtractionResult = {
+        ...(await readExpectedExtraction("drone_interview_02.extraction.json")),
+        action_items: [
+          {
+            title: "整理无人机操作方案知识库",
+            description: "把两次访谈归档到知识库，形成无人机操作方案首页。",
+            owner: "张三",
+            collaborators: [],
+            due_date: "2026-05-04",
+            priority: "P1",
+            evidence: "后续要把这两次访谈整理成一个无人机操作方案知识库。",
+            confidence: 0.9,
+            suggested_reason: "会议明确提出整理知识库。",
+            missing_fields: []
+          },
+          {
+            title: "整理风险清单",
+            description: "整理试飞权限、天气、电池状态和现场安全员等风险项。",
+            owner: "王五",
+            collaborators: [],
+            due_date: "2026-05-03",
+            priority: "P1",
+            evidence: "王五负责在 2026-05-03 前整理风险清单。",
+            confidence: 0.88,
+            suggested_reason: "王五明确认领风险清单。",
+            missing_fields: []
+          }
+        ]
+      };
+      const repos = createRepositories(createMemoryDatabase());
+      const app = buildServer({
+        config: loadConfig({
+          sqlitePath: ":memory:",
+          feishuDryRun: true,
+          larkCliBin: "definitely-not-real-lark"
+        }),
+        repos,
+        llm: new QueueLlmClient([firstExtraction, secondExtraction])
+      });
+      const outputDir = await mkdtemp(join(tmpdir(), `meeting-atlas-${mode}-demo-`));
+
+      await app.ready();
+      try {
+        const result = await runFullP0Demo({
+          baseUrl: "http://meeting-atlas.test",
+          outputDir,
+          fetchFn: fetchViaInject(app),
+          log: () => undefined,
+          mode,
+          chatId: mode === "send-cards" ? "oc_demo_chat" : undefined
+        });
+
+        expect(result.summary.mode).toBe(mode);
+        expect(result.summary.action_confirmations_executed).toBe(0);
+        expect(result.summary.calendar_confirmations_executed).toBe(0);
+        expect(result.summary.knowledge_base_confirmations_executed).toBe(0);
+        expect(result.summary.knowledge_base_name).toBe("n/a");
+        expect(result.summary.card_previews_generated).toBe(5);
+        expect(result.summary.card_send_cli_records).toBe(expectedCardSendRuns);
+        expect(
+          result.state.confirmation_requests.every((request) => request.status === "sent")
+        ).toBe(true);
+        expect(result.state.knowledge_bases).toHaveLength(0);
+        expect(
+          result.state.cli_runs.filter((run) => run.tool === "lark.im.send_card")
+        ).toHaveLength(expectedCardSendRuns);
+
+        const outputStem = mode === "cards-only" ? "cards-only-demo" : "send-cards-demo";
+        const latestJson = JSON.parse(
+          await readFile(join(outputDir, `${outputStem}-latest.json`), "utf8")
+        ) as {
+          mode: string;
+          card_send_cli_records: number;
+        };
+        const markdownReport = await readFile(join(outputDir, `${outputStem}-report.md`), "utf8");
+
+        expect(latestJson.mode).toBe(mode);
+        expect(latestJson.card_send_cli_records).toBe(expectedCardSendRuns);
+        expect(markdownReport).toContain(`Mode: ${mode}`);
+        expect(markdownReport).toContain("does not execute confirmations");
+        await expect(readFile(join(outputDir, "p0-demo-report.md"), "utf8")).rejects.toThrow();
+      } finally {
+        await app.close();
+      }
+    }
+  );
 });

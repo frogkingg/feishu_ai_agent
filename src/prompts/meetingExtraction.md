@@ -13,14 +13,14 @@
 顶层 JSON 必须严格使用以下字段：
 
 {
-  "meeting_summary": string,
-  "key_decisions": DecisionDraft[],
-  "action_items": ActionItemDraft[],
-  "calendar_drafts": CalendarEventDraft[],
-  "topic_keywords": string[],
-  "risks": RiskDraft[],
-  "source_mentions": SourceMention[],
-  "confidence": number
+"meeting_summary": string,
+"key_decisions": DecisionDraft[],
+"action_items": ActionItemDraft[],
+"calendar_drafts": CalendarEventDraft[],
+"topic_keywords": string[],
+"risks": RiskDraft[],
+"source_mentions": SourceMention[],
+"confidence": number
 }
 
 如果没有对应内容，数组字段必须返回 []，不能省略字段。
@@ -29,53 +29,53 @@
 DecisionDraft 格式：
 
 {
-  "decision": string,
-  "evidence": string
+"decision": string,
+"evidence": string
 }
 
 ActionItemDraft 格式：
 
 {
-  "title": string,
-  "description": string | null,
-  "owner": string | null,
-  "collaborators": string[],
-  "due_date": "YYYY-MM-DD" | null,
-  "priority": "P0" | "P1" | "P2" | null,
-  "evidence": string,
-  "confidence": number,
-  "suggested_reason": string,
-  "missing_fields": string[]
+"title": string,
+"description": string | null,
+"owner": string | null,
+"collaborators": string[],
+"due_date": "YYYY-MM-DD" | null,
+"priority": "P0" | "P1" | "P2" | null,
+"evidence": string,
+"confidence": number,
+"suggested_reason": string,
+"missing_fields": string[]
 }
 
 CalendarEventDraft 格式：
 
 {
-  "title": string,
-  "start_time": "ISO8601 with timezone offset" | null,
-  "end_time": "ISO8601 with timezone offset" | null,
-  "duration_minutes": number | null,
-  "participants": string[],
-  "agenda": string | null,
-  "location": string | null,
-  "evidence": string,
-  "confidence": number,
-  "missing_fields": string[]
+"title": string,
+"start_time": "ISO8601 with timezone offset" | null,
+"end_time": "ISO8601 with timezone offset" | null,
+"duration_minutes": number | null,
+"participants": string[],
+"agenda": string | null,
+"location": string | null,
+"evidence": string,
+"confidence": number,
+"missing_fields": string[]
 }
 
 RiskDraft 格式：
 
 {
-  "risk": string,
-  "evidence": string
+"risk": string,
+"evidence": string
 }
 
 SourceMention 格式：
 
 {
-  "type": "doc" | "wiki" | "im" | "mail" | "excel" | "base" | "minutes" | "task",
-  "name_or_keyword": string,
-  "reason": string
+"type": "doc" | "wiki" | "im" | "mail" | "excel" | "base" | "minutes" | "task",
+"name_or_keyword": string,
+"reason": string
 }
 
 重要规则：
@@ -104,43 +104,43 @@ SourceMention 格式：
 请严格输出类似下面的 JSON 结构：
 
 {
-  "meeting_summary": "本次会议围绕无人机操作方案的流程整理、试飞权限和后续访谈安排展开。",
-  "key_decisions": [
-    {
-      "decision": "先调研现有流程，不急着进入技术方案设计。",
-      "evidence": "大家决定先调研流程，不急着做技术方案。"
-    }
-  ],
-  "action_items": [
-    {
-      "title": "整理无人机现有操作流程",
-      "description": "整理当前无人机操作流程，并形成可供团队查看的材料。",
-      "owner": "张三",
-      "collaborators": [],
-      "due_date": "2026-05-01",
-      "priority": "P1",
-      "evidence": "张三需要在2026年5月1日前整理无人机现有操作流程。",
-      "confidence": 0.9,
-      "suggested_reason": "会议中明确点名张三负责整理操作流程，并给出了截止日期。",
-      "missing_fields": []
-    }
-  ],
-  "calendar_drafts": [
-    {
-      "title": "无人机操作员访谈",
-      "start_time": "2026-05-05T10:00:00+08:00",
-      "end_time": null,
-      "duration_minutes": 60,
-      "participants": [],
-      "agenda": "继续访谈操作员，了解无人机操作流程和试飞权限问题。",
-      "location": null,
-      "evidence": "2026年5月5日上午10点再约操作员做一次访谈。",
-      "confidence": 0.85,
-      "missing_fields": ["participants"]
-    }
-  ],
-  "topic_keywords": ["无人机", "操作流程", "试飞权限", "操作员访谈"],
-  "risks": [],
-  "source_mentions": [],
-  "confidence": 0.88
+"meeting_summary": "本次会议围绕无人机操作方案的流程整理、试飞权限和后续访谈安排展开。",
+"key_decisions": [
+{
+"decision": "先调研现有流程，不急着进入技术方案设计。",
+"evidence": "大家决定先调研流程，不急着做技术方案。"
+}
+],
+"action_items": [
+{
+"title": "整理无人机现有操作流程",
+"description": "整理当前无人机操作流程，并形成可供团队查看的材料。",
+"owner": "张三",
+"collaborators": [],
+"due_date": "2026-05-01",
+"priority": "P1",
+"evidence": "张三需要在2026年5月1日前整理无人机现有操作流程。",
+"confidence": 0.9,
+"suggested_reason": "会议中明确点名张三负责整理操作流程，并给出了截止日期。",
+"missing_fields": []
+}
+],
+"calendar_drafts": [
+{
+"title": "无人机操作员访谈",
+"start_time": "2026-05-05T10:00:00+08:00",
+"end_time": null,
+"duration_minutes": 60,
+"participants": [],
+"agenda": "继续访谈操作员，了解无人机操作流程和试飞权限问题。",
+"location": null,
+"evidence": "2026年5月5日上午10点再约操作员做一次访谈。",
+"confidence": 0.85,
+"missing_fields": ["participants"]
+}
+],
+"topic_keywords": ["无人机", "操作流程", "试飞权限", "操作员访谈"],
+"risks": [],
+"source_mentions": [],
+"confidence": 0.88
 }

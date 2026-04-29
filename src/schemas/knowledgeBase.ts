@@ -36,7 +36,14 @@ export const KnowledgeBaseDraftSchema = z.object({
 export const KnowledgeUpdateSchema = z.object({
   update_id: z.string().min(1),
   kb_id: z.string().min(1),
-  update_type: z.enum(["meeting_added", "source_added", "progress_changed", "decision_added", "conflict_detected", "kb_created"]),
+  update_type: z.enum([
+    "meeting_added",
+    "source_added",
+    "progress_changed",
+    "decision_added",
+    "conflict_detected",
+    "kb_created"
+  ]),
   summary: z.string().min(1),
   source_ids: z.array(z.string()).default([]),
   before: z.string().nullable(),

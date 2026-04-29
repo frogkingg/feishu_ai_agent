@@ -5,6 +5,11 @@
 最新一次实际运行结果由 `npm run demo:full-p0` 写入
 `demo-output/p0-demo-report.md`。
 
+`demo-output/p0-demo-report.md` 只保留完整 P0 主链路结果。send-cards dry-run
+链路会写入 `demo-output/send-cards-demo-report.md`，用于证明确认卡片发送计划能进入
+`lark.im.send_card` 工具层。两份报告互补：前者证明完整执行闭环，后者证明卡片发送
+dry-run 链路，不互相替代。
+
 ## Demo 目标
 
 MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
@@ -16,8 +21,9 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 - 识别两场高度相关会议，生成 `create_kb` confirmation。
 - 用户确认后生成 mock 知识库和 `kb_created` 更新记录。
 
-本阶段不验证真实飞书写入、真实飞书卡片发送、真实 Wiki/Doc 创建或 LLM prompt 改动。
-当前卡片只是 dry-run JSON，下一阶段才会通过 `larkIm/sendCard` 接入真实飞书卡片发送。
+本阶段不验证真实飞书任务、日程、Wiki/Doc 创建或 LLM prompt 改动。
+当前卡片可以进入 `larkIm.sendCard` dry-run wrapper，但 `FEISHU_DRY_RUN=true`
+时只记录发送计划，不真实发送飞书卡片。
 
 ## 测试输入
 
@@ -47,22 +53,22 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 
 ## Demo 流程
 
-| Step | 操作 | 预期输出 |
-| --- | --- | --- |
-| 1 | 启动服务并访问 `GET /health` | 服务可达，`dry_run=true`，返回当前 LLM provider |
-| 2 | 提交第一场会议 | 至少生成 2 条 action items 和 1 条 calendar draft |
-| 3 | 校验第一场主题判断 | `suggested_action=observe`，不生成 `create_kb` |
-| 4 | 查询 `/dev/confirmations` | 返回待确认的 action/calendar 请求 |
-| 5 | 查询 `/dev/cards` | 第一场后至少有 2 张 action card 和 1 张 calendar card |
-| 6 | 确认第一条 action | action 进入确认执行状态，并写入 dry-run CLI 记录 |
-| 7 | 用 edited payload 确认第二条 action | 数据库最终字段使用用户确认值 |
-| 8 | 用 edited payload 确认 calendar | participants/location/duration 使用用户确认值 |
-| 9 | 提交第二场会议 | 第二场会议成功处理并返回 topic match |
-| 10 | 校验第二场主题判断 | `score >= 0.9`，`suggested_action=ask_create`，候选会议至少包含两场 |
-| 11 | 查询 `create_kb` confirmation | `/dev/confirmations` 能看到 `request_type=create_kb` |
-| 12 | 查询 `/dev/cards` | 第二场后能看到 1 张 create_kb card |
-| 13 | 确认 `create_kb` | 生成 mock 知识库记录 |
-| 14 | 查询 `/dev/state` | 有 knowledge base，最新 update 为 `kb_created` |
+| Step | 操作                                | 预期输出                                                            |
+| ---- | ----------------------------------- | ------------------------------------------------------------------- |
+| 1    | 启动服务并访问 `GET /health`        | 服务可达，`dry_run=true`，返回当前 LLM provider                     |
+| 2    | 提交第一场会议                      | 至少生成 2 条 action items 和 1 条 calendar draft                   |
+| 3    | 校验第一场主题判断                  | `suggested_action=observe`，不生成 `create_kb`                      |
+| 4    | 查询 `/dev/confirmations`           | 返回待确认的 action/calendar 请求                                   |
+| 5    | 查询 `/dev/cards`                   | 第一场后至少有 2 张 action card 和 1 张 calendar card               |
+| 6    | 确认第一条 action                   | action 进入确认执行状态，并写入 dry-run CLI 记录                    |
+| 7    | 用 edited payload 确认第二条 action | 数据库最终字段使用用户确认值                                        |
+| 8    | 用 edited payload 确认 calendar     | participants/location/duration 使用用户确认值                       |
+| 9    | 提交第二场会议                      | 第二场会议成功处理并返回 topic match                                |
+| 10   | 校验第二场主题判断                  | `score >= 0.9`，`suggested_action=ask_create`，候选会议至少包含两场 |
+| 11   | 查询 `create_kb` confirmation       | `/dev/confirmations` 能看到 `request_type=create_kb`                |
+| 12   | 查询 `/dev/cards`                   | 第二场后能看到 1 张 create_kb card                                  |
+| 13   | 确认 `create_kb`                    | 生成 mock 知识库记录                                                |
+| 14   | 查询 `/dev/state`                   | 有 knowledge base，最新 update 为 `kb_created`                      |
 
 ## 成功标准
 
@@ -89,6 +95,7 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 
 LLM Provider: openai-compatible
 Feishu Write Mode: dry-run
+Mode note: FEISHU_DRY_RUN=true; this demo did not perform real Feishu writes.
 Meetings processed: 2
 Action confirmations executed: 2
 Calendar confirmations executed: 1
@@ -104,13 +111,13 @@ Knowledge update: kb_created
 
 ## Dry-run 与真实飞书模式差异
 
-| 项目 | 当前 P0 dry-run | 真实飞书模式 |
-| --- | --- | --- |
-| 任务/日程创建 | 只写入本地 dry-run CLI 记录 | 需要真实调用飞书任务和日历能力 |
-| 知识库创建 | 创建本地 mock 记录，URL 为 `mock://...` | 需要真实创建 Wiki/Doc |
-| 卡片消息 | 只生成 dry-run card JSON，不发送真实飞书卡片 | 下一阶段通过 `larkIm/sendCard` 接入真实卡片 |
-| 安全策略 | `demo:full-p0` 检测到 `dry_run=false` 会停止 | 真实模式需单独脚本和人工确认 |
-| 报告内容 | 不包含 API Key，不包含 `.env` 内容 | 真实模式报告也必须继续脱敏 |
+| 项目          | 当前 P0 dry-run                                            | 真实飞书模式                                                     |
+| ------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- |
+| 任务/日程创建 | 只写入本地 dry-run CLI 记录                                | 需要真实调用飞书任务和日历能力                                   |
+| 知识库创建    | 创建本地 mock 记录，URL 为 `mock://...`                    | 需要真实创建 Wiki/Doc                                            |
+| 卡片消息      | 生成 dry-run card JSON；可 dry-run 记录 send-card CLI 计划 | `FEISHU_DRY_RUN=false` 后通过 `larkIm.sendCard` 真实发送确认卡片 |
+| 安全策略      | `demo:full-p0` 检测到 `dry_run=false` 会停止               | 真实模式需单独脚本和人工确认                                     |
+| 报告内容      | 不包含 API Key，不包含 `.env` 内容                         | 真实模式报告也必须继续脱敏                                       |
 
 ## 如何运行
 
@@ -145,9 +152,10 @@ action、calendar、create_kb confirmation 都会生成 card preview，并写入
 `original_payload_json.card_preview`，同时可通过 `/dev/cards` 读取未完成
 confirmation 的卡片队列。
 
-这些 card preview 目前只是 dry-run JSON，不会真实发送到飞书。真实飞书卡片发送
-将在下一阶段通过 `larkIm/sendCard` 接入，并继续沿用“先确认、后执行”的安全策略。
+这些 card preview 可以通过 `POST /dev/confirmations/:id/send-card` 或
+`POST /dev/cards/send-all` 进入 `larkIm.sendCard`。在 `FEISHU_DRY_RUN=true`
+下只会记录 `lark.im.send_card` 的 `cli_runs`，不会真实发送到飞书。
+这只表示确认卡片发送链路进入工具层，不代表真实飞书任务、日程、Wiki 或 Doc 写入已经接入。
 
 `remind_later`、`convert_to_task`、`append_current_only` 目前只接入 card dry-run
-preview stub，用于保证 demo 卡片按钮不会 404。stub 不会真实调用飞书，也不会
-创建任务、日程或知识库。
+preview stub，用于保证 demo 卡片按钮不会 404。stub 不会创建任务、日程或知识库。

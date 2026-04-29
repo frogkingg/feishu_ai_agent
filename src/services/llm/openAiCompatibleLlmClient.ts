@@ -39,7 +39,9 @@ function tryParseJson<T>(value: string): T | null {
 
 function extractFencedJson(content: string): string | null {
   const trimmed = content.trim();
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i) ?? trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const fenced =
+    trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i) ??
+    trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   return fenced?.[1]?.trim() ?? null;
 }
 
@@ -58,13 +60,13 @@ function balancedJsonCandidate(content: string, start: number): string | null {
         escaped = false;
       } else if (char === "\\") {
         escaped = true;
-      } else if (char === "\"") {
+      } else if (char === '"') {
         inString = false;
       }
       continue;
     }
 
-    if (char === "\"") {
+    if (char === '"') {
       inString = true;
       continue;
     }
@@ -240,11 +242,16 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
         return parseModelJson<T>(repairContent);
       } catch (repairError) {
         if (this.debugRaw) {
-          console.error(`LLM repair raw content after parse failure: ${redactForDebug(repairContent)}`);
+          console.error(
+            `LLM repair raw content after parse failure: ${redactForDebug(repairContent)}`
+          );
         }
         const firstMessage = firstError instanceof Error ? firstError.message : String(firstError);
-        const repairMessage = repairError instanceof Error ? repairError.message : String(repairError);
-        throw new Error(`LLM JSON parse failed after repair retry: ${repairMessage}; first error: ${firstMessage}`);
+        const repairMessage =
+          repairError instanceof Error ? repairError.message : String(repairError);
+        throw new Error(
+          `LLM JSON parse failed after repair retry: ${repairMessage}; first error: ${firstMessage}`
+        );
       }
     }
   }

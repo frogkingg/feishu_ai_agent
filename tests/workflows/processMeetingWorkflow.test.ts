@@ -20,12 +20,17 @@ class QueueLlmClient implements LlmClient {
 }
 
 function readExpectedExtraction(name: string): MeetingExtractionResult {
-  return JSON.parse(readFileSync(join(process.cwd(), "fixtures/expected", name), "utf8")) as MeetingExtractionResult;
+  return JSON.parse(
+    readFileSync(join(process.cwd(), "fixtures/expected", name), "utf8")
+  ) as MeetingExtractionResult;
 }
 
 describe("processMeetingWorkflow", () => {
   it("generates action and calendar confirmations without side effects", async () => {
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
     const repos = createRepositories(createMemoryDatabase());
 
     const result = await processMeetingWorkflow({
@@ -150,7 +155,10 @@ describe("processMeetingWorkflow", () => {
         organizer: "张三",
         started_at: "2026-04-28T10:00:00+08:00",
         ended_at: "2026-04-28T11:00:00+08:00",
-        transcript_text: readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8")
+        transcript_text: readFileSync(
+          join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+          "utf8"
+        )
       }
     });
     const second = await processMeetingWorkflow({
@@ -173,7 +181,9 @@ describe("processMeetingWorkflow", () => {
     });
 
     expect(second.topic_match.suggested_action).toBe("ask_create");
-    expect(repos.listConfirmationRequests().some((request) => request.request_type === "create_kb")).toBe(true);
+    expect(
+      repos.listConfirmationRequests().some((request) => request.request_type === "create_kb")
+    ).toBe(true);
 
     const secondActionTitles = repos
       .listConfirmationRequests()

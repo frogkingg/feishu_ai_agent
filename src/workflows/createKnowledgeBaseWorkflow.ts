@@ -97,11 +97,14 @@ export async function createKnowledgeBaseWorkflow(input: {
   }
 
   const meetingIds = new Set(meetings.map((meeting) => meeting.id));
-  const actions = input.repos.listActionItems().filter((action) => meetingIds.has(action.meeting_id));
+  const actions = input.repos
+    .listActionItems()
+    .filter((action) => meetingIds.has(action.meeting_id));
   const calendars = input.repos
     .listCalendarDrafts()
     .filter((calendar) => meetingIds.has(calendar.meeting_id));
-  const owner = meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? request.recipient;
+  const owner =
+    meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? request.recipient;
   const dryRun = input.config?.feishuDryRun ?? true;
 
   if (!dryRun) {

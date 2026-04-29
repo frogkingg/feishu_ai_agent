@@ -32,7 +32,9 @@ const ExplicitKnowledgeBaseIntentPhrases = [
 function parseStringArray(value: string): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
   } catch {
     return [];
   }
@@ -53,7 +55,11 @@ function overlapRatio(left: string[], right: string[]): number {
   return intersection / Math.min(leftSet.size, rightSet.size);
 }
 
-function keywordTitleScore(keywords: string[], currentTitle: string, candidateTitle: string): number {
+function keywordTitleScore(
+  keywords: string[],
+  currentTitle: string,
+  candidateTitle: string
+): number {
   const currentHits = keywords.filter((keyword) => currentTitle.includes(keyword));
   const candidateHits = keywords.filter((keyword) => candidateTitle.includes(keyword));
   if (currentHits.length === 0 || candidateHits.length === 0) {
@@ -91,10 +97,16 @@ function extractionText(extraction: MeetingExtractionResult): string {
   return [
     extraction.meeting_summary,
     extraction.topic_keywords.join(" "),
-    extraction.key_decisions.map((decision) => `${decision.decision} ${decision.evidence}`).join(" "),
-    extraction.action_items.map((item) => `${item.title} ${item.description ?? ""} ${item.evidence}`).join(" "),
+    extraction.key_decisions
+      .map((decision) => `${decision.decision} ${decision.evidence}`)
+      .join(" "),
+    extraction.action_items
+      .map((item) => `${item.title} ${item.description ?? ""} ${item.evidence}`)
+      .join(" "),
     extraction.risks.map((risk) => `${risk.risk} ${risk.evidence}`).join(" "),
-    extraction.source_mentions.map((source) => `${source.name_or_keyword} ${source.reason}`).join(" ")
+    extraction.source_mentions
+      .map((source) => `${source.name_or_keyword} ${source.reason}`)
+      .join(" ")
   ].join(" ");
 }
 
@@ -110,7 +122,9 @@ function topicSignals(text: string, keywords: string[] = []): string[] {
 
 function hasTopicContent(meeting: MeetingRow): boolean {
   const keywords = parseStringArray(meeting.keywords_json);
-  return [meeting.transcript_text, meeting.summary ?? "", keywords.join(" ")].some((value) => value.trim().length > 0);
+  return [meeting.transcript_text, meeting.summary ?? "", keywords.join(" ")].some(
+    (value) => value.trim().length > 0
+  );
 }
 
 function hasExplicitKnowledgeBaseIntent(text: string): boolean {
@@ -184,7 +198,10 @@ export async function runTopicClusteringAgent(input: {
       const titleScore = keywordTitleScore(currentSignals, input.meeting.title, candidate.title);
       const keywordScore = overlapRatio(input.extraction.topic_keywords, candidateKeywords);
       const signalScore = overlapRatio(currentSignals, candidateSignals);
-      const participantScore = overlapRatio(participants, parseStringArray(candidate.participants_json));
+      const participantScore = overlapRatio(
+        participants,
+        parseStringArray(candidate.participants_json)
+      );
       const sourceScore = sourceMentionScore(sourceNames, candidate.transcript_text);
       const weighted =
         titleScore * 0.2 +
@@ -192,7 +209,9 @@ export async function runTopicClusteringAgent(input: {
         signalScore * 0.3 +
         participantScore * 0.1 +
         sourceScore * 0.05;
-      const score = hasCoreDroneTopic(currentText, candidateText) ? Math.max(0.82, weighted) : weighted;
+      const score = hasCoreDroneTopic(currentText, candidateText)
+        ? Math.max(0.82, weighted)
+        : weighted;
 
       return {
         meeting: candidate,
@@ -228,7 +247,9 @@ export async function runTopicClusteringAgent(input: {
         ...(best?.reasons ?? [])
       ],
       suggested_action: "ask_create",
-      candidate_meeting_ids: hasRelatedHistoricalCandidate ? relatedCandidateIds : [input.meeting.id]
+      candidate_meeting_ids: hasRelatedHistoricalCandidate
+        ? relatedCandidateIds
+        : [input.meeting.id]
     });
   }
 

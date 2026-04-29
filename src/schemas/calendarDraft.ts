@@ -5,16 +5,16 @@ export const IsoDateTimeSchema = z.string().datetime({ offset: true });
 
 export const CalendarEventDraftSchema = z
   .object({
-  title: z.string().trim().min(1, "title cannot be empty"),
-  start_time: IsoDateTimeSchema.nullable(),
-  end_time: IsoDateTimeSchema.nullable(),
-  duration_minutes: z.number().int().positive().nullable(),
-  participants: z.array(z.string()),
-  agenda: z.string().nullable(),
-  location: z.string().nullable(),
-  evidence: z.string().trim().min(1, "evidence cannot be empty"),
-  confidence: z.number().min(0).max(1),
-  missing_fields: z.array(z.string())
+    title: z.string().trim().min(1, "title cannot be empty"),
+    start_time: IsoDateTimeSchema.nullable(),
+    end_time: IsoDateTimeSchema.nullable(),
+    duration_minutes: z.number().int().positive().nullable(),
+    participants: z.array(z.string()),
+    agenda: z.string().nullable(),
+    location: z.string().nullable(),
+    evidence: z.string().trim().min(1, "evidence cannot be empty"),
+    confidence: z.number().min(0).max(1),
+    missing_fields: z.array(z.string())
   })
   .superRefine((draft, ctx) => {
     const haystack = [draft.title, draft.agenda ?? "", draft.evidence].join(" ");
@@ -22,7 +22,8 @@ export const CalendarEventDraftSchema = z
     if (!hasCalendarIntent) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "calendar draft requires explicit meeting/interview/review/sync/communication intent",
+        message:
+          "calendar draft requires explicit meeting/interview/review/sync/communication intent",
         path: ["title"]
       });
     }

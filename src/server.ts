@@ -7,12 +7,23 @@ import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
 import { confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
 import { MeetingRow, Repositories } from "./services/store/repositories";
+import { sendCard } from "./tools/larkIm";
 import { nowIso } from "./utils/dates";
 import { processMeetingWorkflow } from "./workflows/processMeetingWorkflow";
 
 const LlmSmokeTestInputSchema = z.object({
   text: z.string().min(1)
 });
+
+const SendCardBodySchema = z
+  .object({
+    recipient: z.string().trim().min(1).optional(),
+    chat_id: z.string().trim().min(1).optional(),
+    identity: z.enum(["bot", "user"]).optional()
+  })
+  .refine((body) => !(body.recipient && body.chat_id), {
+    message: "Provide either recipient or chat_id, not both"
+  });
 
 function briefError(error: unknown): string {
   if (error instanceof ZodError) {
@@ -36,7 +47,9 @@ function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest
   };
 }
 
-function isUnfinishedConfirmation(request: ReturnType<Repositories["listConfirmationRequests"]>[number]): boolean {
+function isUnfinishedConfirmation(
+  request: ReturnType<Repositories["listConfirmationRequests"]>[number]
+): boolean {
   return !["executed", "rejected", "failed"].includes(request.status);
 }
 
@@ -59,11 +72,15 @@ function cardPreviewStubAction(input: {
   };
 }
 
-export function buildServer(input: {
-  config: AppConfig;
-  repos: Repositories;
-  llm: LlmClient;
-}) {
+function sendCardStatusCode(result: { ok: boolean; error: string | null }): number {
+  if (result.ok) {
+    return 200;
+  }
+
+  return result.error?.includes("requires recipient or chat_id") ? 400 : 502;
+}
+
+export function buildServer(input: { config: AppConfig; repos: Repositories; llm: LlmClient }) {
   const app = Fastify({
     logger: true
   });
@@ -166,6 +183,71 @@ export function buildServer(input: {
     }
 
     return confirmation.dry_run_card;
+  });
+
+  app.post("/dev/confirmations/:id/send-card", async (request, reply) => {
+    const params = request.params as { id: string };
+    const body = SendCardBodySchema.parse(request.body ?? {});
+    const confirmation = input.repos.getConfirmationRequest(params.id);
+    if (!confirmation) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    const card = buildConfirmationCardFromRequest(confirmation);
+    const result = await sendCard({
+      repos: input.repos,
+      config: input.config,
+      confirmation,
+      card,
+      recipient: body.recipient,
+      chatId: body.chat_id,
+      identity: body.identity
+    });
+
+    return reply.code(sendCardStatusCode(result)).send({
+      confirmation_id: confirmation.id,
+      card_type: card.card_type,
+      ...result
+    });
+  });
+
+  app.post("/dev/cards/send-all", async (request) => {
+    const body = SendCardBodySchema.parse(request.body ?? {});
+    const results: Array<
+      Awaited<ReturnType<typeof sendCard>> & {
+        confirmation_id: string;
+        card_type: string;
+      }
+    > = [];
+    for (const confirmation of input.repos
+      .listConfirmationRequests()
+      .filter(isUnfinishedConfirmation)) {
+      const card = buildConfirmationCardFromRequest(confirmation);
+      const result = await sendCard({
+        repos: input.repos,
+        config: input.config,
+        confirmation,
+        card,
+        recipient: body.recipient,
+        chatId: body.chat_id,
+        identity: body.identity
+      });
+
+      results.push({
+        confirmation_id: confirmation.id,
+        card_type: card.card_type,
+        ...result
+      });
+    }
+
+    return {
+      ok: results.every((result) => result.ok),
+      total: results.length,
+      planned: results.filter((result) => result.status === "planned").length,
+      sent: results.filter((result) => result.status === "sent").length,
+      failed: results.filter((result) => result.status === "failed").length,
+      results
+    };
   });
 
   app.post("/dev/confirmations/:id/confirm", async (request) => {
