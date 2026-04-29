@@ -33,7 +33,7 @@ data/
 .claude/
 .trae/
 
-# Old local source-material drop folders are intentionally not part of the clean repo.
+# Old local source-material drop folders
 文档/
 skills/
 meeting-atlas/

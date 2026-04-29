@@ -1,7 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export type ConfirmationRequestType = "action" | "calendar" | "create_kb" | "append_meeting" | "archive_source";
+export type ConfirmationRequestType =
+  | "action"
+  | "calendar"
+  | "create_kb"
+  | "append_meeting"
+  | "archive_source";
 
 export interface HealthResponse {
   ok: boolean;
@@ -147,7 +152,8 @@ const FIRST_MEETING_TRANSCRIPT = `
 会议时间：2026-04-28 10:00 - 11:00
 参会人：张三、李四、Henry
 
-Henry：今天我们做无人机操作方案真实 LLM 测试，沿用无人机操作方案初步访谈场景，目标是调研无人机当前操作流程和试飞权限。
+Henry：今天我们做无人机操作方案真实 LLM 测试，
+沿用无人机操作方案初步访谈场景，目标是调研无人机当前操作流程和试飞权限。
 张三：现在流程散在几个人脑子里，我可以整理现有操作流程，2026-05-01 前给大家看。
 李四：我这边去确认试飞场地权限，看看审批需要哪些材料。
 Henry：好。下周二上午 10 点我们再约操作员访谈，重点确认真实操作步骤和限制。
@@ -238,8 +244,10 @@ async function requestJson<T>(context: DemoContext, method: "GET" | "POST", path
       body: body === undefined ? undefined : JSON.stringify(body)
     });
   } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Cannot reach MeetingAtlas at ${context.baseUrl}. Start the service first, then rerun the demo. ${error instanceof Error ? error.message : String(error)}`
+      `Cannot reach MeetingAtlas at ${context.baseUrl}. ` +
+        `Start the service first, then rerun the demo. ${detail}`
     );
   }
 
@@ -257,7 +265,10 @@ async function getHealth(context: DemoContext): Promise<HealthResponse> {
   step(context, "GET /health");
   const health = await requestJson<HealthResponse>(context, "GET", "/health");
   assertDemo(health.ok === true, "Health check did not return ok=true");
-  assertDemo(health.dry_run === true, "Demo requires FEISHU_DRY_RUN=true; refusing to run against real write mode");
+  assertDemo(
+    health.dry_run === true,
+    "Demo requires FEISHU_DRY_RUN=true; refusing to run against real write mode"
+  );
   ok(context, `service=${health.service}, dry_run=${health.dry_run}, sqlite=${health.sqlite_path}`);
   return health;
 }
@@ -272,7 +283,14 @@ async function submitMeeting(context: DemoContext, payload: {
 }): Promise<MeetingResponse> {
   step(context, `POST /dev/meetings/manual (${payload.title})`);
   const result = await requestJson<MeetingResponse>(context, "POST", "/dev/meetings/manual", payload);
-  ok(context, `meeting=${result.meeting_id}, confirmations=${result.confirmation_requests.length}, topic=${result.topic_match.suggested_action}/${result.topic_match.score}`);
+  ok(
+    context,
+    [
+      `meeting=${result.meeting_id}`,
+      `confirmations=${result.confirmation_requests.length}`,
+      `topic=${result.topic_match.suggested_action}/${result.topic_match.score}`
+    ].join(", ")
+  );
   return result;
 }
 
@@ -286,8 +304,16 @@ async function listConfirmations(context: DemoContext): Promise<ConfirmationRequ
 async function confirmRequest(context: DemoContext, id: string, editedPayload?: unknown): Promise<ConfirmResponse> {
   const body = editedPayload === undefined ? {} : { edited_payload: editedPayload };
   step(context, `POST /dev/confirmations/${id}/confirm`);
-  const result = await requestJson<ConfirmResponse>(context, "POST", `/dev/confirmations/${id}/confirm`, body);
-  assertDemo(result.confirmation.status === "executed", `Confirmation ${id} did not execute; status=${result.confirmation.status}`);
+  const result = await requestJson<ConfirmResponse>(
+    context,
+    "POST",
+    `/dev/confirmations/${id}/confirm`,
+    body
+  );
+  assertDemo(
+    result.confirmation.status === "executed",
+    `Confirmation ${id} did not execute; status=${result.confirmation.status}`
+  );
   ok(context, `executed ${result.confirmation.request_type} confirmation ${id}`);
   return result;
 }
@@ -297,12 +323,22 @@ async function getState(context: DemoContext): Promise<StateResponse> {
   const state = await requestJson<StateResponse>(context, "GET", "/dev/state");
   ok(
     context,
-    `meetings=${state.meetings.length}, actions=${state.action_items.length}, calendars=${state.calendar_drafts.length}, knowledge_bases=${state.knowledge_bases.length}, cli_runs=${state.cli_runs.length}`
+    [
+      `meetings=${state.meetings.length}`,
+      `actions=${state.action_items.length}`,
+      `calendars=${state.calendar_drafts.length}`,
+      `knowledge_bases=${state.knowledge_bases.length}`,
+      `cli_runs=${state.cli_runs.length}`
+    ].join(", ")
   );
   return state;
 }
 
-function requestsForMeeting(result: MeetingResponse, confirmations: ConfirmationRequest[], requestType: ConfirmationRequestType): ConfirmationRequest[] {
+function requestsForMeeting(
+  result: MeetingResponse,
+  confirmations: ConfirmationRequest[],
+  requestType: ConfirmationRequestType
+): ConfirmationRequest[] {
   const ids = new Set(result.confirmation_requests);
   return confirmations.filter((confirmation) => ids.has(confirmation.id) && confirmation.request_type === requestType);
 }
@@ -430,8 +466,14 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
     ended_at: "2026-04-28T11:00:00+08:00",
     transcript_text: FIRST_MEETING_TRANSCRIPT
   });
-  assertDemo(first.extraction.action_items.length >= 2, "First meeting should extract at least two action items");
-  assertDemo(first.extraction.calendar_drafts.length >= 1, "First meeting should extract at least one calendar draft");
+  assertDemo(
+    first.extraction.action_items.length >= 2,
+    "First meeting should extract at least two action items"
+  );
+  assertDemo(
+    first.extraction.calendar_drafts.length >= 1,
+    "First meeting should extract at least one calendar draft"
+  );
   assertDemo(
     first.topic_match.suggested_action === "observe",
     "First meeting should be observe. If this service already has related drone meetings, restart it with a fresh SQLITE_PATH for the demo."
@@ -441,8 +483,14 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
   const firstConfirmations = await listConfirmations(context);
   const actionRequests = requestsForMeeting(first, firstConfirmations, "action");
   const calendarRequests = requestsForMeeting(first, firstConfirmations, "calendar");
-  assertDemo(actionRequests.length >= 2, "First meeting should create at least two action confirmations");
-  assertDemo(calendarRequests.length >= 1, "First meeting should create at least one calendar confirmation");
+  assertDemo(
+    actionRequests.length >= 2,
+    "First meeting should create at least two action confirmations"
+  );
+  assertDemo(
+    calendarRequests.length >= 1,
+    "First meeting should create at least one calendar confirmation"
+  );
 
   await confirmRequest(context, actionRequests[0].id);
   await confirmRequest(context, actionRequests[1].id, EDITED_SECOND_ACTION);
@@ -456,18 +504,26 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
     ended_at: "2026-04-29T11:00:00+08:00",
     transcript_text: SECOND_MEETING_TRANSCRIPT
   });
-  assertDemo(second.topic_match.score >= 0.9, `Second meeting topic score should be >= 0.9, got ${second.topic_match.score}`);
+  assertDemo(
+    second.topic_match.score >= 0.9,
+    `Second meeting topic score should be >= 0.9, got ${second.topic_match.score}`
+  );
   assertDemo(second.topic_match.suggested_action === "ask_create", "Second meeting should suggest ask_create");
   assertDemo(second.topic_match.candidate_meeting_ids.length >= 2, "Second meeting should have at least two candidate meetings");
   assertDemo(
-    second.topic_match.candidate_meeting_ids.includes(first.meeting_id) && second.topic_match.candidate_meeting_ids.includes(second.meeting_id),
+    second.topic_match.candidate_meeting_ids.includes(first.meeting_id) &&
+      second.topic_match.candidate_meeting_ids.includes(second.meeting_id),
     "Second meeting candidates should include both first and second meetings"
   );
   ok(context, "second meeting topic clustering and create_kb suggestion verified");
 
   const secondConfirmations = await listConfirmations(context);
   const createKbRequests = requestsForMeeting(second, secondConfirmations, "create_kb");
-  const duplicateKnowledgeBaseActionRequests = requestsForMeeting(second, secondConfirmations, "action").filter(isKnowledgeBaseActionConfirmation);
+  const duplicateKnowledgeBaseActionRequests = requestsForMeeting(
+    second,
+    secondConfirmations,
+    "action"
+  ).filter(isKnowledgeBaseActionConfirmation);
   assertDemo(createKbRequests.length >= 1, "Second meeting should create a create_kb confirmation");
   assertDemo(
     duplicateKnowledgeBaseActionRequests.length === 0,
@@ -480,12 +536,27 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
   const latestKnowledgeUpdate = state.knowledge_updates.at(-1);
   assertDemo(state.knowledge_bases.length >= 1, "Final state should include at least one knowledge base");
   assertDemo(state.knowledge_updates.length >= 1, "Final state should include at least one knowledge update");
-  assertDemo(latestKnowledgeBase?.name.includes("无人机操作方案"), "Latest knowledge base name should contain 无人机操作方案");
-  assertDemo(latestKnowledgeBase?.wiki_url?.startsWith("mock://"), "Latest knowledge base wiki_url should be a mock:// URL");
-  assertDemo(latestKnowledgeBase?.homepage_url?.startsWith("mock://"), "Latest knowledge base homepage_url should be a mock:// URL");
+  assertDemo(
+    latestKnowledgeBase?.name.includes("无人机操作方案"),
+    "Latest knowledge base name should contain 无人机操作方案"
+  );
+  assertDemo(
+    latestKnowledgeBase?.wiki_url?.startsWith("mock://"),
+    "Latest knowledge base wiki_url should be a mock:// URL"
+  );
+  assertDemo(
+    latestKnowledgeBase?.homepage_url?.startsWith("mock://"),
+    "Latest knowledge base homepage_url should be a mock:// URL"
+  );
   assertDemo(latestKnowledgeUpdate?.update_type === "kb_created", "Latest knowledge update should be kb_created");
-  assertDemo(state.cli_runs.some((run) => run.tool === "lark.task.create" && run.dry_run === 1), "Final state should include dry-run task CLI records");
-  assertDemo(state.cli_runs.some((run) => run.tool === "lark.calendar.create" && run.dry_run === 1), "Final state should include dry-run calendar CLI records");
+  assertDemo(
+    state.cli_runs.some((run) => run.tool === "lark.task.create" && run.dry_run === 1),
+    "Final state should include dry-run task CLI records"
+  );
+  assertDemo(
+    state.cli_runs.some((run) => run.tool === "lark.calendar.create" && run.dry_run === 1),
+    "Final state should include dry-run calendar CLI records"
+  );
   assertDemo(
     state.action_items.some(
       (item) =>

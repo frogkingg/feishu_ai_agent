@@ -31,7 +31,9 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 
 用户确认时的 edited payload：
 
-- action: 将 title 改为 `确认无人机试飞场地权限并输出审批说明`，owner 改为 `王五`，due_date 改为 `2026-05-02`，priority 改为 `P0`
+- action:
+  将 title 改为 `确认无人机试飞场地权限并输出审批说明`，owner 改为 `王五`，
+  due_date 改为 `2026-05-02`，priority 改为 `P0`
 - calendar: 将 participants 改为 `张三`, `李四`, `王五`，duration_minutes 改为 `60`，location 改为 `线上会议`
 
 ## Demo 流程
