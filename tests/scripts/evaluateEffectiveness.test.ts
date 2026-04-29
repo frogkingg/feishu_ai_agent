@@ -225,6 +225,14 @@ describe("effectiveness evaluation", () => {
       const markdown = readFileSync(reportResult.report_paths.markdown!, "utf8");
       expect(markdown).toContain("Mock Fixture 流程通过率：100.0% (50/50)");
       expect(markdown).toContain("不代表真实 LLM 在未知会议上的准确率");
+      expect(markdown).toContain("Mock dry-run 自动化耗时：");
+      expect(markdown).toContain(
+        "该耗时不包含真实 LLM 延迟、真实飞书 API 延迟和用户确认等待时间。"
+      );
+      expect(markdown).toContain(
+        "当前自动化链路展示了理论节省上界；真实节省比例需用真实 LLM 和真实用户确认链路复测。"
+      );
+      expect(markdown).toContain("上界估算，不作为真实节省比例结论");
       expect(markdown).toContain("## 局限性");
       expect(markdown).toContain("当前 mock 评测使用预置 extraction，不代表真实 LLM 准确率。");
       expect(markdown).toContain("当前样本只有 8 条，只证明 P0 场景覆盖。");
@@ -235,6 +243,7 @@ describe("effectiveness evaluation", () => {
         "真实效果需要使用 `EVALUATION_LLM_PROVIDER=openai-compatible` 复测。"
       );
       expect(markdown).not.toContain("总体准确率");
+      expect(markdown).not.toContain("估算节省时间：100.0%");
       expect(markdown).not.toContain("Real LLM Extraction Evaluation");
     } finally {
       rmSync(outputDir, { recursive: true, force: true });

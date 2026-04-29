@@ -778,8 +778,15 @@ function renderMarkdown(result: EffectivenessEvaluationResult): string {
     `- False positive count：${result.metrics.false_positive_count}`,
     `- Confirmation burden：${result.metrics.confirmation_burden_per_meeting.toFixed(2)} / meeting`,
     `- 用户接受度代理指标：${formatPercent(result.metrics.user_acceptance_proxy)} (${result.metrics.accepted_confirmations}/${result.metrics.generated_confirmations})`,
-    `- Agent dry-run 完整处理耗时：${result.metrics.agent_runtime_seconds.toFixed(2)} 秒`,
-    `- 估算节省时间：${formatPercent(result.metrics.efficiency_lift)}（范围 ${formatPercent(result.metrics.efficiency_lift_min)} - ${formatPercent(result.metrics.efficiency_lift_max)}）`,
+    ...(result.evaluation_context.evaluation_type === "mock_fixture_pipeline"
+      ? [
+          `- Mock dry-run 自动化耗时：${result.metrics.agent_runtime_seconds.toFixed(2)} 秒`,
+          "- 效率说明：当前只展示理论节省上界，真实节省比例需用真实 LLM 和真实用户确认链路复测。"
+        ]
+      : [
+          `- Agent dry-run 完整处理耗时：${result.metrics.agent_runtime_seconds.toFixed(2)} 秒`,
+          `- 估算节省时间：${formatPercent(result.metrics.efficiency_lift)}（范围 ${formatPercent(result.metrics.efficiency_lift_min)} - ${formatPercent(result.metrics.efficiency_lift_max)}）`
+        ]),
     "",
     "## 效率提升估算",
     "",
@@ -789,9 +796,18 @@ function renderMarkdown(result: EffectivenessEvaluationResult): string {
     `- 人工会议整理耗时：${result.metrics.manual_meeting_minutes_min.toFixed(1)} - ${result.metrics.manual_meeting_minutes_max.toFixed(1)} 分钟。`,
     `- 人工知识库整理耗时：${result.metrics.manual_kb_minutes_min.toFixed(1)} - ${result.metrics.manual_kb_minutes_max.toFixed(1)} 分钟。`,
     `- 人工总耗时估算：${result.metrics.manual_total_minutes_min.toFixed(1)} - ${result.metrics.manual_total_minutes_max.toFixed(1)} 分钟；中位估算 ${result.metrics.manual_minutes_baseline.toFixed(1)} 分钟。`,
-    `- Agent dry-run 完整处理：${result.metrics.agent_runtime_seconds.toFixed(2)} 秒，约 ${result.metrics.agent_minutes_estimate.toFixed(2)} 分钟。`,
-    `- 估算节省：${result.metrics.minutes_saved_min.toFixed(1)} - ${result.metrics.minutes_saved_max.toFixed(1)} 分钟；中位估算 ${result.metrics.minutes_saved_estimate.toFixed(1)} 分钟。`,
-    `- 估算节省时间：${formatPercent(result.metrics.efficiency_lift)}（按中位耗时计算）。`,
+    ...(result.evaluation_context.evaluation_type === "mock_fixture_pipeline"
+      ? [
+          `- Mock dry-run 自动化耗时：${result.metrics.agent_runtime_seconds.toFixed(2)} 秒。`,
+          "- 该耗时不包含真实 LLM 延迟、真实飞书 API 延迟和用户确认等待时间。",
+          "- 基于人工耗时模型，当前自动化链路展示了理论节省上界；真实节省比例需用真实 LLM 和真实用户确认链路复测。",
+          `- 理论可节省人工整理时间：${result.metrics.minutes_saved_min.toFixed(1)} - ${result.metrics.minutes_saved_max.toFixed(1)} 分钟（上界估算，不作为真实节省比例结论）。`
+        ]
+      : [
+          `- Agent dry-run 完整处理：${result.metrics.agent_runtime_seconds.toFixed(2)} 秒，约 ${result.metrics.agent_minutes_estimate.toFixed(2)} 分钟。`,
+          `- 估算节省：${result.metrics.minutes_saved_min.toFixed(1)} - ${result.metrics.minutes_saved_max.toFixed(1)} 分钟；中位估算 ${result.metrics.minutes_saved_estimate.toFixed(1)} 分钟。`,
+          `- 估算节省时间：${formatPercent(result.metrics.efficiency_lift)}（按中位耗时计算）。`
+        ]),
     "",
     ...renderLimitationsBlock(),
     "## 指标定义",
@@ -1075,7 +1091,9 @@ export async function runFixtureEvaluationCli(): Promise<void> {
         `Scenario coverage: ${result.scenario_coverage.covered.length}/${result.scenario_coverage.required.length}`,
         `User acceptance proxy: ${formatPercent(result.metrics.user_acceptance_proxy)}`,
         `Agent dry-run runtime: ${result.metrics.agent_runtime_seconds.toFixed(2)}s`,
-        `Estimated efficiency lift: ${formatPercent(result.metrics.efficiency_lift)}`,
+        result.evaluation_context.evaluation_type === "mock_fixture_pipeline"
+          ? "Efficiency note: theoretical upper bound only; rerun with real LLM and user confirmation flow for true savings."
+          : `Estimated efficiency lift: ${formatPercent(result.metrics.efficiency_lift)}`,
         result.report_paths.markdown ? `Markdown report: ${result.report_paths.markdown}` : null,
         result.report_paths.json ? `JSON report: ${result.report_paths.json}` : null
       ]
