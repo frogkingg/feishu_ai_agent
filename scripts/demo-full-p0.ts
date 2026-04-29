@@ -8,6 +8,8 @@ export type ConfirmationRequestType =
   | "append_meeting"
   | "archive_source";
 
+export type DemoMode = "full-p0" | "cards-only" | "send-cards";
+
 export interface HealthResponse {
   ok: boolean;
   service: string;
@@ -61,6 +63,24 @@ export interface DryRunCardPreview {
   dry_run: true;
 }
 
+export interface SendCardsResponse {
+  ok: boolean;
+  total: number;
+  planned: number;
+  sent: number;
+  failed: number;
+  results: Array<{
+    confirmation_id: string;
+    card_type: string;
+    status: "planned" | "sent" | "failed";
+    dry_run: boolean;
+    cli_run_id: string | null;
+    chat_id: string | null;
+    recipient: string | null;
+    error: string | null;
+  }>;
+}
+
 export interface ConfirmResponse {
   confirmation: ConfirmationRequest;
   result: unknown;
@@ -111,6 +131,7 @@ export interface StateResponse {
 
 export interface DemoReportSummary {
   status: "passed";
+  mode: DemoMode;
   generated_at: string;
   base_url: string;
   llm_provider: string;
@@ -124,6 +145,7 @@ export interface DemoReportSummary {
   action_cards: number;
   calendar_cards: number;
   knowledge_base_cards: number;
+  card_send_cli_records: number;
   knowledge_base_name: string;
   knowledge_base_url: string;
   knowledge_update: string;
@@ -148,6 +170,9 @@ export interface RunFullP0DemoOptions {
   fetchFn?: typeof fetch;
   log?: (message: string) => void;
   writeOutputs?: boolean;
+  mode?: DemoMode;
+  recipient?: string;
+  chatId?: string;
 }
 
 export interface RunFullP0DemoResult {
@@ -165,6 +190,9 @@ interface DemoContext {
   fetchFn: typeof fetch;
   log: (message: string) => void;
   writeOutputs: boolean;
+  mode: DemoMode;
+  recipient?: string;
+  chatId?: string;
 }
 
 const DEFAULT_BASE_URL = process.env.MEETING_ATLAS_BASE_URL ?? "http://127.0.0.1:3000";
@@ -233,7 +261,10 @@ function createDemoContext(options: RunFullP0DemoOptions): DemoContext {
     reportPath: join(outputDir, "p0-demo-report.md"),
     fetchFn: options.fetchFn ?? fetch,
     log: options.log ?? ((message) => console.log(message)),
-    writeOutputs: options.writeOutputs ?? true
+    writeOutputs: options.writeOutputs ?? true,
+    mode: options.mode ?? "full-p0",
+    recipient: options.recipient,
+    chatId: options.chatId
   };
 }
 
@@ -367,6 +398,30 @@ async function listCards(context: DemoContext): Promise<DryRunCardPreview[]> {
   return cards;
 }
 
+async function sendAllCards(context: DemoContext): Promise<SendCardsResponse> {
+  const body =
+    context.chatId !== undefined
+      ? { chat_id: context.chatId }
+      : context.recipient !== undefined
+        ? { recipient: context.recipient }
+        : undefined;
+  step(context, "POST /dev/cards/send-all");
+  const result = await requestJson<SendCardsResponse>(
+    context,
+    "POST",
+    "/dev/cards/send-all",
+    body
+  );
+  assertDemo(result.ok === true, "Dry-run send-card should not report failed sends");
+  assertDemo(result.total === result.planned, "All card sends should be planned in dry-run mode");
+  assertDemo(
+    result.results.every((item) => item.dry_run === true && item.cli_run_id !== null),
+    "Every dry-run card send should record a cli_run"
+  );
+  ok(context, `dry-run card sends planned=${result.planned}, failed=${result.failed}`);
+  return result;
+}
+
 async function confirmRequest(context: DemoContext, id: string, editedPayload?: unknown): Promise<ConfirmResponse> {
   const body = editedPayload === undefined ? {} : { edited_payload: editedPayload };
   step(context, `POST /dev/confirmations/${id}/confirm`);
@@ -430,11 +485,13 @@ function buildReportSummary(input: {
   state: StateResponse;
 }): DemoReportSummary {
   const dryRunCliCount = input.state.cli_runs.filter((run) => run.dry_run === 1).length;
+  const cardSendCliCount = input.state.cli_runs.filter((run) => run.tool === "lark.im.send_card").length;
   const latestKnowledgeBase = input.state.knowledge_bases.at(-1);
   const latestKnowledgeUpdate = input.state.knowledge_updates.at(-1);
 
   return {
     status: "passed",
+    mode: input.context.mode,
     generated_at: new Date().toISOString(),
     base_url: input.context.baseUrl,
     llm_provider: input.health.llm_provider,
@@ -451,9 +508,58 @@ function buildReportSummary(input: {
     action_cards: input.cardStats.actionCards,
     calendar_cards: input.cardStats.calendarCards,
     knowledge_base_cards: input.cardStats.knowledgeBaseCards,
+    card_send_cli_records: cardSendCliCount,
     knowledge_base_name: latestKnowledgeBase?.name ?? "n/a",
     knowledge_base_url: latestKnowledgeBase?.wiki_url ?? latestKnowledgeBase?.homepage_url ?? "n/a",
     knowledge_update: latestKnowledgeUpdate?.update_type ?? "n/a",
+    dry_run_cli_records: dryRunCliCount,
+    first_meeting: {
+      id: input.first.meeting_id,
+      action_items: input.first.extraction.action_items.length,
+      calendar_drafts: input.first.extraction.calendar_drafts.length,
+      topic_action: input.first.topic_match.suggested_action
+    },
+    second_meeting: {
+      id: input.second.meeting_id,
+      topic_action: input.second.topic_match.suggested_action,
+      topic_score: input.second.topic_match.score,
+      candidate_meeting_ids: input.second.topic_match.candidate_meeting_ids
+    }
+  };
+}
+
+function buildCardPhaseReportSummary(input: {
+  context: DemoContext;
+  health: HealthResponse;
+  first: MeetingResponse;
+  second: MeetingResponse;
+  cards: DryRunCardPreview[];
+  state: StateResponse;
+}): DemoReportSummary {
+  const dryRunCliCount = input.state.cli_runs.filter((run) => run.dry_run === 1).length;
+  const cardSendCliCount = input.state.cli_runs.filter((run) => run.tool === "lark.im.send_card").length;
+
+  return {
+    status: "passed",
+    mode: input.context.mode,
+    generated_at: new Date().toISOString(),
+    base_url: input.context.baseUrl,
+    llm_provider: input.health.llm_provider,
+    feishu_write_mode: "dry-run",
+    dry_run_note:
+      "FEISHU_DRY_RUN=true; this demo generated or dry-run sent confirmation cards only.",
+    meetings_processed: 2,
+    action_confirmations_executed: 0,
+    calendar_confirmations_executed: 0,
+    knowledge_base_confirmations_executed: 0,
+    card_previews_generated: input.cards.length,
+    action_cards: input.cards.filter((card) => card.card_type === "action_confirmation").length,
+    calendar_cards: input.cards.filter((card) => card.card_type === "calendar_confirmation").length,
+    knowledge_base_cards: input.cards.filter((card) => card.card_type === "create_kb_confirmation").length,
+    card_send_cli_records: cardSendCliCount,
+    knowledge_base_name: "n/a",
+    knowledge_base_url: "n/a",
+    knowledge_update: "n/a",
     dry_run_cli_records: dryRunCliCount,
     first_meeting: {
       id: input.first.meeting_id,
@@ -475,6 +581,7 @@ function formatTerminalReport(summary: DemoReportSummary): string {
     "",
     "✅ MeetingAtlas P0 Demo passed",
     "",
+    `Mode: ${summary.mode}`,
     `LLM Provider: ${summary.llm_provider}`,
     `Feishu Write Mode: ${summary.feishu_write_mode}`,
     `Meetings processed: ${summary.meetings_processed}`,
@@ -485,6 +592,7 @@ function formatTerminalReport(summary: DemoReportSummary): string {
     `Action cards: ${summary.action_cards}`,
     `Calendar cards: ${summary.calendar_cards}`,
     `Knowledge base cards: ${summary.knowledge_base_cards}`,
+    `Card send CLI records: ${summary.card_send_cli_records}`,
     `Knowledge base name: ${summary.knowledge_base_name}`,
     `Knowledge base URL: ${summary.knowledge_base_url}`,
     `Knowledge update: ${summary.knowledge_update}`,
@@ -499,6 +607,7 @@ function formatMarkdownReport(summary: DemoReportSummary): string {
     "✅ MeetingAtlas P0 Demo passed",
     "",
     `- Generated at: ${summary.generated_at}`,
+    `- Mode: ${summary.mode}`,
     `- Base URL: ${summary.base_url}`,
     `- LLM Provider: ${summary.llm_provider}`,
     `- Feishu Write Mode: ${summary.feishu_write_mode}`,
@@ -510,6 +619,7 @@ function formatMarkdownReport(summary: DemoReportSummary): string {
     `- Action cards: ${summary.action_cards}`,
     `- Calendar cards: ${summary.calendar_cards}`,
     `- Knowledge base cards: ${summary.knowledge_base_cards}`,
+    `- Card send CLI records: ${summary.card_send_cli_records}`,
     `- Knowledge base name: ${summary.knowledge_base_name}`,
     `- Knowledge base URL: ${summary.knowledge_base_url}`,
     `- Knowledge update: ${summary.knowledge_update}`,
@@ -548,7 +658,113 @@ async function writeDemoOutputs(context: DemoContext, summary: DemoReportSummary
   ok(context, `wrote ${context.reportPath}`);
 }
 
+async function runCardPhaseDemo(options: RunFullP0DemoOptions): Promise<RunFullP0DemoResult> {
+  const context = createDemoContext(options);
+  const health = await getHealth(context);
+
+  const first = await submitMeeting(context, {
+    title: "无人机操作方案真实 LLM 测试",
+    participants: ["张三", "李四"],
+    organizer: "张三",
+    started_at: "2026-04-28T10:00:00+08:00",
+    ended_at: "2026-04-28T11:00:00+08:00",
+    transcript_text: FIRST_MEETING_TRANSCRIPT
+  });
+  assertDemo(
+    first.extraction.action_items.length >= 2,
+    "First meeting should extract at least two action items"
+  );
+  assertDemo(
+    first.extraction.calendar_drafts.length >= 1,
+    "First meeting should extract at least one calendar draft"
+  );
+  assertDemo(first.topic_match.suggested_action === "observe", "First meeting should be observe");
+
+  const firstConfirmations = await listConfirmations(context);
+  const actionRequests = requestsForMeeting(first, firstConfirmations, "action");
+  const calendarRequests = requestsForMeeting(first, firstConfirmations, "calendar");
+  const firstCards = await listCards(context);
+  const firstActionCards = cardsForMeeting(first, firstCards, "action_confirmation");
+  const firstCalendarCards = cardsForMeeting(first, firstCards, "calendar_confirmation");
+  assertDemo(actionRequests.length >= 2, "First meeting should create at least two action confirmations");
+  assertDemo(calendarRequests.length >= 1, "First meeting should create at least one calendar confirmation");
+  assertDemo(firstActionCards.length >= 2, "First meeting should expose action cards");
+  assertDemo(firstCalendarCards.length >= 1, "First meeting should expose calendar cards");
+
+  const second = await submitMeeting(context, {
+    title: "无人机操作员访谈",
+    participants: ["张三", "王五"],
+    organizer: "张三",
+    started_at: "2026-04-29T10:00:00+08:00",
+    ended_at: "2026-04-29T11:00:00+08:00",
+    transcript_text: SECOND_MEETING_TRANSCRIPT
+  });
+  assertDemo(
+    second.topic_match.score >= 0.9,
+    `Second meeting topic score should be >= 0.9, got ${second.topic_match.score}`
+  );
+  assertDemo(second.topic_match.suggested_action === "ask_create", "Second meeting should suggest ask_create");
+
+  const secondConfirmations = await listConfirmations(context);
+  const createKbRequests = requestsForMeeting(second, secondConfirmations, "create_kb");
+  const allCards = await listCards(context);
+  const secondCreateKbCards = cardsForMeeting(second, allCards, "create_kb_confirmation");
+  const duplicateKnowledgeBaseActionRequests = requestsForMeeting(
+    second,
+    secondConfirmations,
+    "action"
+  ).filter(isKnowledgeBaseActionConfirmation);
+  assertDemo(createKbRequests.length >= 1, "Second meeting should create a create_kb confirmation");
+  assertDemo(
+    secondCreateKbCards.length === 1,
+    `Second meeting should expose exactly one create_kb card, got ${secondCreateKbCards.length}`
+  );
+  assertDemo(
+    duplicateKnowledgeBaseActionRequests.length === 0,
+    "Second meeting should not create duplicate action confirmations for knowledge-base creation tasks"
+  );
+
+  if (context.mode === "send-cards") {
+    await sendAllCards(context);
+  }
+
+  const state = await getState(context);
+  assertDemo(
+    state.confirmation_requests.every((request) => request.status === "sent"),
+    "Card-only demo should leave confirmation requests unexecuted"
+  );
+  assertDemo(state.knowledge_bases.length === 0, "Card-only demo should not create knowledge bases");
+  assertDemo(state.knowledge_updates.length === 0, "Card-only demo should not create knowledge updates");
+  assertDemo(
+    context.mode === "send-cards"
+      ? state.cli_runs.filter((run) => run.tool === "lark.im.send_card").length === allCards.length
+      : state.cli_runs.length === 0,
+    "Card-only mode should only record card-send CLI runs when requested"
+  );
+
+  const summary = buildCardPhaseReportSummary({
+    context,
+    health,
+    first,
+    second,
+    cards: allCards,
+    state
+  });
+  await writeDemoOutputs(context, summary);
+
+  return {
+    summary,
+    state,
+    first,
+    second
+  };
+}
+
 export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise<RunFullP0DemoResult> {
+  if (options.mode === "cards-only" || options.mode === "send-cards") {
+    return runCardPhaseDemo(options);
+  }
+
   const context = createDemoContext(options);
   const health = await getHealth(context);
 
@@ -724,8 +940,46 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
   };
 }
 
+function readArgValue(args: string[], name: string): string | undefined {
+  const inline = args.find((arg) => arg.startsWith(`${name}=`));
+  if (inline) {
+    return inline.slice(name.length + 1);
+  }
+
+  const index = args.indexOf(name);
+  if (index >= 0) {
+    return args[index + 1];
+  }
+
+  return undefined;
+}
+
+function parseDemoMode(args: string[]): DemoMode {
+  const cardsOnly = args.includes("--cards-only");
+  const sendCards = args.includes("--send-cards");
+  if (cardsOnly && sendCards) {
+    throw new Error("Use only one of --cards-only or --send-cards");
+  }
+
+  if (cardsOnly) {
+    return "cards-only";
+  }
+  if (sendCards) {
+    return "send-cards";
+  }
+  return "full-p0";
+}
+
+function parseMainOptions(args: string[]): RunFullP0DemoOptions {
+  return {
+    mode: parseDemoMode(args),
+    recipient: readArgValue(args, "--recipient"),
+    chatId: readArgValue(args, "--chat-id")
+  };
+}
+
 async function main(): Promise<void> {
-  const { summary } = await runFullP0Demo();
+  const { summary } = await runFullP0Demo(parseMainOptions(process.argv.slice(2)));
   console.log(formatTerminalReport(summary));
 }
 

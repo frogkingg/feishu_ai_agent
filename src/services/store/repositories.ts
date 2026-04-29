@@ -555,6 +555,17 @@ export function createRepositories(db: MeetingAtlasDb) {
       );
     },
 
+    updateConfirmationCardMessage(input: {
+      id: string;
+      card_message_id: string;
+    }): void {
+      db.prepare(
+        `UPDATE confirmation_requests
+        SET card_message_id = ?, updated_at = ?
+        WHERE id = ?`
+      ).run(input.card_message_id, nowIso(), input.id);
+    },
+
     listConfirmationRequests(): ConfirmationRequestRow[] {
       return allRows<ConfirmationRequestRow>(
         db.prepare("SELECT * FROM confirmation_requests ORDER BY created_at ASC").all()
