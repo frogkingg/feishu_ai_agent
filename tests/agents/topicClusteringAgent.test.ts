@@ -313,6 +313,9 @@ describe("TopicClusteringAgent", () => {
       secondProductReviewExtraction()
     ]);
 
+    expect(readEvaluationFixture("product_review_01.txt")).not.toContain("无人机");
+    expect(readEvaluationFixture("product_review_02.txt")).not.toContain("无人机");
+
     const first = await processFirstProductReviewMeeting(repos, llm);
     expect(first.topic_match.suggested_action).toBe("observe");
 
@@ -392,9 +395,55 @@ describe("TopicClusteringAgent", () => {
     expect(result.topic_match.match_reasons).toContain("当前会议显式提出整理成知识库");
   });
 
+  it("observes a first campus roadshow prep meeting with generic topic keywords only", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const extraction = readEvaluationExtraction("campus_competition_01.extraction.json");
+    const llm = new QueueLlmClient([extraction]);
+
+    expect(extraction.topic_keywords.length).toBeGreaterThan(0);
+    expect(readEvaluationFixture("campus_competition_01.txt")).not.toContain("无人机");
+
+    const result = await processManualTopicMeeting({
+      repos,
+      llm,
+      title: "校园比赛路演准备会议",
+      participants: ["Henry", "孙同学", "赵同学"],
+      organizer: "Henry",
+      started_at: "2026-05-03T19:00:00+08:00",
+      ended_at: "2026-05-03T20:00:00+08:00",
+      transcript_text: readEvaluationFixture("campus_competition_01.txt")
+    });
+
+    expect(result.topic_match.suggested_action).toBe("observe");
+    expect(result.topic_match.candidate_meeting_ids).toEqual([result.meeting_id]);
+    expect(
+      repos.listConfirmationRequests().some((request) => request.request_type === "create_kb")
+    ).toBe(false);
+  });
+
+  it("keeps a chitchat meeting as no_action", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const llm = new QueueLlmClient([
+      readEvaluationExtraction("no_action_chitchat_01.extraction.json")
+    ]);
+
+    const result = await processEvaluationMeeting(repos, llm, {
+      title: "午后闲聊",
+      participants: ["Henry", "小林"],
+      organizer: "Henry",
+      started_at: "2026-05-04T13:00:00+08:00",
+      ended_at: "2026-05-04T13:20:00+08:00",
+      fixtureName: "no_action_chitchat_01.txt"
+    });
+
+    expect(result.topic_match.suggested_action).toBe("no_action");
+    expect(result.confirmation_requests).toEqual([]);
+  });
+
   it("does not contain source-level drone-specific topic fallback logic", () => {
     const source = readFileSync(join(process.cwd(), "src/agents/topicClusteringAgent.ts"), "utf8");
 
+    expect(source).not.toContain("无人机");
     expect(source).not.toContain('currentText.includes("无人机")');
     expect(source).not.toContain("hasCoreDroneTopic");
     expect(source).not.toContain("CoreTopicSignals");
