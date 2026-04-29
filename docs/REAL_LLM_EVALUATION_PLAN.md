@@ -55,6 +55,16 @@ LLM_MODEL=your-model
 
 这些信息用于判断失败来自模型抽取、JSON 结构、workflow 路由，还是人工标注和样本边界。
 
+## 避免评测过拟合原则
+
+真实 LLM 评测优化必须服务于产品泛化能力，而不是服务于固定 fixture 得分。
+
+- 不得为了提高评测分数加入领域专属 hardcode，例如直接判断 drone、product、campus 或某个具体 fixture 的标题、人物、会议 ID、文件名、固定句式。
+- 允许增强通用规则，例如弱表达过滤、action item 判断门槛、decision/risk 定义、deadline-vs-calendar 区分、两场相关会议后触发 `create_kb`。
+- 不允许为无人机、产品评审、校园比赛等具体样本写死路由或抽取结果；这些样本只能用于暴露规则问题，不能成为规则本身。
+- 对真实 LLM 复测，报告必须保留失败样本、false positives、schema/JSON 修复信息和人工复核备注，不能通过删除 label、放宽 expected 或隐藏错例来制造通过结论。
+- 每次 prompt/router 调整后，应同时检查 mock fixture pipeline 和真实 LLM 报告，确认提升来自通用抽取或路由能力，而不是对评测集的记忆。
+
 ## 首轮真实 LLM 评测错例与修复方向
 
 首轮真实 LLM 评测结果为 failed：Extraction evaluation score 66.0% (33/50)，主要问题集中在 action item 误报、decision/risk 召回不足，以及首场产品评审误触发 `create_kb`。
