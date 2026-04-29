@@ -110,6 +110,10 @@ PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev
 `GET /dev/confirmations/:id/card` 返回预览内容。它不是 100% 真实飞书卡片 DSL，
 也不会调用飞书 IM 发送能力。
 
+卡片里的 `remind_later`、`convert_to_task`、`append_current_only` 按钮在当前阶段
+只接到 dry-run preview stub。stub 只返回本地预览结果，避免 demo 卡片按钮 404；
+不会真实创建任务、日程、知识库，也不会调用飞书 IM 或写入接口。
+
 下一阶段会在保留当前 confirmation 安全边界的前提下，通过 `larkIm/sendCard`
 接入真实飞书卡片发送。真实发送前仍必须保持 dry-run 验收路径可用，避免任务、
 日程、知识库等高影响动作绕过确认层。

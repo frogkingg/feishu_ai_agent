@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - codex/p0-demo-automation
+      - 'codex/**'
 
 jobs:
   build-test:

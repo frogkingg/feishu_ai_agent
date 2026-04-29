@@ -53,6 +53,15 @@ card preview，用户确认后才进入执行流程。
 
 仍返回 confirmation request 列表，并附带 `dry_run_card`，便于调试。
 
+`POST /dev/confirmations/:id/remind-later`
+`POST /dev/confirmations/:id/convert-to-task`
+`POST /dev/confirmations/:id/append-current-only`
+
+这些接口是 card dry-run preview stub，用于保证卡片按钮在本地 demo 中不会 404。
+它们只会校验 confirmation 是否存在，并返回 `ok: true`、`dry_run: true` 和当前
+preview action 名称。当前阶段不会真实调用飞书，不会创建任务、日程或知识库，
+也不会修改 `FEISHU_DRY_RUN`。
+
 ## 卡片类型
 
 Action confirmation card 展示任务标题、推荐负责人、推荐原因、截止时间、优先级、

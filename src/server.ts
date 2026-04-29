@@ -40,6 +40,25 @@ function isUnfinishedConfirmation(request: ReturnType<Repositories["listConfirma
   return !["executed", "rejected", "failed"].includes(request.status);
 }
 
+function cardPreviewStubAction(input: {
+  repos: Repositories;
+  id: string;
+  action: "remind_later" | "convert_to_task" | "append_current_only";
+}) {
+  const confirmation = input.repos.getConfirmationRequest(input.id);
+  if (confirmation === null) {
+    return null;
+  }
+
+  return {
+    ok: true,
+    dry_run: true,
+    confirmation_id: input.id,
+    action: input.action,
+    message: "This card action is preview-only in the current phase."
+  };
+}
+
 export function buildServer(input: {
   config: AppConfig;
   repos: Repositories;
@@ -170,6 +189,51 @@ export function buildServer(input: {
         reason: body.reason
       })
     };
+  });
+
+  app.post("/dev/confirmations/:id/remind-later", async (request, reply) => {
+    const params = request.params as { id: string };
+    const result = cardPreviewStubAction({
+      repos: input.repos,
+      id: params.id,
+      action: "remind_later"
+    });
+
+    if (result === null) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    return result;
+  });
+
+  app.post("/dev/confirmations/:id/convert-to-task", async (request, reply) => {
+    const params = request.params as { id: string };
+    const result = cardPreviewStubAction({
+      repos: input.repos,
+      id: params.id,
+      action: "convert_to_task"
+    });
+
+    if (result === null) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    return result;
+  });
+
+  app.post("/dev/confirmations/:id/append-current-only", async (request, reply) => {
+    const params = request.params as { id: string };
+    const result = cardPreviewStubAction({
+      repos: input.repos,
+      id: params.id,
+      action: "append_current_only"
+    });
+
+    if (result === null) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    return result;
   });
 
   app.get("/dev/state", async () => input.repos.getStateSummary());

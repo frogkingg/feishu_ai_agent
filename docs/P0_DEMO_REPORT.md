@@ -147,3 +147,7 @@ confirmation 的卡片队列。
 
 这些 card preview 目前只是 dry-run JSON，不会真实发送到飞书。真实飞书卡片发送
 将在下一阶段通过 `larkIm/sendCard` 接入，并继续沿用“先确认、后执行”的安全策略。
+
+`remind_later`、`convert_to_task`、`append_current_only` 目前只接入 card dry-run
+preview stub，用于保证 demo 卡片按钮不会 404。stub 不会真实调用飞书，也不会
+创建任务、日程或知识库。
