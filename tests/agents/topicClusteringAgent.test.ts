@@ -57,6 +57,13 @@ function secondProductReviewExtraction(): MeetingExtractionResult {
   return readEvaluationExtraction("product_review_02.extraction.json");
 }
 
+function productReviewExtractionWithKeywords(keywords: string[]): MeetingExtractionResult {
+  return {
+    ...firstProductReviewExtraction(),
+    topic_keywords: keywords
+  };
+}
+
 function firstProductReviewExtractionWithInferredKbAction(): MeetingExtractionResult {
   const extraction = firstProductReviewExtraction();
   return {
@@ -178,6 +185,30 @@ async function processEvaluationMeeting(
   });
 }
 
+async function processManualTopicMeeting(input: {
+  repos: ReturnType<typeof createRepositories>;
+  llm: LlmClient;
+  title: string;
+  participants: string[];
+  organizer: string;
+  started_at: string;
+  ended_at: string;
+  transcript_text: string;
+}) {
+  return processMeetingWorkflow({
+    repos: input.repos,
+    llm: input.llm,
+    meeting: {
+      title: input.title,
+      participants: input.participants,
+      organizer: input.organizer,
+      started_at: input.started_at,
+      ended_at: input.ended_at,
+      transcript_text: input.transcript_text
+    }
+  });
+}
+
 describe("TopicClusteringAgent", () => {
   it("observes the first drone meeting and creates a KB confirmation after the second related meeting", async () => {
     const repos = createRepositories(createMemoryDatabase());
@@ -294,6 +325,79 @@ describe("TopicClusteringAgent", () => {
     expect(second.topic_match.match_reasons).toEqual(
       expect.arrayContaining(["发现至少一场强相关历史会议"])
     );
+  });
+
+  it("observes the first product review meeting with only generic topic fallback", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const llm = new QueueLlmClient([
+      productReviewExtractionWithKeywords(["产品原型", "交互流程", "首页信息架构"])
+    ]);
+
+    const result = await processFirstProductReviewMeeting(repos, llm);
+
+    expect(result.topic_match.suggested_action).toBe("observe");
+    expect(result.topic_match.candidate_meeting_ids).toEqual([result.meeting_id]);
+    expect(
+      repos.listConfirmationRequests().some((request) => request.request_type === "create_kb")
+    ).toBe(false);
+  });
+
+  it("asks to create a product review knowledge base after a second strongly related meeting without explicit knowledge-base intent", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const llm = new QueueLlmClient([
+      productReviewExtractionWithKeywords(["产品原型", "交互流程", "首页信息架构"]),
+      {
+        ...secondProductReviewExtraction(),
+        topic_keywords: ["产品原型", "交互流程", "首页信息架构", "确认卡片"]
+      }
+    ]);
+
+    const first = await processFirstProductReviewMeeting(repos, llm);
+    const second = await processSecondProductReviewMeeting(repos, llm);
+
+    expect(second.topic_match.suggested_action).toBe("ask_create");
+    expect(second.topic_match.match_reasons).not.toContain("当前会议显式提出整理成知识库");
+    expect(second.topic_match.candidate_meeting_ids).toHaveLength(2);
+    expect(second.topic_match.candidate_meeting_ids).toEqual(
+      expect.arrayContaining([first.meeting_id, second.meeting_id])
+    );
+  });
+
+  it("asks to create from explicit non-drone knowledge-base intent on the first meeting", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const llm = new QueueLlmClient([
+      {
+        ...productReviewExtractionWithKeywords(["用户访谈", "产品原型评审", "信息架构"]),
+        meeting_summary: "用户访谈复盘决定把访谈内容整理为产品原型评审知识库。"
+      }
+    ]);
+
+    const result = await processManualTopicMeeting({
+      repos,
+      llm,
+      title: "用户访谈复盘会",
+      participants: ["刘敏", "陈一", "Henry"],
+      organizer: "刘敏",
+      started_at: "2026-05-06T14:00:00+08:00",
+      ended_at: "2026-05-06T15:00:00+08:00",
+      transcript_text: [
+        "刘敏：这次先复盘两轮用户访谈里提到的产品原型问题。",
+        "陈一：首页信息架构和交互流程都需要沉淀下来，方便后续评审继续追。",
+        "Henry：把这两次用户访谈整理成一个产品原型评审知识库，作为后续资料入口。"
+      ].join("\n")
+    });
+
+    expect(result.topic_match.suggested_action).toBe("ask_create");
+    expect(result.topic_match.candidate_meeting_ids).toEqual([result.meeting_id]);
+    expect(result.topic_match.match_reasons).toContain("当前会议显式提出整理成知识库");
+  });
+
+  it("does not contain source-level drone-specific topic fallback logic", () => {
+    const source = readFileSync(join(process.cwd(), "src/agents/topicClusteringAgent.ts"), "utf8");
+
+    expect(source).not.toContain('currentText.includes("无人机")');
+    expect(source).not.toContain("hasCoreDroneTopic");
+    expect(source).not.toContain("CoreTopicSignals");
   });
 
   it.each([
