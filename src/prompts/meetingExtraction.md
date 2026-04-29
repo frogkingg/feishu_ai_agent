@@ -235,3 +235,52 @@ SourceMention 格式：
 "source_mentions": [],
 "confidence": 0.84
 }
+
+示例 C：产品首页与接口对齐 mini-example，覆盖模糊日程、关键决策、明确 action 和 risk。
+
+{
+"meeting_summary": "本次会议收敛产品首页入口，记录首页信息分散风险，并计划后续做接口对齐沟通；陈一需要在截止日前更新首页线框图。",
+"key_decisions": [
+{
+"decision": "首页先保留待确认事项和最近知识库更新两个入口，其他分析模块先折叠。",
+"evidence": "首页先保留待确认事项和最近知识库更新两个入口，其他分析模块先折叠。"
+}
+],
+"action_items": [
+{
+"title": "修改首页线框图",
+"description": "按本次首页入口收敛结论，把首页线框图更新一版。",
+"owner": "陈一",
+"collaborators": [],
+"due_date": "2026-05-06",
+"priority": "P1",
+"evidence": "陈一 2026-05-06 前把首页线框图改一版。",
+"confidence": 0.92,
+"suggested_reason": "会议中明确责任人陈一、可完成动作和截止日期。",
+"missing_fields": []
+}
+],
+"calendar_drafts": [
+{
+"title": "接口对齐沟通",
+"start_time": null,
+"end_time": null,
+"duration_minutes": null,
+"participants": [],
+"agenda": "对齐接口字段、状态回调和后续联调安排。",
+"location": null,
+"evidence": "下周找个时间做一次接口对齐沟通。",
+"confidence": 0.78,
+"missing_fields": ["start_time", "end_time", "duration_minutes", "participants", "location"]
+}
+],
+"topic_keywords": ["产品首页", "接口对齐", "首页线框图", "知识库更新"],
+"risks": [
+{
+"risk": "首页信息太散导致用户不知道先看任务还是会议结论。",
+"evidence": "首页信息太散导致用户不知道先看任务还是会议结论。"
+}
+],
+"source_mentions": [],
+"confidence": 0.86
+}
