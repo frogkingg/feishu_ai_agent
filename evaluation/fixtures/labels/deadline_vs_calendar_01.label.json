@@ -1,0 +1,16 @@
+{
+  "expected_action_items": [
+    {
+      "title_contains": "提交确认卡片交互方案",
+      "owner": "陈一",
+      "due_date": "2026-05-08"
+    }
+  ],
+  "expected_calendar_drafts": [],
+  "expected_decisions": [],
+  "expected_risks": [],
+  "expected_topic_keywords": ["确认卡片", "交互方案"],
+  "expected_should_create_kb": false,
+  "covered_scenarios": ["deadline_not_calendar"],
+  "notes": "明确说明周五前是截止时间不是会议，应该只生成 action item，不生成 calendar draft。"
+}

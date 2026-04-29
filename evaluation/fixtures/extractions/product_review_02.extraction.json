@@ -1,0 +1,40 @@
+{
+  "meeting_summary": "产品原型复盘同步将 P0 范围收敛到主链路，明确评测报告走离线脚本，不进入产品功能。",
+  "key_decisions": [
+    {
+      "decision": "P0 只保留会议抽取、确认卡片和知识库生成，不做支付、外部分享或独立报表中心。",
+      "evidence": "周宁：我建议 P0 只保留会议抽取、确认卡片和知识库生成，不做独立报表中心。Henry：同意，先收敛到主链路。"
+    }
+  ],
+  "action_items": [
+    {
+      "title": "补一版交互说明",
+      "description": "补充确认卡片编辑状态的交互说明。",
+      "owner": "陈一",
+      "collaborators": [],
+      "due_date": "2026-05-08",
+      "priority": "P1",
+      "evidence": "陈一：我负责在 2026-05-08 前补一版交互说明，把确认卡片的编辑状态写清楚。",
+      "confidence": 0.93,
+      "suggested_reason": "明确负责人、任务内容和截止日期。",
+      "missing_fields": []
+    },
+    {
+      "title": "整理演示话术",
+      "description": "整理比赛演示话术。",
+      "owner": "周宁",
+      "collaborators": [],
+      "due_date": "2026-05-09",
+      "priority": "P1",
+      "evidence": "刘敏：周宁请在 2026-05-09 前整理演示话术。",
+      "confidence": 0.91,
+      "suggested_reason": "明确负责人、任务内容和截止日期。",
+      "missing_fields": []
+    }
+  ],
+  "calendar_drafts": [],
+  "topic_keywords": ["P0", "确认卡片", "知识库生成", "离线评测"],
+  "risks": [],
+  "source_mentions": [],
+  "confidence": 0.9
+}

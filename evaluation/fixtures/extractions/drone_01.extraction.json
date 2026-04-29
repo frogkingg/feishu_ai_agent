@@ -1,0 +1,59 @@
+{
+  "meeting_summary": "初步梳理无人机操作方案，明确整理现有操作流程、确认试飞场地权限，并约定操作员访谈时间。",
+  "key_decisions": [],
+  "action_items": [
+    {
+      "title": "整理无人机现有操作流程",
+      "description": "把当前散落在人员经验中的无人机操作流程整理成可查看版本。",
+      "owner": "张三",
+      "collaborators": [],
+      "due_date": "2026-05-01",
+      "priority": "P1",
+      "evidence": "张三：现在流程散在几个人脑子里，我可以整理无人机现有操作流程，2026-05-01 前给大家看。",
+      "confidence": 0.94,
+      "suggested_reason": "发言人明确认领任务、交付内容和截止日期。",
+      "missing_fields": []
+    },
+    {
+      "title": "确认试飞场地权限",
+      "description": "确认试飞场地权限及审批所需材料。",
+      "owner": "李四",
+      "collaborators": [],
+      "due_date": null,
+      "priority": "P1",
+      "evidence": "李四：我这边去确认试飞场地权限，看看审批需要哪些材料。",
+      "confidence": 0.86,
+      "suggested_reason": "发言人明确承诺去确认权限材料，但没有给出截止时间。",
+      "missing_fields": ["due_date"]
+    }
+  ],
+  "calendar_drafts": [
+    {
+      "title": "无人机操作员访谈",
+      "start_time": "2026-05-05T10:00:00+08:00",
+      "end_time": null,
+      "duration_minutes": 60,
+      "participants": ["张三", "李四", "Henry"],
+      "agenda": "确认真实操作步骤和限制。",
+      "location": null,
+      "evidence": "Henry：下周二 2026-05-05 上午 10 点我们再约操作员访谈，重点确认真实操作步骤和限制。",
+      "confidence": 0.9,
+      "missing_fields": ["end_time", "location"]
+    }
+  ],
+  "topic_keywords": ["无人机", "操作流程", "试飞权限", "风险控制"],
+  "risks": [
+    {
+      "risk": "当前操作流程分散在个人经验中，后续执行口径可能不一致。",
+      "evidence": "张三：现在流程散在几个人脑子里。"
+    }
+  ],
+  "source_mentions": [
+    {
+      "type": "doc",
+      "name_or_keyword": "无人机安全规范",
+      "reason": "会议提到后续资料参考该规范。"
+    }
+  ],
+  "confidence": 0.91
+}

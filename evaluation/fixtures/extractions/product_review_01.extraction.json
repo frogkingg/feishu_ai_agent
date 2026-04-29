@@ -1,0 +1,52 @@
+{
+  "meeting_summary": "产品原型评审聚焦首页、待办确认和知识库入口，决定首页优先保留两个核心入口，并安排下一次原型评审。",
+  "key_decisions": [
+    {
+      "decision": "首页先保留待确认事项和最近知识库更新两个入口，其他分析模块先折叠。",
+      "evidence": "Henry：那首页先保留“待确认事项”和“最近知识库更新”两个入口，其他分析模块先折叠。刘敏：这个方向可以定下来。"
+    }
+  ],
+  "action_items": [
+    {
+      "title": "修改首页线框图",
+      "description": "根据评审结论调整首页线框，突出待确认事项和最近知识库更新。",
+      "owner": "陈一",
+      "collaborators": [],
+      "due_date": "2026-05-06",
+      "priority": "P1",
+      "evidence": "刘敏：陈一你 2026-05-06 前把首页线框图改一版。",
+      "confidence": 0.92,
+      "suggested_reason": "明确负责人、任务内容和截止日期。",
+      "missing_fields": []
+    }
+  ],
+  "calendar_drafts": [
+    {
+      "title": "产品原型评审",
+      "start_time": "2026-05-07T15:00:00+08:00",
+      "end_time": null,
+      "duration_minutes": 60,
+      "participants": ["刘敏", "陈一", "Henry"],
+      "agenda": "确认交互是否收敛。",
+      "location": null,
+      "evidence": "Henry：我们 2026-05-07 15:00 再做一次原型评审，确认交互是否收敛。",
+      "confidence": 0.9,
+      "missing_fields": ["end_time", "location"]
+    }
+  ],
+  "topic_keywords": ["产品原型", "首页", "确认事项", "知识库入口"],
+  "risks": [
+    {
+      "risk": "首页信息过散会影响首次使用路径。",
+      "evidence": "陈一：首页信息太散，用户第一次进入不知道该先处理任务还是看会议结论。"
+    }
+  ],
+  "source_mentions": [
+    {
+      "type": "excel",
+      "name_or_keyword": "产品评审表",
+      "reason": "陈一表示会把问题记录同步到产品评审表。"
+    }
+  ],
+  "confidence": 0.9
+}

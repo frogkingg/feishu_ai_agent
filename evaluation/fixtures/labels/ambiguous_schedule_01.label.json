@@ -1,0 +1,23 @@
+{
+  "expected_action_items": [],
+  "expected_calendar_drafts": [
+    {
+      "title_contains": "接口对齐沟通",
+      "start_time": null
+    }
+  ],
+  "expected_decisions": [
+    {
+      "decision_contains": "卡片接口字段这一版不再新增字段"
+    }
+  ],
+  "expected_risks": [
+    {
+      "risk_contains": "后续沟通没有具体时间"
+    }
+  ],
+  "expected_topic_keywords": ["接口对齐", "确认状态"],
+  "expected_should_create_kb": false,
+  "covered_scenarios": ["ambiguous_no_task", "decision_without_action", "risk_without_owner"],
+  "notes": "存在明确沟通意图但没有具体时间，应生成缺少 start_time 的 calendar draft 等待用户确认。"
+}

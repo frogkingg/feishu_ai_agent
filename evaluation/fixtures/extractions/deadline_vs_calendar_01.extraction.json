@@ -1,0 +1,23 @@
+{
+  "meeting_summary": "确认卡片交互方案需要在 2026-05-08 前提交，会议中明确说明这是截止时间而非会议安排。",
+  "key_decisions": [],
+  "action_items": [
+    {
+      "title": "提交确认卡片交互方案",
+      "description": "提交确认卡片交互方案，不创建对应会议日程。",
+      "owner": "陈一",
+      "collaborators": [],
+      "due_date": "2026-05-08",
+      "priority": "P1",
+      "evidence": "陈一：明白，我在 2026-05-08 前提交确认卡片交互方案。",
+      "confidence": 0.92,
+      "suggested_reason": "会议明确这是截止时间和交付任务，不是会议安排。",
+      "missing_fields": []
+    }
+  ],
+  "calendar_drafts": [],
+  "topic_keywords": ["确认卡片", "交互方案", "截止时间"],
+  "risks": [],
+  "source_mentions": [],
+  "confidence": 0.9
+}

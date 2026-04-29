@@ -1,0 +1,10 @@
+{
+  "expected_action_items": [],
+  "expected_calendar_drafts": [],
+  "expected_decisions": [],
+  "expected_risks": [],
+  "expected_topic_keywords": [],
+  "expected_should_create_kb": false,
+  "covered_scenarios": [],
+  "notes": "纯闲聊不应生成待办、日程或知识库建议，用来衡量误报。"
+}

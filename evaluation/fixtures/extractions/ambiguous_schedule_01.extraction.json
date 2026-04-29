@@ -1,0 +1,33 @@
+{
+  "meeting_summary": "接口对齐沟通决定卡片接口字段本版不再新增字段，并提出下周安排一次后续沟通，但具体日期和时间尚未确定。",
+  "key_decisions": [
+    {
+      "decision": "卡片接口字段这一版不再新增字段，只等回调对齐。",
+      "evidence": "Henry：我们先决定卡片接口字段这一版不再新增字段，只等回调对齐。"
+    }
+  ],
+  "action_items": [],
+  "calendar_drafts": [
+    {
+      "title": "接口对齐沟通",
+      "start_time": null,
+      "end_time": null,
+      "duration_minutes": null,
+      "participants": ["Henry", "周宁"],
+      "agenda": "对齐事件回调和确认状态。",
+      "location": null,
+      "evidence": "周宁：我们下周找个时间做一次接口对齐沟通，最好把事件回调和确认状态一起看。",
+      "confidence": 0.78,
+      "missing_fields": ["start_time", "end_time", "duration_minutes", "location"]
+    }
+  ],
+  "topic_keywords": ["接口对齐", "事件回调", "确认状态"],
+  "risks": [
+    {
+      "risk": "后续沟通没有具体时间，创建日程前需要用户补充。",
+      "evidence": "Henry：可以，但现在还没有确定哪一天和几点。"
+    }
+  ],
+  "source_mentions": [],
+  "confidence": 0.84
+}

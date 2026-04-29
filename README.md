@@ -36,6 +36,7 @@ nvm use
 npm install
 npm run build
 npm run test
+npm run evaluate
 npm run dev
 ```
 
@@ -228,11 +229,35 @@ npm run demo:full-p0 -- --cards-only
 npm run demo:full-p0 -- --send-cards --chat-id oc_xxx
 ```
 
+## 效果验证评测
+
+`npm run evaluate` 会运行离线效果评测集：8 条人工标注会议样本、fixture LLM 抽取结果、
+内存 SQLite workflow，不连接真实飞书，也不修改 `FEISHU_DRY_RUN`。默认使用评测 mock；
+如需手动对比真实模型，可设置 `EVALUATION_LLM_PROVIDER=openai-compatible`，并提供
+`LLM_BASE_URL`、`LLM_API_KEY` 和 `LLM_MODEL`。自动化测试始终固定为 mock。
+
+输出报告：
+
+```text
+evaluation-output/evaluation-latest.json
+evaluation-output/evaluation-report.md
+```
+
+报告覆盖准确性、用户接受度代理指标、估算效率提升，以及 8 类关键评测场景：
+明确待办、明确日程、截止时间非日程、模糊表达不生成任务、相关会议触发知识库、
+不相关会议不触发知识库、有决策但无待办、有风险但无明确负责人。
+核心指标会单独列出 action item recall、粗略 precision、owner / due date 准确率、
+calendar recall / precision、deadline-vs-calendar 区分、知识库触发准确率、false positive
+count 和每场会议平均 confirmation burden。
+效率提升估算采用简单人工耗时模型：人工整理一场会议待办和日程约 5-10 分钟，
+人工创建知识库并整理两场会议约 20-30 分钟，Agent 耗时使用脚本实际运行秒数。
+
 ## 目录结构
 
 ```text
 .
 ├── docs/          # 架构、开发计划、Demo 和飞书 CLI 说明
+├── evaluation/    # 离线效果验证评测集、人工标签和报告脚本
 ├── fixtures/      # 本地 Demo 会议转写与 Mock LLM 期望输出
 ├── src/           # MeetingAtlas 服务、Agent、workflow、schema、tools
 ├── tests/         # Vitest 单元和集成测试
