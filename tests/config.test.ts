@@ -30,16 +30,16 @@ describe("loadConfig", () => {
     });
   });
 
-  it("lets card sending dry-run follow or override the global Feishu dry-run flag", () => {
-    expect(loadConfig({ feishuDryRun: true }).feishuCardDryRun).toBe(true);
-    expect(loadConfig({ feishuDryRun: false }).feishuCardDryRun).toBe(false);
-    expect(loadConfig({ feishuDryRun: true, feishuCardDryRun: false })).toMatchObject({
+  it("keeps card sending dry-run by default and lets it be explicitly disabled", () => {
+    expect(loadConfig({ feishuDryRun: true }).feishuCardSendDryRun).toBe(true);
+    expect(loadConfig({ feishuDryRun: false }).feishuCardSendDryRun).toBe(true);
+    expect(loadConfig({ feishuDryRun: true, feishuCardSendDryRun: false })).toMatchObject({
       feishuDryRun: true,
-      feishuCardDryRun: false
+      feishuCardSendDryRun: false
     });
-    expect(loadConfig({ feishuDryRun: false, feishuCardDryRun: true })).toMatchObject({
+    expect(loadConfig({ feishuDryRun: false, feishuCardSendDryRun: true })).toMatchObject({
       feishuDryRun: false,
-      feishuCardDryRun: true
+      feishuCardSendDryRun: true
     });
   });
 

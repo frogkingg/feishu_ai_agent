@@ -235,7 +235,7 @@ function failedResult(input: {
 
 export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
   const config = input.config ?? loadConfig();
-  const cardDryRun = config.feishuCardDryRun;
+  const cardSendDryRun = config.feishuCardSendDryRun;
   const chatId = trimToNull(input.chatId);
   const recipient = trimToNull(input.recipient ?? input.confirmation?.recipient ?? null);
   const identity = input.identity ?? "bot";
@@ -243,7 +243,7 @@ export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
 
   if (destinationArgs === null) {
     return failedResult({
-      dryRun: cardDryRun,
+      dryRun: cardSendDryRun,
       recipient,
       chatId,
       identity,
@@ -270,7 +270,7 @@ export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
     repos: input.repos,
     config,
     toolName: "lark.im.send_card",
-    dryRun: cardDryRun,
+    dryRun: cardSendDryRun,
     expectJson: true
   });
 

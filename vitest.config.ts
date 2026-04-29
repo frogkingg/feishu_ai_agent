@@ -8,7 +8,8 @@ export default defineConfig({
       LLM_PROVIDER: "mock",
       LLM_BASE_URL: "",
       LLM_API_KEY: "",
-      LLM_MODEL: ""
+      LLM_MODEL: "",
+      FEISHU_CARD_SEND_DRY_RUN: ""
     },
     include: ["tests/**/*.test.ts"],
     testTimeout: 15000

@@ -374,6 +374,7 @@ describe("confirmation dev APIs", () => {
     const app = buildServer({
       config: loadConfig({
         feishuDryRun: false,
+        feishuCardSendDryRun: false,
         larkCliBin: "definitely-not-real-lark",
         sqlitePath: ":memory:"
       }),

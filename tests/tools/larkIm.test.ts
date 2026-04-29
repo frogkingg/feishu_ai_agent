@@ -82,6 +82,7 @@ describe("larkIm.sendCard", () => {
       repos,
       config: loadConfig({
         feishuDryRun: false,
+        feishuCardSendDryRun: false,
         larkCliBin: "definitely-not-real-lark"
       }),
       card,
@@ -111,7 +112,7 @@ describe("larkIm.sendCard", () => {
       repos,
       config: loadConfig({
         feishuDryRun: true,
-        feishuCardDryRun: false,
+        feishuCardSendDryRun: false,
         larkCliBin: "definitely-not-real-lark"
       }),
       card,
@@ -133,13 +134,12 @@ describe("larkIm.sendCard", () => {
     });
   });
 
-  it("can keep card sending dry-run even when other Feishu writes are real", async () => {
+  it("keeps card sending dry-run by default even when other Feishu writes are real", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const result = await sendCard({
       repos,
       config: loadConfig({
         feishuDryRun: false,
-        feishuCardDryRun: true,
         larkCliBin: "definitely-not-real-lark"
       }),
       card,

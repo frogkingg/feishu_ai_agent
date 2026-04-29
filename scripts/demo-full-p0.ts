@@ -14,6 +14,7 @@ export interface HealthResponse {
   ok: boolean;
   service: string;
   dry_run: boolean;
+  card_send_dry_run: boolean;
   llm_provider: string;
   sqlite_path: string;
 }
@@ -380,7 +381,15 @@ async function getHealth(context: DemoContext): Promise<HealthResponse> {
     health.dry_run === true,
     "Demo requires FEISHU_DRY_RUN=true; refusing to run against real write mode"
   );
-  ok(context, `service=${health.service}, dry_run=${health.dry_run}, sqlite=${health.sqlite_path}`);
+  ok(
+    context,
+    [
+      `service=${health.service}`,
+      `dry_run=${health.dry_run}`,
+      `card_send_dry_run=${health.card_send_dry_run}`,
+      `sqlite=${health.sqlite_path}`
+    ].join(", ")
+  );
   return health;
 }
 
