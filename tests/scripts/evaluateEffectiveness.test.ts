@@ -225,6 +225,15 @@ describe("effectiveness evaluation", () => {
       expect(existsSync(join(outputDir, "evaluation-report.md"))).toBe(true);
       expect(existsSync(join(process.cwd(), "docs/REAL_LLM_EVALUATION_PLAN.md"))).toBe(true);
 
+      const entryMarkdown = readFileSync(join(outputDir, "evaluation-report.md"), "utf8");
+      expect(entryMarkdown).toContain("MeetingAtlas Evaluation Reports");
+      expect(entryMarkdown).toContain("mock-fixture-evaluation-report.md");
+      expect(entryMarkdown).toContain("real-llm-evaluation-report.md");
+      expect(entryMarkdown).toContain("不代表真实 LLM");
+      expect(entryMarkdown).not.toContain("总体准确率");
+      expect(entryMarkdown).not.toContain("估算节省时间：100.0%");
+      expect(entryMarkdown).not.toContain("MeetingAtlas 效果验证评测报告");
+
       const markdown = readFileSync(reportResult.report_paths.markdown!, "utf8");
       expect(markdown).toContain("# MeetingAtlas P0 Mock Fixture 评测报告");
       expect(markdown).toContain("Mock Fixture 流程通过率：100.0% (50/50)");

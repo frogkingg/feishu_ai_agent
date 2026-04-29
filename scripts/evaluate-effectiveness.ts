@@ -876,26 +876,50 @@ function renderCompatibilityIndex(
   mainReportName: string
 ): string {
   const isMock = result.evaluation_context.evaluation_type === "mock_fixture_pipeline";
-  const modeLine = isMock
-    ? "当前默认 `npm run evaluate` 生成的是 mock fixture pipeline validation，不代表真实 LLM 在未知会议上的准确率。"
-    : "本次运行使用 openai-compatible provider 生成真实 LLM 抽取评测；该结果仍需人工抽查样本输出后再用于合并判断。";
+  const realLlmStatus = isMock
+    ? "尚未提交。"
+    : `本次运行已生成 \`evaluation-output/${mainReportName}\`，合并前仍需人工抽查样本输出。`;
 
   const lines = [
-    "# MeetingAtlas 评测报告入口",
+    "# MeetingAtlas Evaluation Reports",
     "",
-    `生成时间：${result.generated_at}`,
+    "本文件是评测报告入口页，不直接承载 mock fixture 或 real LLM 的完整指标结果。",
     "",
-    modeLine,
+    "## 当前可用报告",
     "",
-    `- 当前主报告：\`evaluation-output/${mainReportName}\``,
-    `- Mock fixture 报告：\`evaluation-output/${MOCK_FIXTURE_MARKDOWN_REPORT_NAME}\``,
-    `- 真实 LLM 报告：\`evaluation-output/${REAL_LLM_MARKDOWN_REPORT_NAME}\``,
+    "### 1. Mock Fixture Pipeline Validation",
     "",
-    "真实 LLM 评测运行方式：",
+    "文件：",
+    "",
+    `- \`evaluation-output/${MOCK_FIXTURE_MARKDOWN_REPORT_NAME}\``,
+    "",
+    "用途：",
+    "",
+    "- 验证人工标签、fixture extraction、workflow、topic clustering、confirmation request 和指标计算是否按预期工作。",
+    "- 该报告中的 100% 是 mock fixture 流程通过率，不代表真实 LLM 在未知会议上的准确率。",
+    "",
+    "### 2. Real LLM Evaluation",
+    "",
+    "文件：",
+    "",
+    `- \`evaluation-output/${REAL_LLM_MARKDOWN_REPORT_NAME}\``,
+    "",
+    "状态：",
+    "",
+    `- ${realLlmStatus}`,
+    "- 需要使用真实模型运行：",
     "",
     "```bash",
     "EVALUATION_LLM_PROVIDER=openai-compatible npm run evaluate",
     "```",
+    "",
+    "真实 LLM 报告需要记录 provider、model、runtime、schema validation failures、JSON repair count、false positives 和人工复核备注。",
+    "",
+    "## 重要说明",
+    "",
+    "- 不要把 mock fixture 结果解读为真实模型准确率。",
+    "- mock fixture 报告用于证明 P0 pipeline 和评测框架可运行。",
+    "- 真实 LLM 效果需要单独复测并人工抽查。",
     "",
     "详见 `docs/REAL_LLM_EVALUATION_PLAN.md`。"
   ];
