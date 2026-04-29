@@ -101,6 +101,48 @@ SourceMention 格式：
 19. 如果没有关键决策，key_decisions 返回 []。
 20. 所有字段都必须存在，不能省略。
 
+待办 Action Item 判断规则：
+
+- 只有会议明确形成“谁要做什么”时，才写入 action_items。
+- 一个 action item 至少需要有明确责任人或明确动作主体，并且有可交付物或可完成动作。
+- 明确截止时间会增强 action 判断；如果有截止时间，必须写入 due_date。
+- 如果只有“需要建立 SOP”“需要关注风险”“可以后续整理”“可以看看”“有机会研究”，但没有 owner、动作主体、交付物或截止时间，不要生成 action item。
+- “建立 SOP”这类团队共识，如果没有 owner 和 due_date，优先作为 key_decisions，不要强行变成 action item。
+- “风险/阻塞/不确定/权限分散/流程不统一/可能影响/担心/缺少……”优先进入 risks，不要为了补 action 而把风险改写成待办。
+- “找时间聊一下”“之后对齐一下”“可以看看”“有机会研究”“需要关注”“后续再讨论”这类弱表达，缺少明确 owner + 可交付物 + 截止时间时，不要生成 action item。
+- 如果发言人明确认领动作，例如“我负责确认权限”“陈一你 5 月 6 日前改一版线框图”，可以生成 action item；缺少 due date 时 due_date = null 且 missing_fields 包含 "due_date"。
+
+模糊日程判断规则：
+
+- 如果会议中出现“找时间”“约一下”“沟通”“同步”“对齐”“访谈”“评审”等明确沟通意图，应生成 calendar_drafts。
+- 如果有沟通/同步/对齐/访谈意图，但没有具体日期或时间，start_time = null，end_time = null，并且 missing_fields 必须包含 "start_time"。
+- “下周找个时间做一次接口对齐沟通”是缺少 start_time 的 calendar draft，不是 action item。
+- “周五前完成方案”“5 月 6 日前改线框图”是任务截止时间，不是日程。
+
+关键决策 key_decisions 判断规则：
+
+- “决定”“确认”“一致认为”“这个方向定下来”“本次先”“暂不”“范围收敛为”“后续策略是”“不做 X 先做 Y”“只保留”“不再新增字段”等，都应进入 key_decisions。
+- 每个 decision 必须有 evidence，evidence 要能直接支撑该决策。
+- 不要把普通待办写成 decision；decision 描述的是范围、策略、取舍、原则或已经确认的方向。
+
+风险 risks 判断规则：
+
+- “风险”“阻塞”“不确定”“权限分散”“流程不统一”“可能影响”“担心”“如果……会……”“缺少……”“信息太散导致用户不知道怎么处理”等，都应进入 risks。
+- Risk 不要求有 owner，也不要求有 due_date。
+- 每个 risk 必须有 evidence。
+- 不要把 risk 强行变 action item；只有会议明确指定谁去处理该风险时，才另外生成 action item。
+
+反例和正例：
+
+- “我们下周找个时间做一次接口对齐沟通，但现在还没有确定哪一天和几点。” -> 生成 calendar draft，start_time = null，missing_fields 包含 "start_time"；不要生成 action item。
+- “我们先决定卡片接口字段这一版不再新增字段，只等回调对齐。” -> 生成 key_decisions。
+- “后续沟通没有具体时间，等服务端排期出来再补。” -> 生成 risks，表示日程信息缺失会影响后续确认。
+- “首页信息太散，用户第一次进入不知道该先处理任务还是看会议结论。” -> 生成 risks。
+- “首页先保留待确认事项和最近知识库更新两个入口，其他分析模块先折叠。这个方向可以定下来。” -> 生成 key_decisions。
+- “陈一你 2026-05-06 前把首页线框图改一版。” -> 生成 action item，owner = "陈一"，due_date = "2026-05-06"。
+- “需要建立统一 SOP。”如果没有 owner 或截止时间 -> 作为 key_decisions；不要生成 action item。
+- “王五负责在 2026-05-03 前整理风险清单。” -> 生成 action item。
+
 请严格输出类似下面的 JSON 结构：
 
 {

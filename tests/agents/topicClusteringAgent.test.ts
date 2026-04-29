@@ -10,9 +10,19 @@ function readFixture(name: string): string {
   return readFileSync(join(process.cwd(), "fixtures/meetings", name), "utf8");
 }
 
+function readEvaluationFixture(name: string): string {
+  return readFileSync(join(process.cwd(), "evaluation/fixtures/meetings", name), "utf8");
+}
+
 function readExpected(name: string): MeetingExtractionResult {
   return JSON.parse(
     readFileSync(join(process.cwd(), "fixtures/expected", name), "utf8")
+  ) as MeetingExtractionResult;
+}
+
+function readEvaluationExtraction(name: string): MeetingExtractionResult {
+  return JSON.parse(
+    readFileSync(join(process.cwd(), "evaluation/fixtures/extractions", name), "utf8")
   ) as MeetingExtractionResult;
 }
 
@@ -37,6 +47,36 @@ function firstDroneExtraction(): MeetingExtractionResult {
 
 function secondDroneExtraction(): MeetingExtractionResult {
   return readExpected("drone_interview_02.extraction.json");
+}
+
+function firstProductReviewExtraction(): MeetingExtractionResult {
+  return readEvaluationExtraction("product_review_01.extraction.json");
+}
+
+function secondProductReviewExtraction(): MeetingExtractionResult {
+  return readEvaluationExtraction("product_review_02.extraction.json");
+}
+
+function firstProductReviewExtractionWithInferredKbAction(): MeetingExtractionResult {
+  const extraction = firstProductReviewExtraction();
+  return {
+    ...extraction,
+    action_items: [
+      ...extraction.action_items,
+      {
+        title: "创建产品评审知识库",
+        description: "把产品原型评审内容整理为知识库。",
+        owner: null,
+        collaborators: [],
+        due_date: null,
+        priority: "P2",
+        evidence: "会议提到知识库入口。",
+        confidence: 0.55,
+        suggested_reason: "模型从知识库入口推断需要创建知识库。",
+        missing_fields: ["owner", "due_date"]
+      }
+    ]
+  };
 }
 
 async function processFirstDroneMeeting(
@@ -72,6 +112,42 @@ async function processSecondDroneMeeting(input: {
       started_at: "2026-04-29T10:00:00+08:00",
       ended_at: "2026-04-29T11:00:00+08:00",
       transcript_text: input.transcriptText ?? readFixture("drone_interview_02.txt")
+    }
+  });
+}
+
+async function processFirstProductReviewMeeting(
+  repos: ReturnType<typeof createRepositories>,
+  llm: LlmClient
+) {
+  return processMeetingWorkflow({
+    repos,
+    llm,
+    meeting: {
+      title: "产品原型评审会",
+      participants: ["刘敏", "陈一", "Henry"],
+      organizer: "刘敏",
+      started_at: "2026-04-30T14:00:00+08:00",
+      ended_at: "2026-04-30T15:00:00+08:00",
+      transcript_text: readEvaluationFixture("product_review_01.txt")
+    }
+  });
+}
+
+async function processSecondProductReviewMeeting(
+  repos: ReturnType<typeof createRepositories>,
+  llm: LlmClient
+) {
+  return processMeetingWorkflow({
+    repos,
+    llm,
+    meeting: {
+      title: "产品原型复盘同步",
+      participants: ["刘敏", "陈一", "周宁", "Henry"],
+      organizer: "刘敏",
+      started_at: "2026-05-02T16:00:00+08:00",
+      ended_at: "2026-05-02T16:45:00+08:00",
+      transcript_text: readEvaluationFixture("product_review_02.txt")
     }
   });
 }
@@ -148,5 +224,49 @@ describe("TopicClusteringAgent", () => {
       expect.arrayContaining([first.meeting_id, second.meeting_id])
     );
     expect(second.topic_match.match_reasons).toContain("当前会议显式提出整理成知识库");
+  });
+
+  it("does not treat model-inferred knowledge base actions as explicit first-meeting intent", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const llm = new QueueLlmClient([
+      firstDroneExtraction(),
+      secondDroneExtraction(),
+      firstProductReviewExtractionWithInferredKbAction()
+    ]);
+
+    await processFirstDroneMeeting(repos, llm);
+    await processSecondDroneMeeting({ repos, llm });
+    const createKbRequestsBefore = repos
+      .listConfirmationRequests()
+      .filter((request) => request.request_type === "create_kb");
+
+    const productReview = await processFirstProductReviewMeeting(repos, llm);
+    const createKbRequestsAfter = repos
+      .listConfirmationRequests()
+      .filter((request) => request.request_type === "create_kb");
+
+    expect(productReview.topic_match.suggested_action).toBe("observe");
+    expect(createKbRequestsAfter).toHaveLength(createKbRequestsBefore.length);
+  });
+
+  it("keeps the first product review in observe and asks to create after a second related review", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const llm = new QueueLlmClient([
+      firstProductReviewExtraction(),
+      secondProductReviewExtraction()
+    ]);
+
+    const first = await processFirstProductReviewMeeting(repos, llm);
+    expect(first.topic_match.suggested_action).toBe("observe");
+
+    const second = await processSecondProductReviewMeeting(repos, llm);
+
+    expect(second.topic_match.suggested_action).toBe("ask_create");
+    expect(second.topic_match.candidate_meeting_ids).toEqual(
+      expect.arrayContaining([first.meeting_id, second.meeting_id])
+    );
+    expect(second.topic_match.match_reasons).toEqual(
+      expect.arrayContaining(["发现至少一场强相关历史会议"])
+    );
   });
 });

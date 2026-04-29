@@ -1,33 +1,50 @@
 import { MeetingExtractionResult, TopicMatchResult, TopicMatchResultSchema } from "../schemas";
 import { MeetingRow, Repositories } from "../services/store/repositories";
 
-const CoreTopicSignals = [
-  "无人机",
-  "操作方案",
-  "操作流程",
-  "试飞权限",
-  "权限确认",
-  "权限审批",
-  "风险控制",
-  "风险清单",
-  "操作员访谈",
-  "统一操作 SOP",
-  "SOP",
-  "无人机安全规范",
-  "试飞",
-  "审批"
-];
-
 const ExplicitKnowledgeBaseIntentPhrases = [
   "整理成知识库",
+  "做成知识库",
+  "建知识库",
+  "建立知识库",
+  "创建知识库",
+  "新建知识库",
   "建成知识库",
   "建一个知识库",
-  "整理成资料库",
-  "整理成调研档案",
+  "搭建知识库",
+  "建设知识库",
   "归档到知识库",
-  "把这几次会议整理起来",
-  "把两次访谈整理成一个知识库"
+  "归档知识库",
+  "沉淀到知识库",
+  "把这几次会议整理成知识库",
+  "把两次访谈整理成一个知识库",
+  "把这两次访谈整理成一个知识库"
 ];
+
+const GenericTopicSignals = new Set([
+  "会议",
+  "评审",
+  "评审会",
+  "同步",
+  "同步会",
+  "沟通",
+  "沟通会",
+  "访谈",
+  "复盘",
+  "冲刺",
+  "入口",
+  "知识库",
+  "待办",
+  "确认",
+  "事项",
+  "问题",
+  "记录",
+  "任务",
+  "后续",
+  "本次",
+  "当前",
+  "今天",
+  "下次"
+]);
 
 function parseStringArray(value: string): string[] {
   try {
@@ -93,31 +110,47 @@ function meetingTopicText(meeting: MeetingRow): string {
   ].join(" ");
 }
 
-function extractionText(extraction: MeetingExtractionResult): string {
+function sourceMeetingIntentText(meeting: MeetingRow): string {
+  return [meeting.title, meeting.transcript_text].join(" ");
+}
+
+function extractionTopicText(extraction: MeetingExtractionResult): string {
   return [
     extraction.meeting_summary,
     extraction.topic_keywords.join(" "),
     extraction.key_decisions
       .map((decision) => `${decision.decision} ${decision.evidence}`)
       .join(" "),
-    extraction.action_items
-      .map((item) => `${item.title} ${item.description ?? ""} ${item.evidence}`)
-      .join(" "),
-    extraction.risks.map((risk) => `${risk.risk} ${risk.evidence}`).join(" "),
-    extraction.source_mentions
-      .map((source) => `${source.name_or_keyword} ${source.reason}`)
-      .join(" ")
+    extraction.risks.map((risk) => `${risk.risk} ${risk.evidence}`).join(" ")
   ].join(" ");
 }
 
-function topicSignals(text: string, keywords: string[] = []): string[] {
-  const signals = new Set(keywords.map((keyword) => keyword.trim()).filter(Boolean));
-  for (const signal of CoreTopicSignals) {
-    if (text.includes(signal)) {
-      signals.add(signal);
+function titleSignals(title: string): string[] {
+  const compact = title.replace(/[^\u4e00-\u9fffA-Za-z0-9]+/g, "");
+  const signals: string[] = [];
+  for (let size = 3; size <= 6; size += 1) {
+    for (let index = 0; index + size <= compact.length; index += 1) {
+      signals.push(compact.slice(index, index + size));
     }
   }
-  return [...signals];
+  return signals.filter((signal) => !isGenericTopicSignal(signal));
+}
+
+function isGenericTopicSignal(signal: string): boolean {
+  const normalized = signal.trim();
+  return (
+    normalized.length < 2 ||
+    GenericTopicSignals.has(normalized) ||
+    [...GenericTopicSignals].some((generic) => normalized === `${generic}会`)
+  );
+}
+
+function topicSignals(text: string, keywords: string[] = [], title = ""): string[] {
+  const signals = new Set(keywords.map((keyword) => keyword.trim()).filter(Boolean));
+  for (const signal of titleSignals(title)) {
+    signals.add(signal);
+  }
+  return [...signals].filter((signal) => text.includes(signal) || title.includes(signal));
 }
 
 function hasTopicContent(meeting: MeetingRow): boolean {
@@ -128,37 +161,30 @@ function hasTopicContent(meeting: MeetingRow): boolean {
 }
 
 function hasExplicitKnowledgeBaseIntent(text: string): boolean {
-  if (ExplicitKnowledgeBaseIntentPhrases.some((phrase) => text.includes(phrase))) {
+  const compact = text.replace(/\s+/g, "");
+  if (ExplicitKnowledgeBaseIntentPhrases.some((phrase) => compact.includes(phrase))) {
     return true;
   }
 
-  return (
-    /整理成.*知识库/.test(text) ||
-    /建.*知识库/.test(text) ||
-    /归档.*知识库/.test(text) ||
-    /把这几次会议.*整理/.test(text) ||
-    /把这两次访谈.*整理.*知识库/.test(text) ||
-    /把两次访谈.*整理.*知识库/.test(text)
-  );
+  const patterns = [
+    /(?:整理|创建|新建|建立|搭建|建设|归档|沉淀|做成).{0,20}知识库/,
+    /知识库.{0,12}(?:创建|新建|建立|搭建|建设|归档|沉淀)/,
+    /把.{0,20}(?:会议|访谈|材料|内容).{0,20}(?:整理|归档|沉淀).{0,20}知识库/
+  ];
+  return patterns.some((pattern) => pattern.test(compact));
 }
 
-function hasCoreDroneTopic(currentText: string, candidateText: string): boolean {
-  const combined = `${currentText} ${candidateText}`;
-  const relatedSignals = [
-    "操作方案",
-    "操作流程",
-    "试飞权限",
-    "权限确认",
-    "权限审批",
-    "风险控制",
-    "风险清单",
-    "SOP",
-    "操作员访谈"
-  ];
-  const overlap = relatedSignals.filter(
-    (signal) => currentText.includes(signal) && candidateText.includes(signal)
-  ).length;
-  return combined.includes("无人机") && overlap >= 2;
+function distinctiveSignals(signals: string[]): string[] {
+  return unique(signals.filter((signal) => !isGenericTopicSignal(signal)));
+}
+
+function sharedDistinctiveSignals(left: string[], right: string[]): string[] {
+  const rightSet = asSet(distinctiveSignals(right));
+  return distinctiveSignals(left).filter((signal) => rightSet.has(signal));
+}
+
+function hasStrongSharedTopicSignature(left: string[], right: string[]): boolean {
+  return sharedDistinctiveSignals(left, right).length >= 2;
 }
 
 function candidateMeetingIds(
@@ -178,8 +204,12 @@ export async function runTopicClusteringAgent(input: {
   extraction: MeetingExtractionResult;
 }): Promise<TopicMatchResult> {
   const meetings = input.repos.listMeetings();
-  const currentText = [meetingTopicText(input.meeting), extractionText(input.extraction)].join(" ");
-  const explicitKnowledgeBaseIntent = hasExplicitKnowledgeBaseIntent(currentText);
+  const currentText = [meetingTopicText(input.meeting), extractionTopicText(input.extraction)].join(
+    " "
+  );
+  const explicitKnowledgeBaseIntent = hasExplicitKnowledgeBaseIntent(
+    sourceMeetingIntentText(input.meeting)
+  );
   const candidates = meetings.filter(
     (meeting) =>
       meeting.id !== input.meeting.id &&
@@ -188,13 +218,17 @@ export async function runTopicClusteringAgent(input: {
   );
   const participants = parseStringArray(input.meeting.participants_json);
   const sourceNames = sourceMentionNames(input.extraction);
-  const currentSignals = topicSignals(currentText, input.extraction.topic_keywords);
+  const currentSignals = topicSignals(
+    currentText,
+    input.extraction.topic_keywords,
+    input.meeting.title
+  );
 
   const scored = candidates
     .map((candidate) => {
       const candidateText = meetingTopicText(candidate);
       const candidateKeywords = parseStringArray(candidate.keywords_json);
-      const candidateSignals = topicSignals(candidateText, candidateKeywords);
+      const candidateSignals = topicSignals(candidateText, candidateKeywords, candidate.title);
       const titleScore = keywordTitleScore(currentSignals, input.meeting.title, candidate.title);
       const keywordScore = overlapRatio(input.extraction.topic_keywords, candidateKeywords);
       const signalScore = overlapRatio(currentSignals, candidateSignals);
@@ -209,9 +243,8 @@ export async function runTopicClusteringAgent(input: {
         signalScore * 0.3 +
         participantScore * 0.1 +
         sourceScore * 0.05;
-      const score = hasCoreDroneTopic(currentText, candidateText)
-        ? Math.max(0.82, weighted)
-        : weighted;
+      const strongSharedTopic = hasStrongSharedTopicSignature(currentSignals, candidateSignals);
+      const score = strongSharedTopic ? Math.max(0.82, weighted) : weighted;
 
       return {
         meeting: candidate,
@@ -222,8 +255,13 @@ export async function runTopicClusteringAgent(input: {
           signalScore >= 0.5 ? "会议摘要/转写围绕相同主题信号" : null,
           participantScore > 0 ? `参会人重叠 ${Math.round(participantScore * 100)}%` : null,
           sourceScore > 0 ? "资料引用重叠" : null,
-          hasCoreDroneTopic(currentText, candidateText)
-            ? "两场会议均围绕无人机操作方案、操作流程、试飞权限和风险控制"
+          strongSharedTopic
+            ? `存在多个非通用主题信号重叠：${sharedDistinctiveSignals(
+                currentSignals,
+                candidateSignals
+              )
+                .slice(0, 5)
+                .join("、")}`
             : null
         ].filter((reason): reason is string => reason !== null)
       };
@@ -232,7 +270,10 @@ export async function runTopicClusteringAgent(input: {
 
   const best = scored[0];
   const relatedCandidateIds = candidateMeetingIds(scored, input.meeting.id);
-  const strongCandidateIds = candidateMeetingIds(scored, input.meeting.id, 0.78);
+  const strongHistoricalCandidateIds = scored
+    .filter((item) => item.score >= 0.78)
+    .map((item) => item.meeting.id);
+  const strongCandidateIds = unique([...strongHistoricalCandidateIds, input.meeting.id]);
 
   if (explicitKnowledgeBaseIntent) {
     const hasRelatedHistoricalCandidate = relatedCandidateIds.length >= 2;
@@ -253,13 +294,13 @@ export async function runTopicClusteringAgent(input: {
     });
   }
 
-  if (best && best.score >= 0.78 && strongCandidateIds.length >= 2) {
+  if (best && best.score >= 0.78 && strongHistoricalCandidateIds.length >= 1) {
     return TopicMatchResultSchema.parse({
       current_meeting_id: input.meeting.id,
       matched_kb_id: null,
       matched_kb_name: null,
       score: best.score,
-      match_reasons: best.reasons,
+      match_reasons: ["发现至少一场强相关历史会议", ...best.reasons],
       suggested_action: "ask_create",
       candidate_meeting_ids: strongCandidateIds
     });

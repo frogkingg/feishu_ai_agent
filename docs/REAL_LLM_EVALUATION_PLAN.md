@@ -55,6 +55,27 @@ LLM_MODEL=your-model
 
 这些信息用于判断失败来自模型抽取、JSON 结构、workflow 路由，还是人工标注和样本边界。
 
+## 首轮真实 LLM 评测错例与修复方向
+
+首轮真实 LLM 评测结果为 failed：Extraction evaluation score 66.0% (33/50)，主要问题集中在 action item 误报、decision/risk 召回不足，以及首场产品评审误触发 `create_kb`。
+
+本轮修复方向：
+
+- `product_review_01` 首场主题会议只能进入 observe。Topic clustering 只把原始会议转写中的“整理成知识库 / 建知识库 / 归档知识库”等当作显式知识库意图，不再因为 LLM extraction 里推断出“创建知识库”就直接触发 `ask_create`。
+- 非显式知识库意图下，必须存在至少一场强相关历史会议，才允许 `ask_create`。强相关判断使用通用的标题/关键词主题信号重叠，不再依赖单一无人机场景 hardcode。
+- `ambiguous_schedule_01` 这类“下周找个时间沟通 / 对齐 / 同步”的表达，应生成缺少 `start_time` 的 calendar draft，并把 `start_time` 放入 `missing_fields`；不能生成 action item。
+- Action item 抽取必须有明确责任人或动作主体，并且有可交付物或可完成动作；“需要关注”“可以看看”“后续整理”“建立 SOP”如果缺 owner 或 due date，优先作为 decision/risk，而不是待办。
+- Decision 抽取覆盖“决定 / 确认 / 一致认为 / 本次先 / 暂不 / 范围收敛为 / 不做 X 先做 Y / 不再新增字段”等范围和策略取舍，每条必须带 evidence。
+- Risk 抽取覆盖“风险 / 阻塞 / 不确定 / 权限分散 / 流程不统一 / 可能影响 / 担心 / 如果……会…… / 缺少……”等表达；risk 不要求 owner，不能为了补 action 而强行转为待办。
+
+复测方式保持不变：
+
+```bash
+EVALUATION_LLM_PROVIDER=openai-compatible npm run evaluate
+```
+
+复测仍然只替换抽取层，workflow 使用内存 SQLite 和 dry-run confirmation，不连接真实飞书写入，也不修改 `FEISHU_DRY_RUN`。
+
 ## 合并前人工抽查
 
 真实 LLM 报告合并前需要人工抽查样本输出：
