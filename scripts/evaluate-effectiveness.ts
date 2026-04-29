@@ -740,6 +740,20 @@ function renderEvaluationModeBlock(result: EffectivenessEvaluationResult): strin
   ];
 }
 
+function renderLimitationsBlock(): string[] {
+  return [
+    "## 局限性",
+    "",
+    "- 当前 mock 评测使用预置 extraction，不代表真实 LLM 准确率。",
+    "- 当前样本只有 8 条，只证明 P0 场景覆盖。",
+    "- Precision 使用标题包含匹配和字段精确匹配，是工程化粗略估算。",
+    "- 效率提升基于人工耗时假设，不是真实用户工时审计。",
+    "- 当前不覆盖真实飞书权限、真实卡片发送、真实任务/日程/Wiki 创建。",
+    "- 真实效果需要使用 `EVALUATION_LLM_PROVIDER=openai-compatible` 复测。",
+    ""
+  ];
+}
+
 function renderMarkdown(result: EffectivenessEvaluationResult): string {
   const lines = [
     "# MeetingAtlas 效果验证评测报告",
@@ -779,6 +793,7 @@ function renderMarkdown(result: EffectivenessEvaluationResult): string {
     `- 估算节省：${result.metrics.minutes_saved_min.toFixed(1)} - ${result.metrics.minutes_saved_max.toFixed(1)} 分钟；中位估算 ${result.metrics.minutes_saved_estimate.toFixed(1)} 分钟。`,
     `- 估算节省时间：${formatPercent(result.metrics.efficiency_lift)}（按中位耗时计算）。`,
     "",
+    ...renderLimitationsBlock(),
     "## 指标定义",
     "",
     ...Object.entries(result.metric_definitions).map(

@@ -225,6 +225,15 @@ describe("effectiveness evaluation", () => {
       const markdown = readFileSync(reportResult.report_paths.markdown!, "utf8");
       expect(markdown).toContain("Mock Fixture 流程通过率：100.0% (50/50)");
       expect(markdown).toContain("不代表真实 LLM 在未知会议上的准确率");
+      expect(markdown).toContain("## 局限性");
+      expect(markdown).toContain("当前 mock 评测使用预置 extraction，不代表真实 LLM 准确率。");
+      expect(markdown).toContain("当前样本只有 8 条，只证明 P0 场景覆盖。");
+      expect(markdown).toContain("Precision 使用标题包含匹配和字段精确匹配，是工程化粗略估算。");
+      expect(markdown).toContain("效率提升基于人工耗时假设，不是真实用户工时审计。");
+      expect(markdown).toContain("当前不覆盖真实飞书权限、真实卡片发送、真实任务/日程/Wiki 创建。");
+      expect(markdown).toContain(
+        "真实效果需要使用 `EVALUATION_LLM_PROVIDER=openai-compatible` 复测。"
+      );
       expect(markdown).not.toContain("总体准确率");
       expect(markdown).not.toContain("Real LLM Extraction Evaluation");
     } finally {
