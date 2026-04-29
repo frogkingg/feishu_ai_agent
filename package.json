@@ -1,7 +1,7 @@
 {
   "name": "meeting-atlas",
   "version": "0.1.0",
-  "description": "MeetingAtlas / 会脉 Agent: meeting-minutes driven personal execution and topic knowledge-base agent.",
+  "description": "Meeting-minutes driven execution and knowledge-base agent.",
   "main": "dist/src/index.js",
   "engines": {
     "node": ">=24"

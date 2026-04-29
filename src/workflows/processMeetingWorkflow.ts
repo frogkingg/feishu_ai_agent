@@ -33,7 +33,10 @@ function suggestTopicName(input: { title: string; keywords: string[] }): string 
 }
 
 function suggestGoal(topicName: string): string {
-  return `沉淀${topicName}相关会议结论、行动项、日程与资料来源，形成可持续更新的项目知识库。`;
+  return (
+    `沉淀${topicName}相关会议结论、行动项、日程与资料来源，` +
+    "形成可持续更新的项目知识库。"
+  );
 }
 
 function defaultKnowledgeBaseStructure(): string[] {

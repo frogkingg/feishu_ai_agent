@@ -79,7 +79,12 @@ function unique(values: string[]): string[] {
 }
 
 function meetingTopicText(meeting: MeetingRow): string {
-  return [meeting.title, meeting.summary ?? "", meeting.transcript_text, parseStringArray(meeting.keywords_json).join(" ")].join(" ");
+  return [
+    meeting.title,
+    meeting.summary ?? "",
+    meeting.transcript_text,
+    parseStringArray(meeting.keywords_json).join(" ")
+  ].join(" ");
 }
 
 function extractionText(extraction: MeetingExtractionResult): string {
@@ -136,7 +141,9 @@ function hasCoreDroneTopic(currentText: string, candidateText: string): boolean 
     "SOP",
     "操作员访谈"
   ];
-  const overlap = relatedSignals.filter((signal) => currentText.includes(signal) && candidateText.includes(signal)).length;
+  const overlap = relatedSignals.filter(
+    (signal) => currentText.includes(signal) && candidateText.includes(signal)
+  ).length;
   return combined.includes("无人机") && overlap >= 2;
 }
 
@@ -160,7 +167,10 @@ export async function runTopicClusteringAgent(input: {
   const currentText = [meetingTopicText(input.meeting), extractionText(input.extraction)].join(" ");
   const explicitKnowledgeBaseIntent = hasExplicitKnowledgeBaseIntent(currentText);
   const candidates = meetings.filter(
-    (meeting) => meeting.id !== input.meeting.id && meeting.archive_status !== "rejected" && hasTopicContent(meeting)
+    (meeting) =>
+      meeting.id !== input.meeting.id &&
+      meeting.archive_status !== "rejected" &&
+      hasTopicContent(meeting)
   );
   const participants = parseStringArray(input.meeting.participants_json);
   const sourceNames = sourceMentionNames(input.extraction);

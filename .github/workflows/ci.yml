@@ -2,11 +2,10 @@ name: CI
 
 on:
   pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
+      - codex/p0-demo-automation
 
 jobs:
   build-test:

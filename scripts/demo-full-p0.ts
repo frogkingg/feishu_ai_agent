@@ -166,10 +166,12 @@ const SECOND_MEETING_TRANSCRIPT = `
 会议时间：2026-04-29 10:00 - 11:00
 参会人：张三、王五、Henry
 
-Henry：这次继续讨论无人机操作方案，重点看操作员视角下的操作流程、试飞权限和风险控制。
+Henry：这次继续讨论无人机操作方案，
+重点看操作员视角下的操作流程、试飞权限和风险控制。
 王五：现在操作流程不统一，试飞前权限确认也比较分散。
 Henry：我们需要建立统一无人机操作 SOP，把操作流程、权限审批和风险控制串起来。
-王五：我负责在 2026-05-03 前整理风险清单，把试飞权限、天气、电池状态和现场安全员都列出来。
+王五：我负责在 2026-05-03 前整理风险清单，
+把试飞权限、天气、电池状态和现场安全员都列出来。
 张三：上次提到的无人机安全规范也要继续参考。
 Henry：后续要把这两次访谈整理成一个无人机操作方案知识库。
 `.trim();
@@ -228,7 +230,12 @@ function isKnowledgeBaseActionText(input: { title?: string; description?: string
 
 function isKnowledgeBaseActionConfirmation(request: ConfirmationRequest): boolean {
   try {
-    const payload = JSON.parse(request.original_payload_json) as { draft?: { title?: string; description?: string | null } };
+    const payload = JSON.parse(request.original_payload_json) as {
+      draft?: {
+        title?: string;
+        description?: string | null;
+      };
+    };
     return isKnowledgeBaseActionText(payload.draft ?? {});
   } catch {
     return false;
@@ -428,7 +435,10 @@ function formatMarkdownReport(summary: DemoReportSummary): string {
     "",
     `- First meeting: ${summary.first_meeting.id}`,
     `- First topic action: ${summary.first_meeting.topic_action}`,
-    `- First extraction: actions=${summary.first_meeting.action_items}, calendars=${summary.first_meeting.calendar_drafts}`,
+    [
+      `- First extraction: actions=${summary.first_meeting.action_items}`,
+      `calendars=${summary.first_meeting.calendar_drafts}`
+    ].join(", "),
     `- Second meeting: ${summary.second_meeting.id}`,
     `- Second topic action: ${summary.second_meeting.topic_action}`,
     `- Second topic score: ${summary.second_meeting.topic_score}`,
@@ -476,7 +486,11 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
   );
   assertDemo(
     first.topic_match.suggested_action === "observe",
-    "First meeting should be observe. If this service already has related drone meetings, restart it with a fresh SQLITE_PATH for the demo."
+    [
+      "First meeting should be observe.",
+      "If this service already has related drone meetings,",
+      "restart it with a fresh SQLITE_PATH for the demo."
+    ].join(" ")
   );
   ok(context, "first meeting extraction and observe state verified");
 
@@ -509,7 +523,10 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
     `Second meeting topic score should be >= 0.9, got ${second.topic_match.score}`
   );
   assertDemo(second.topic_match.suggested_action === "ask_create", "Second meeting should suggest ask_create");
-  assertDemo(second.topic_match.candidate_meeting_ids.length >= 2, "Second meeting should have at least two candidate meetings");
+  assertDemo(
+    second.topic_match.candidate_meeting_ids.length >= 2,
+    "Second meeting should have at least two candidate meetings"
+  );
   assertDemo(
     second.topic_match.candidate_meeting_ids.includes(first.meeting_id) &&
       second.topic_match.candidate_meeting_ids.includes(second.meeting_id),
