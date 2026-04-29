@@ -86,7 +86,9 @@ function fieldLine(field: DryRunConfirmationCard["sections"][number]["fields"][n
   return `**${field.label}**: ${field.value_text ?? stringifyCardValue(field.value)}`;
 }
 
-function buttonType(style: DryRunConfirmationCard["actions"][number]["style"]): "primary" | "danger" | "default" {
+function buttonType(
+  style: DryRunConfirmationCard["actions"][number]["style"]
+): "primary" | "danger" | "default" {
   if (style === "primary") {
     return "primary";
   }

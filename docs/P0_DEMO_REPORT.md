@@ -48,22 +48,22 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 
 ## Demo 流程
 
-| Step | 操作 | 预期输出 |
-| --- | --- | --- |
-| 1 | 启动服务并访问 `GET /health` | 服务可达，`dry_run=true`，返回当前 LLM provider |
-| 2 | 提交第一场会议 | 至少生成 2 条 action items 和 1 条 calendar draft |
-| 3 | 校验第一场主题判断 | `suggested_action=observe`，不生成 `create_kb` |
-| 4 | 查询 `/dev/confirmations` | 返回待确认的 action/calendar 请求 |
-| 5 | 查询 `/dev/cards` | 第一场后至少有 2 张 action card 和 1 张 calendar card |
-| 6 | 确认第一条 action | action 进入确认执行状态，并写入 dry-run CLI 记录 |
-| 7 | 用 edited payload 确认第二条 action | 数据库最终字段使用用户确认值 |
-| 8 | 用 edited payload 确认 calendar | participants/location/duration 使用用户确认值 |
-| 9 | 提交第二场会议 | 第二场会议成功处理并返回 topic match |
-| 10 | 校验第二场主题判断 | `score >= 0.9`，`suggested_action=ask_create`，候选会议至少包含两场 |
-| 11 | 查询 `create_kb` confirmation | `/dev/confirmations` 能看到 `request_type=create_kb` |
-| 12 | 查询 `/dev/cards` | 第二场后能看到 1 张 create_kb card |
-| 13 | 确认 `create_kb` | 生成 mock 知识库记录 |
-| 14 | 查询 `/dev/state` | 有 knowledge base，最新 update 为 `kb_created` |
+| Step | 操作                                | 预期输出                                                            |
+| ---- | ----------------------------------- | ------------------------------------------------------------------- |
+| 1    | 启动服务并访问 `GET /health`        | 服务可达，`dry_run=true`，返回当前 LLM provider                     |
+| 2    | 提交第一场会议                      | 至少生成 2 条 action items 和 1 条 calendar draft                   |
+| 3    | 校验第一场主题判断                  | `suggested_action=observe`，不生成 `create_kb`                      |
+| 4    | 查询 `/dev/confirmations`           | 返回待确认的 action/calendar 请求                                   |
+| 5    | 查询 `/dev/cards`                   | 第一场后至少有 2 张 action card 和 1 张 calendar card               |
+| 6    | 确认第一条 action                   | action 进入确认执行状态，并写入 dry-run CLI 记录                    |
+| 7    | 用 edited payload 确认第二条 action | 数据库最终字段使用用户确认值                                        |
+| 8    | 用 edited payload 确认 calendar     | participants/location/duration 使用用户确认值                       |
+| 9    | 提交第二场会议                      | 第二场会议成功处理并返回 topic match                                |
+| 10   | 校验第二场主题判断                  | `score >= 0.9`，`suggested_action=ask_create`，候选会议至少包含两场 |
+| 11   | 查询 `create_kb` confirmation       | `/dev/confirmations` 能看到 `request_type=create_kb`                |
+| 12   | 查询 `/dev/cards`                   | 第二场后能看到 1 张 create_kb card                                  |
+| 13   | 确认 `create_kb`                    | 生成 mock 知识库记录                                                |
+| 14   | 查询 `/dev/state`                   | 有 knowledge base，最新 update 为 `kb_created`                      |
 
 ## 成功标准
 
@@ -105,13 +105,13 @@ Knowledge update: kb_created
 
 ## Dry-run 与真实飞书模式差异
 
-| 项目 | 当前 P0 dry-run | 真实飞书模式 |
-| --- | --- | --- |
-| 任务/日程创建 | 只写入本地 dry-run CLI 记录 | 需要真实调用飞书任务和日历能力 |
-| 知识库创建 | 创建本地 mock 记录，URL 为 `mock://...` | 需要真实创建 Wiki/Doc |
-| 卡片消息 | 生成 dry-run card JSON；可 dry-run 记录 send-card CLI 计划 | `FEISHU_DRY_RUN=false` 后通过 `larkIm.sendCard` 真实发送确认卡片 |
-| 安全策略 | `demo:full-p0` 检测到 `dry_run=false` 会停止 | 真实模式需单独脚本和人工确认 |
-| 报告内容 | 不包含 API Key，不包含 `.env` 内容 | 真实模式报告也必须继续脱敏 |
+| 项目          | 当前 P0 dry-run                                            | 真实飞书模式                                                     |
+| ------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- |
+| 任务/日程创建 | 只写入本地 dry-run CLI 记录                                | 需要真实调用飞书任务和日历能力                                   |
+| 知识库创建    | 创建本地 mock 记录，URL 为 `mock://...`                    | 需要真实创建 Wiki/Doc                                            |
+| 卡片消息      | 生成 dry-run card JSON；可 dry-run 记录 send-card CLI 计划 | `FEISHU_DRY_RUN=false` 后通过 `larkIm.sendCard` 真实发送确认卡片 |
+| 安全策略      | `demo:full-p0` 检测到 `dry_run=false` 会停止               | 真实模式需单独脚本和人工确认                                     |
+| 报告内容      | 不包含 API Key，不包含 `.env` 内容                         | 真实模式报告也必须继续脱敏                                       |
 
 ## 如何运行
 

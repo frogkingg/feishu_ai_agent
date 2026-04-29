@@ -7,7 +7,10 @@ import { createRepositories } from "../../src/services/store/repositories";
 
 describe("MeetingExtractionAgent", () => {
   it("validates Mock LLM output with MeetingExtractionResult schema", async () => {
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
     const repos = createRepositories(createMemoryDatabase());
     const meeting = repos.createMeeting({
       id: "mtg_agent_001",

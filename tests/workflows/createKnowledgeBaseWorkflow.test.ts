@@ -46,7 +46,9 @@ async function processDroneMeetings(repos = createRepositories(createMemoryDatab
 describe("createKnowledgeBaseWorkflow", () => {
   it("creates knowledge base records and dry-run markdown after create_kb confirmation", async () => {
     const repos = await processDroneMeetings();
-    const request = repos.listConfirmationRequests().find((item) => item.request_type === "create_kb");
+    const request = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "create_kb");
     expect(request).toBeTruthy();
 
     await confirmRequest({
@@ -79,14 +81,18 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(markdown).toContain("本次会议继续围绕无人机操作方案");
     expect(markdown).toContain("无人机安全规范");
 
-    const archivedMeetings = repos.listMeetings().filter((meeting) => meeting.archive_status === "archived");
+    const archivedMeetings = repos
+      .listMeetings()
+      .filter((meeting) => meeting.archive_status === "archived");
     expect(archivedMeetings).toHaveLength(2);
     expect(repos.getConfirmationRequest(request!.id)?.status).toBe("executed");
   });
 
   it("fails in real mode while larkWiki/larkDoc are not implemented", async () => {
     const repos = await processDroneMeetings();
-    const request = repos.listConfirmationRequests().find((item) => item.request_type === "create_kb");
+    const request = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "create_kb");
     expect(request).toBeTruthy();
 
     await confirmRequest({
@@ -100,6 +106,8 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(confirmation?.error).toContain("larkWiki/larkDoc");
     expect(repos.listKnowledgeBases()).toHaveLength(0);
     expect(repos.listKnowledgeUpdates()).toHaveLength(0);
-    expect(repos.listMeetings().filter((meeting) => meeting.archive_status === "archived")).toHaveLength(0);
+    expect(
+      repos.listMeetings().filter((meeting) => meeting.archive_status === "archived")
+    ).toHaveLength(0);
   });
 });

@@ -102,22 +102,22 @@ PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev
 
 ## Demo 流程
 
-| Step | 调用 | 预期输出 |
-| --- | --- | --- |
-| 1 | `GET /health` | `ok=true`，`dry_run=true`，返回当前 `llm_provider` |
-| 2 | `POST /dev/meetings/manual` 提交第一场会议 | 返回 `meeting_id`，至少 2 条 action 和 1 条 calendar |
-| 3 | 校验第一场 topic match | `topic_match.suggested_action = observe`，不创建 `create_kb` |
-| 4 | `GET /dev/confirmations` | 能看到第一场 action/calendar confirmation，且每条都附带 `dry_run_card` |
-| 4.1 | `GET /dev/cards` | 第一场后至少返回 2 张 action card 和 1 张 calendar card |
-| 5 | 确认第一条 action | action executed，并产生 dry-run CLI 记录 |
-| 6 | 使用 edited payload 确认第二条 action | 最终 action owner/due_date/priority/title 使用用户确认值 |
-| 7 | 使用 edited payload 确认 calendar | calendar participants/location/duration 使用用户确认值 |
-| 8 | `POST /dev/meetings/manual` 提交第二场会议 | 返回第二个 `meeting_id` |
-| 9 | 校验第二场 topic match | `score >= 0.9`，`suggested_action = ask_create` |
-| 10 | `GET /dev/confirmations` | 能看到 `request_type=create_kb` 的 confirmation |
-| 10.1 | `GET /dev/cards` | 第二场后能看到 1 张 create_kb card |
-| 11 | 确认 `create_kb` | 创建 mock 知识库记录 |
-| 12 | `GET /dev/state` | 有 knowledge base，最新 update 为 `kb_created` |
+| Step | 调用                                       | 预期输出                                                               |
+| ---- | ------------------------------------------ | ---------------------------------------------------------------------- |
+| 1    | `GET /health`                              | `ok=true`，`dry_run=true`，返回当前 `llm_provider`                     |
+| 2    | `POST /dev/meetings/manual` 提交第一场会议 | 返回 `meeting_id`，至少 2 条 action 和 1 条 calendar                   |
+| 3    | 校验第一场 topic match                     | `topic_match.suggested_action = observe`，不创建 `create_kb`           |
+| 4    | `GET /dev/confirmations`                   | 能看到第一场 action/calendar confirmation，且每条都附带 `dry_run_card` |
+| 4.1  | `GET /dev/cards`                           | 第一场后至少返回 2 张 action card 和 1 张 calendar card                |
+| 5    | 确认第一条 action                          | action executed，并产生 dry-run CLI 记录                               |
+| 6    | 使用 edited payload 确认第二条 action      | 最终 action owner/due_date/priority/title 使用用户确认值               |
+| 7    | 使用 edited payload 确认 calendar          | calendar participants/location/duration 使用用户确认值                 |
+| 8    | `POST /dev/meetings/manual` 提交第二场会议 | 返回第二个 `meeting_id`                                                |
+| 9    | 校验第二场 topic match                     | `score >= 0.9`，`suggested_action = ask_create`                        |
+| 10   | `GET /dev/confirmations`                   | 能看到 `request_type=create_kb` 的 confirmation                        |
+| 10.1 | `GET /dev/cards`                           | 第二场后能看到 1 张 create_kb card                                     |
+| 11   | 确认 `create_kb`                           | 创建 mock 知识库记录                                                   |
+| 12   | `GET /dev/state`                           | 有 knowledge base，最新 update 为 `kb_created`                         |
 
 `--cards-only` 会跑到第二场卡片生成后停止，不调用 confirm/reject。
 `--send-cards` 会在此基础上调用 `POST /dev/cards/send-all`，只验证 send-card dry-run CLI 记录。
@@ -183,14 +183,14 @@ Knowledge update: kb_created
 
 ## Dry-run 与真实飞书模式差异
 
-| 项目 | Dry-run Demo | 真实飞书模式 |
-| --- | --- | --- |
-| 飞书写入 | 不写真实任务/日程/Wiki/Doc，只记录 dry-run CLI run | 未来才写任务、日程、知识库 |
+| 项目       | Dry-run Demo                                          | 真实飞书模式                                               |
+| ---------- | ----------------------------------------------------- | ---------------------------------------------------------- |
+| 飞书写入   | 不写真实任务/日程/Wiki/Doc，只记录 dry-run CLI run    | 未来才写任务、日程、知识库                                 |
 | 卡片确认层 | 生成 dry-run card JSON；可选择 dry-run send-card 记录 | `FEISHU_DRY_RUN=false` 后通过 `larkIm.sendCard` 真实发卡片 |
-| URL | 知识库 URL 为 `mock://...` | 应返回真实飞书 Wiki/Doc URL |
-| 安全边界 | 要求 `FEISHU_DRY_RUN=true` | 真实写入需要单独验收和权限确认 |
-| LLM | 可以使用 `mock` 或 `openai-compatible` | 推荐继续保持 LLM 与飞书写入开关解耦 |
-| Demo 报告 | 记录流程结果，不含密钥或 `.env` | 真实模式报告同样不应包含密钥 |
+| URL        | 知识库 URL 为 `mock://...`                            | 应返回真实飞书 Wiki/Doc URL                                |
+| 安全边界   | 要求 `FEISHU_DRY_RUN=true`                            | 真实写入需要单独验收和权限确认                             |
+| LLM        | 可以使用 `mock` 或 `openai-compatible`                | 推荐继续保持 LLM 与飞书写入开关解耦                        |
+| Demo 报告  | 记录流程结果，不含密钥或 `.env`                       | 真实模式报告同样不应包含密钥                               |
 
 当前 P0 Demo 的目标是证明确认链路、状态一致性、主题聚类和知识库建议闭环已经跑通。
 

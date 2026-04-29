@@ -58,9 +58,13 @@ describe("CardInteractionAgent", () => {
       title: "确认待办：整理无人机操作流程",
       dry_run: true
     });
-    expect(card.editable_fields.map((field) => field.key)).toEqual(
-      ["title", "owner", "due_date", "priority", "collaborators"]
-    );
+    expect(card.editable_fields.map((field) => field.key)).toEqual([
+      "title",
+      "owner",
+      "due_date",
+      "priority",
+      "collaborators"
+    ]);
     expect(card.sections.flatMap((section) => section.fields.map((field) => field.key))).toEqual(
       expect.arrayContaining([
         "title",
@@ -82,7 +86,9 @@ describe("CardInteractionAgent", () => {
       "remind_later"
     ]);
     expect(card.actions.find((action) => action.key === "confirm")?.payload_template).toEqual({});
-    expect(card.actions.find((action) => action.key === "confirm_with_edits")?.payload_template).toEqual({
+    expect(
+      card.actions.find((action) => action.key === "confirm_with_edits")?.payload_template
+    ).toEqual({
       edited_payload: "$editable_fields"
     });
   });
@@ -118,12 +124,22 @@ describe("CardInteractionAgent", () => {
         "missing_fields"
       ])
     );
-    expect(card.editable_fields.map((field) => field.key)).toEqual(
-      ["title", "start_time", "end_time", "duration_minutes", "participants", "location", "agenda"]
-    );
-    expect(card.actions.map((action) => action.key)).toEqual(
-      ["confirm", "confirm_with_edits", "reject", "convert_to_task", "remind_later"]
-    );
+    expect(card.editable_fields.map((field) => field.key)).toEqual([
+      "title",
+      "start_time",
+      "end_time",
+      "duration_minutes",
+      "participants",
+      "location",
+      "agenda"
+    ]);
+    expect(card.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject",
+      "convert_to_task",
+      "remind_later"
+    ]);
   });
 
   it("builds create_kb confirmation dry-run card JSON", () => {
@@ -159,14 +175,22 @@ describe("CardInteractionAgent", () => {
       ])
     );
     expect(
-      card.sections.flatMap((section) => section.fields).find((field) => field.key === "safety_note")?.value
+      card.sections
+        .flatMap((section) => section.fields)
+        .find((field) => field.key === "safety_note")?.value
     ).toBe("用户确认前不会创建知识库");
-    expect(card.editable_fields.map((field) => field.key)).toEqual(
-      ["topic_name", "suggested_goal", "default_structure"]
-    );
-    expect(card.actions.map((action) => action.key)).toEqual(
-      ["create_kb", "edit_and_create", "append_current_only", "reject", "never_remind_topic"]
-    );
+    expect(card.editable_fields.map((field) => field.key)).toEqual([
+      "topic_name",
+      "suggested_goal",
+      "default_structure"
+    ]);
+    expect(card.actions.map((action) => action.key)).toEqual([
+      "create_kb",
+      "edit_and_create",
+      "append_current_only",
+      "reject",
+      "never_remind_topic"
+    ]);
   });
 
   it("redacts API keys, Authorization headers, and .env content from card JSON", () => {

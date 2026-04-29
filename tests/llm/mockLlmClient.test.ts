@@ -5,7 +5,10 @@ import { MeetingExtractionResultSchema } from "../../src/schemas";
 
 describe("MockLlmClient", () => {
   it("returns stable extraction for drone_interview_01 fixture", async () => {
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
     const llm = new MockLlmClient();
 
     const raw = await llm.generateJson<unknown>({

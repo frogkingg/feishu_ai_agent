@@ -1,6 +1,15 @@
 import { z } from "zod";
 
-export const SourceTypeSchema = z.enum(["doc", "wiki", "im", "mail", "excel", "base", "minutes", "task"]);
+export const SourceTypeSchema = z.enum([
+  "doc",
+  "wiki",
+  "im",
+  "mail",
+  "excel",
+  "base",
+  "minutes",
+  "task"
+]);
 export const PermissionStatusSchema = z.enum(["visible", "limited", "denied"]);
 
 export const SourceMentionSchema = z.object({

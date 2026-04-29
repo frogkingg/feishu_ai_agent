@@ -32,7 +32,10 @@ function createCalendarTestMeeting(repos: ReturnType<typeof createRepositories>)
 describe("confirm calendar request", () => {
   it("marks calendar draft executed and records cli_runs in dry-run mode", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
 
     await processMeetingWorkflow({
       repos,
@@ -47,7 +50,9 @@ describe("confirm calendar request", () => {
       }
     });
 
-    const request = repos.listConfirmationRequests().find((item) => item.request_type === "calendar");
+    const request = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "calendar");
     expect(request).toBeTruthy();
 
     await confirmRequest({
@@ -66,7 +71,10 @@ describe("confirm calendar request", () => {
 
   it("merges edited start time and participants before dry-run calendar creation", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    const transcript = readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"), "utf8");
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
 
     await processMeetingWorkflow({
       repos,
@@ -81,7 +89,9 @@ describe("confirm calendar request", () => {
       }
     });
 
-    const request = repos.listConfirmationRequests().find((item) => item.request_type === "calendar");
+    const request = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "calendar");
     expect(request).toBeTruthy();
 
     await confirmRequest({

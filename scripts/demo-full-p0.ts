@@ -247,9 +247,27 @@ const KNOWLEDGE_BASE_ACTION_PATTERNS = [
   /归档到.{0,12}知识库/,
   /建立.{0,12}知识库/
 ];
-const ACTION_CARD_ACTION_KEYS = ["confirm", "confirm_with_edits", "reject", "not_mine", "remind_later"];
-const CALENDAR_CARD_ACTION_KEYS = ["confirm", "confirm_with_edits", "reject", "convert_to_task", "remind_later"];
-const CREATE_KB_CARD_ACTION_KEYS = ["create_kb", "edit_and_create", "append_current_only", "reject", "never_remind_topic"];
+const ACTION_CARD_ACTION_KEYS = [
+  "confirm",
+  "confirm_with_edits",
+  "reject",
+  "not_mine",
+  "remind_later"
+];
+const CALENDAR_CARD_ACTION_KEYS = [
+  "confirm",
+  "confirm_with_edits",
+  "reject",
+  "convert_to_task",
+  "remind_later"
+];
+const CREATE_KB_CARD_ACTION_KEYS = [
+  "create_kb",
+  "edit_and_create",
+  "append_current_only",
+  "reject",
+  "never_remind_topic"
+];
 const DEFAULT_CARD_ACTION_KEYS = ["confirm", "reject"];
 
 function createDemoContext(options: RunFullP0DemoOptions): DemoContext {
@@ -282,7 +300,10 @@ function ok(context: DemoContext, message: string): void {
   context.log(`[ok] ${message}`);
 }
 
-function isKnowledgeBaseActionText(input: { title?: string; description?: string | null }): boolean {
+function isKnowledgeBaseActionText(input: {
+  title?: string;
+  description?: string | null;
+}): boolean {
   const text = `${input.title ?? ""} ${input.description ?? ""}`;
   return KNOWLEDGE_BASE_ACTION_PATTERNS.some((pattern) => pattern.test(text));
 }
@@ -301,7 +322,12 @@ function isKnowledgeBaseActionConfirmation(request: ConfirmationRequest): boolea
   }
 }
 
-async function requestJson<T>(context: DemoContext, method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+async function requestJson<T>(
+  context: DemoContext,
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown
+): Promise<T> {
   let response: Response;
   try {
     response = await context.fetchFn(`${context.baseUrl}${path}`, {
@@ -339,16 +365,24 @@ async function getHealth(context: DemoContext): Promise<HealthResponse> {
   return health;
 }
 
-async function submitMeeting(context: DemoContext, payload: {
-  title: string;
-  participants: string[];
-  organizer: string;
-  started_at: string;
-  ended_at: string;
-  transcript_text: string;
-}): Promise<MeetingResponse> {
+async function submitMeeting(
+  context: DemoContext,
+  payload: {
+    title: string;
+    participants: string[];
+    organizer: string;
+    started_at: string;
+    ended_at: string;
+    transcript_text: string;
+  }
+): Promise<MeetingResponse> {
   step(context, `POST /dev/meetings/manual (${payload.title})`);
-  const result = await requestJson<MeetingResponse>(context, "POST", "/dev/meetings/manual", payload);
+  const result = await requestJson<MeetingResponse>(
+    context,
+    "POST",
+    "/dev/meetings/manual",
+    payload
+  );
   ok(
     context,
     [
@@ -362,8 +396,14 @@ async function submitMeeting(context: DemoContext, payload: {
 
 async function listConfirmations(context: DemoContext): Promise<ConfirmationRequest[]> {
   step(context, "GET /dev/confirmations");
-  const confirmations = await requestJson<ConfirmationRequest[]>(context, "GET", "/dev/confirmations");
-  const cardCount = confirmations.filter((confirmation) => confirmation.dry_run_card?.dry_run === true).length;
+  const confirmations = await requestJson<ConfirmationRequest[]>(
+    context,
+    "GET",
+    "/dev/confirmations"
+  );
+  const cardCount = confirmations.filter(
+    (confirmation) => confirmation.dry_run_card?.dry_run === true
+  ).length;
   assertDemo(
     cardCount === confirmations.length,
     "Every confirmation should include a dry-run card"
@@ -406,12 +446,7 @@ async function sendAllCards(context: DemoContext): Promise<SendCardsResponse> {
         ? { recipient: context.recipient }
         : undefined;
   step(context, "POST /dev/cards/send-all");
-  const result = await requestJson<SendCardsResponse>(
-    context,
-    "POST",
-    "/dev/cards/send-all",
-    body
-  );
+  const result = await requestJson<SendCardsResponse>(context, "POST", "/dev/cards/send-all", body);
   assertDemo(result.ok === true, "Dry-run send-card should not report failed sends");
   assertDemo(result.total === result.planned, "All card sends should be planned in dry-run mode");
   assertDemo(
@@ -422,7 +457,11 @@ async function sendAllCards(context: DemoContext): Promise<SendCardsResponse> {
   return result;
 }
 
-async function confirmRequest(context: DemoContext, id: string, editedPayload?: unknown): Promise<ConfirmResponse> {
+async function confirmRequest(
+  context: DemoContext,
+  id: string,
+  editedPayload?: unknown
+): Promise<ConfirmResponse> {
   const body = editedPayload === undefined ? {} : { edited_payload: editedPayload };
   step(context, `POST /dev/confirmations/${id}/confirm`);
   const result = await requestJson<ConfirmResponse>(
@@ -461,10 +500,16 @@ function requestsForMeeting(
   requestType: ConfirmationRequestType
 ): ConfirmationRequest[] {
   const ids = new Set(result.confirmation_requests);
-  return confirmations.filter((confirmation) => ids.has(confirmation.id) && confirmation.request_type === requestType);
+  return confirmations.filter(
+    (confirmation) => ids.has(confirmation.id) && confirmation.request_type === requestType
+  );
 }
 
-function cardsForMeeting(result: MeetingResponse, cards: DryRunCardPreview[], cardType: string): DryRunCardPreview[] {
+function cardsForMeeting(
+  result: MeetingResponse,
+  cards: DryRunCardPreview[],
+  cardType: string
+): DryRunCardPreview[] {
   const ids = new Set(result.confirmation_requests);
   return cards.filter((card) => ids.has(card.request_id) && card.card_type === cardType);
 }
@@ -485,7 +530,9 @@ function buildReportSummary(input: {
   state: StateResponse;
 }): DemoReportSummary {
   const dryRunCliCount = input.state.cli_runs.filter((run) => run.dry_run === 1).length;
-  const cardSendCliCount = input.state.cli_runs.filter((run) => run.tool === "lark.im.send_card").length;
+  const cardSendCliCount = input.state.cli_runs.filter(
+    (run) => run.tool === "lark.im.send_card"
+  ).length;
   const latestKnowledgeBase = input.state.knowledge_bases.at(-1);
   const latestKnowledgeUpdate = input.state.knowledge_updates.at(-1);
 
@@ -537,7 +584,9 @@ function buildCardPhaseReportSummary(input: {
   state: StateResponse;
 }): DemoReportSummary {
   const dryRunCliCount = input.state.cli_runs.filter((run) => run.dry_run === 1).length;
-  const cardSendCliCount = input.state.cli_runs.filter((run) => run.tool === "lark.im.send_card").length;
+  const cardSendCliCount = input.state.cli_runs.filter(
+    (run) => run.tool === "lark.im.send_card"
+  ).length;
 
   return {
     status: "passed",
@@ -555,7 +604,8 @@ function buildCardPhaseReportSummary(input: {
     card_previews_generated: input.cards.length,
     action_cards: input.cards.filter((card) => card.card_type === "action_confirmation").length,
     calendar_cards: input.cards.filter((card) => card.card_type === "calendar_confirmation").length,
-    knowledge_base_cards: input.cards.filter((card) => card.card_type === "create_kb_confirmation").length,
+    knowledge_base_cards: input.cards.filter((card) => card.card_type === "create_kb_confirmation")
+      .length,
     card_send_cli_records: cardSendCliCount,
     knowledge_base_name: "n/a",
     knowledge_base_url: "n/a",
@@ -686,8 +736,14 @@ async function runCardPhaseDemo(options: RunFullP0DemoOptions): Promise<RunFullP
   const firstCards = await listCards(context);
   const firstActionCards = cardsForMeeting(first, firstCards, "action_confirmation");
   const firstCalendarCards = cardsForMeeting(first, firstCards, "calendar_confirmation");
-  assertDemo(actionRequests.length >= 2, "First meeting should create at least two action confirmations");
-  assertDemo(calendarRequests.length >= 1, "First meeting should create at least one calendar confirmation");
+  assertDemo(
+    actionRequests.length >= 2,
+    "First meeting should create at least two action confirmations"
+  );
+  assertDemo(
+    calendarRequests.length >= 1,
+    "First meeting should create at least one calendar confirmation"
+  );
   assertDemo(firstActionCards.length >= 2, "First meeting should expose action cards");
   assertDemo(firstCalendarCards.length >= 1, "First meeting should expose calendar cards");
 
@@ -703,7 +759,10 @@ async function runCardPhaseDemo(options: RunFullP0DemoOptions): Promise<RunFullP
     second.topic_match.score >= 0.9,
     `Second meeting topic score should be >= 0.9, got ${second.topic_match.score}`
   );
-  assertDemo(second.topic_match.suggested_action === "ask_create", "Second meeting should suggest ask_create");
+  assertDemo(
+    second.topic_match.suggested_action === "ask_create",
+    "Second meeting should suggest ask_create"
+  );
 
   const secondConfirmations = await listConfirmations(context);
   const createKbRequests = requestsForMeeting(second, secondConfirmations, "create_kb");
@@ -733,8 +792,14 @@ async function runCardPhaseDemo(options: RunFullP0DemoOptions): Promise<RunFullP
     state.confirmation_requests.every((request) => request.status === "sent"),
     "Card-only demo should leave confirmation requests unexecuted"
   );
-  assertDemo(state.knowledge_bases.length === 0, "Card-only demo should not create knowledge bases");
-  assertDemo(state.knowledge_updates.length === 0, "Card-only demo should not create knowledge updates");
+  assertDemo(
+    state.knowledge_bases.length === 0,
+    "Card-only demo should not create knowledge bases"
+  );
+  assertDemo(
+    state.knowledge_updates.length === 0,
+    "Card-only demo should not create knowledge updates"
+  );
   assertDemo(
     context.mode === "send-cards"
       ? state.cli_runs.filter((run) => run.tool === "lark.im.send_card").length === allCards.length
@@ -760,7 +825,9 @@ async function runCardPhaseDemo(options: RunFullP0DemoOptions): Promise<RunFullP
   };
 }
 
-export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise<RunFullP0DemoResult> {
+export async function runFullP0Demo(
+  options: RunFullP0DemoOptions = {}
+): Promise<RunFullP0DemoResult> {
   if (options.mode === "cards-only" || options.mode === "send-cards") {
     return runCardPhaseDemo(options);
   }
@@ -837,7 +904,10 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
     second.topic_match.score >= 0.9,
     `Second meeting topic score should be >= 0.9, got ${second.topic_match.score}`
   );
-  assertDemo(second.topic_match.suggested_action === "ask_create", "Second meeting should suggest ask_create");
+  assertDemo(
+    second.topic_match.suggested_action === "ask_create",
+    "Second meeting should suggest ask_create"
+  );
   assertDemo(
     second.topic_match.candidate_meeting_ids.length >= 2,
     "Second meeting should have at least two candidate meetings"
@@ -872,8 +942,14 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
   const state = await getState(context);
   const latestKnowledgeBase = state.knowledge_bases.at(-1);
   const latestKnowledgeUpdate = state.knowledge_updates.at(-1);
-  assertDemo(state.knowledge_bases.length >= 1, "Final state should include at least one knowledge base");
-  assertDemo(state.knowledge_updates.length >= 1, "Final state should include at least one knowledge update");
+  assertDemo(
+    state.knowledge_bases.length >= 1,
+    "Final state should include at least one knowledge base"
+  );
+  assertDemo(
+    state.knowledge_updates.length >= 1,
+    "Final state should include at least one knowledge update"
+  );
   assertDemo(
     latestKnowledgeBase?.name.includes("无人机操作方案"),
     "Latest knowledge base name should contain 无人机操作方案"
@@ -886,7 +962,10 @@ export async function runFullP0Demo(options: RunFullP0DemoOptions = {}): Promise
     latestKnowledgeBase?.homepage_url?.startsWith("mock://"),
     "Latest knowledge base homepage_url should be a mock:// URL"
   );
-  assertDemo(latestKnowledgeUpdate?.update_type === "kb_created", "Latest knowledge update should be kb_created");
+  assertDemo(
+    latestKnowledgeUpdate?.update_type === "kb_created",
+    "Latest knowledge update should be kb_created"
+  );
   assertDemo(
     state.cli_runs.some((run) => run.tool === "lark.task.create" && run.dry_run === 1),
     "Final state should include dry-run task CLI records"
@@ -988,7 +1067,9 @@ if (require.main === module) {
     console.error("\n[failed] MeetingAtlas P0 demo did not complete.");
     console.error(error instanceof Error ? error.message : String(error));
     console.error("\nStart a clean dry-run service with, for example:");
-    console.error("PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev");
+    console.error(
+      "PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev"
+    );
     process.exit(1);
   });
 }

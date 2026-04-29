@@ -143,10 +143,13 @@ export interface CliRunRow {
 type NewRow<T extends { created_at: string }> = Omit<T, "created_at" | "updated_at"> &
   Partial<Pick<T, Extract<keyof T, "created_at" | "updated_at">>>;
 
-type NewKnowledgeUpdateRow = Omit<KnowledgeUpdateRow, "created_at"> & Partial<Pick<KnowledgeUpdateRow, "created_at">>;
+type NewKnowledgeUpdateRow = Omit<KnowledgeUpdateRow, "created_at"> &
+  Partial<Pick<KnowledgeUpdateRow, "created_at">>;
 type NewCliRunRow = Omit<CliRunRow, "created_at"> & Partial<Pick<CliRunRow, "created_at">>;
 
-function withTimestamps<T extends { created_at?: string; updated_at?: string }>(row: T): T & { created_at: string; updated_at: string } {
+function withTimestamps<T extends { created_at?: string; updated_at?: string }>(
+  row: T
+): T & { created_at: string; updated_at: string } {
   const now = nowIso();
   return {
     ...row,
@@ -202,7 +205,9 @@ export function createRepositories(db: MeetingAtlasDb) {
     },
 
     listMeetings(): MeetingRow[] {
-      return allRows<MeetingRow>(db.prepare("SELECT * FROM meetings ORDER BY created_at ASC").all());
+      return allRows<MeetingRow>(
+        db.prepare("SELECT * FROM meetings ORDER BY created_at ASC").all()
+      );
     },
 
     updateMeetingExtraction(input: {
@@ -216,7 +221,14 @@ export function createRepositories(db: MeetingAtlasDb) {
         `UPDATE meetings
         SET summary = ?, keywords_json = ?, action_count = ?, calendar_count = ?, updated_at = ?
         WHERE id = ?`
-      ).run(input.summary, input.keywords_json, input.action_count, input.calendar_count, nowIso(), input.id);
+      ).run(
+        input.summary,
+        input.keywords_json,
+        input.action_count,
+        input.calendar_count,
+        nowIso(),
+        input.id
+      );
     },
 
     updateMeetingTopic(input: {
@@ -333,7 +345,9 @@ export function createRepositories(db: MeetingAtlasDb) {
     },
 
     listActionItems(): ActionItemRow[] {
-      return allRows<ActionItemRow>(db.prepare("SELECT * FROM action_items ORDER BY created_at ASC").all());
+      return allRows<ActionItemRow>(
+        db.prepare("SELECT * FROM action_items ORDER BY created_at ASC").all()
+      );
     },
 
     createCalendarDraft(input: NewRow<CalendarDraftRow>): CalendarDraftRow {
@@ -368,11 +382,15 @@ export function createRepositories(db: MeetingAtlasDb) {
     },
 
     listCalendarDrafts(): CalendarDraftRow[] {
-      return allRows<CalendarDraftRow>(db.prepare("SELECT * FROM calendar_drafts ORDER BY created_at ASC").all());
+      return allRows<CalendarDraftRow>(
+        db.prepare("SELECT * FROM calendar_drafts ORDER BY created_at ASC").all()
+      );
     },
 
     getCalendarDraft(id: string): CalendarDraftRow | null {
-      return asRow<CalendarDraftRow>(db.prepare("SELECT * FROM calendar_drafts WHERE id = ?").get(id));
+      return asRow<CalendarDraftRow>(
+        db.prepare("SELECT * FROM calendar_drafts WHERE id = ?").get(id)
+      );
     },
 
     updateCalendarDraftAfterCreate(input: {
@@ -385,7 +403,13 @@ export function createRepositories(db: MeetingAtlasDb) {
         `UPDATE calendar_drafts
         SET confirmation_status = ?, calendar_event_id = ?, event_url = ?, updated_at = ?
         WHERE id = ?`
-      ).run(input.confirmation_status, input.calendar_event_id, input.event_url, nowIso(), input.id);
+      ).run(
+        input.confirmation_status,
+        input.calendar_event_id,
+        input.event_url,
+        nowIso(),
+        input.id
+      );
     },
 
     updateCalendarDraft(input: {
@@ -466,11 +490,15 @@ export function createRepositories(db: MeetingAtlasDb) {
     },
 
     getKnowledgeBase(id: string): KnowledgeBaseRow | null {
-      return asRow<KnowledgeBaseRow>(db.prepare("SELECT * FROM knowledge_bases WHERE id = ?").get(id));
+      return asRow<KnowledgeBaseRow>(
+        db.prepare("SELECT * FROM knowledge_bases WHERE id = ?").get(id)
+      );
     },
 
     listKnowledgeBases(): KnowledgeBaseRow[] {
-      return allRows<KnowledgeBaseRow>(db.prepare("SELECT * FROM knowledge_bases ORDER BY created_at ASC").all());
+      return allRows<KnowledgeBaseRow>(
+        db.prepare("SELECT * FROM knowledge_bases ORDER BY created_at ASC").all()
+      );
     },
 
     createSource(input: NewRow<SourceRow>): SourceRow {
@@ -524,7 +552,9 @@ export function createRepositories(db: MeetingAtlasDb) {
     },
 
     getConfirmationRequest(id: string): ConfirmationRequestRow | null {
-      return asRow<ConfirmationRequestRow>(db.prepare("SELECT * FROM confirmation_requests WHERE id = ?").get(id));
+      return asRow<ConfirmationRequestRow>(
+        db.prepare("SELECT * FROM confirmation_requests WHERE id = ?").get(id)
+      );
     },
 
     updateConfirmationRequest(input: {
@@ -555,10 +585,7 @@ export function createRepositories(db: MeetingAtlasDb) {
       );
     },
 
-    updateConfirmationCardMessage(input: {
-      id: string;
-      card_message_id: string;
-    }): void {
+    updateConfirmationCardMessage(input: { id: string; card_message_id: string }): void {
       db.prepare(
         `UPDATE confirmation_requests
         SET card_message_id = ?, updated_at = ?
@@ -597,7 +624,9 @@ export function createRepositories(db: MeetingAtlasDb) {
     },
 
     listKnowledgeUpdates(): KnowledgeUpdateRow[] {
-      return allRows<KnowledgeUpdateRow>(db.prepare("SELECT * FROM knowledge_updates ORDER BY created_at ASC").all());
+      return allRows<KnowledgeUpdateRow>(
+        db.prepare("SELECT * FROM knowledge_updates ORDER BY created_at ASC").all()
+      );
     },
 
     createCliRun(input: NewCliRunRow): CliRunRow {

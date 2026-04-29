@@ -47,7 +47,9 @@ function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest
   };
 }
 
-function isUnfinishedConfirmation(request: ReturnType<Repositories["listConfirmationRequests"]>[number]): boolean {
+function isUnfinishedConfirmation(
+  request: ReturnType<Repositories["listConfirmationRequests"]>[number]
+): boolean {
   return !["executed", "rejected", "failed"].includes(request.status);
 }
 
@@ -78,11 +80,7 @@ function sendCardStatusCode(result: { ok: boolean; error: string | null }): numb
   return result.error?.includes("requires recipient or chat_id") ? 400 : 502;
 }
 
-export function buildServer(input: {
-  config: AppConfig;
-  repos: Repositories;
-  llm: LlmClient;
-}) {
+export function buildServer(input: { config: AppConfig; repos: Repositories; llm: LlmClient }) {
   const app = Fastify({
     logger: true
   });

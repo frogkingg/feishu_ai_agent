@@ -8,17 +8,9 @@ export const ConfirmationCardTypeSchema = z.enum([
   "generic_confirmation"
 ]);
 
-export const CardScalarValueSchema = z.union([
-  z.string(),
-  z.number(),
-  z.boolean(),
-  z.null()
-]);
+export const CardScalarValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
-export const CardValueSchema = z.union([
-  CardScalarValueSchema,
-  z.array(CardScalarValueSchema)
-]);
+export const CardValueSchema = z.union([CardScalarValueSchema, z.array(CardScalarValueSchema)]);
 
 export const CardFieldInputTypeSchema = z.enum([
   "text",

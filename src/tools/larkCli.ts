@@ -37,13 +37,22 @@ export interface LarkCliResult {
 }
 
 function redactText(value: string): string {
-  return SECRET_PATTERNS.reduce((text, pattern) => text.replace(pattern, (_match, prefix?: string) => `${prefix ?? ""}[REDACTED]`), value);
+  return SECRET_PATTERNS.reduce(
+    (text, pattern) =>
+      text.replace(pattern, (_match, prefix?: string) => `${prefix ?? ""}[REDACTED]`),
+    value
+  );
 }
 
 function redactArgs(args: string[]): string[] {
   return args.map((arg, index) => {
     const previous = args[index - 1]?.toLowerCase();
-    if (previous && ["--token", "--secret", "--authorization", "--app-secret", "--access-token"].includes(previous)) {
+    if (
+      previous &&
+      ["--token", "--secret", "--authorization", "--app-secret", "--access-token"].includes(
+        previous
+      )
+    ) {
       return "[REDACTED]";
     }
     return redactText(arg);
@@ -69,7 +78,10 @@ function parseStdout(stdout: string, expectJson: boolean): unknown {
   }
 }
 
-export async function runLarkCli(args: string[], options: LarkCliRunOptions): Promise<LarkCliResult> {
+export async function runLarkCli(
+  args: string[],
+  options: LarkCliRunOptions
+): Promise<LarkCliResult> {
   const config = options.config ?? loadConfig();
   const dryRun = options.dryRun ?? config.feishuDryRun;
   const tool = options.toolName ?? "lark";

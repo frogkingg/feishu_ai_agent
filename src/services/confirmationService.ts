@@ -127,9 +127,7 @@ function appendActionSuggestedReason(suggestedReason: string, changedFields: str
 
   const notes = [`用户确认时已修改字段：${changedFields.join(", ")}。`];
   if (changedFields.includes("owner")) {
-    notes.push(
-      "原始会议证据中的负责人可能与最终确认负责人不同，以用户确认结果为准。"
-    );
+    notes.push("原始会议证据中的负责人可能与最终确认负责人不同，以用户确认结果为准。");
   }
 
   return [suggestedReason, ...notes].join("\n");
@@ -151,12 +149,14 @@ function failRequest(input: {
     error: message
   });
 
-  return input.repos.getConfirmationRequest(input.request.id) ?? {
-    ...input.request,
-    status: "failed",
-    error: message,
-    updated_at: nowIso()
-  };
+  return (
+    input.repos.getConfirmationRequest(input.request.id) ?? {
+      ...input.request,
+      status: "failed",
+      error: message,
+      updated_at: nowIso()
+    }
+  );
 }
 
 export function createConfirmationRequest(input: {
@@ -406,9 +406,11 @@ export function rejectRequest(input: {
     error: input.reason ?? null
   });
 
-  return input.repos.getConfirmationRequest(request.id) ?? {
-    ...request,
-    status: "rejected",
-    error: input.reason ?? null
-  };
+  return (
+    input.repos.getConfirmationRequest(request.id) ?? {
+      ...request,
+      status: "rejected",
+      error: input.reason ?? null
+    }
+  );
 }
