@@ -1,0 +1,25 @@
+{
+  "expected_action_items": [
+    {
+      "title_contains": "补一版交互说明",
+      "owner": "陈一",
+      "due_date": "2026-05-08"
+    },
+    {
+      "title_contains": "整理演示话术",
+      "owner": "周宁",
+      "due_date": "2026-05-09"
+    }
+  ],
+  "expected_calendar_drafts": [],
+  "expected_decisions": [
+    {
+      "decision_contains": "P0 只保留会议抽取、确认卡片和知识库生成"
+    }
+  ],
+  "expected_risks": [],
+  "expected_topic_keywords": ["P0", "确认卡片", "知识库生成"],
+  "expected_should_create_kb": true,
+  "covered_scenarios": ["related_meetings_create_kb"],
+  "notes": "复盘同步里有截止时间但无具体会议时间，不应强行创建 calendar draft；由于已连续两场产品评审，按当前策略应建议创建主题知识库。"
+}

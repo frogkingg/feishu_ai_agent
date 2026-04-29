@@ -1,0 +1,29 @@
+{
+  "expected_action_items": [
+    {
+      "title_contains": "修改首页线框图",
+      "owner": "陈一",
+      "due_date": "2026-05-06"
+    }
+  ],
+  "expected_calendar_drafts": [
+    {
+      "title_contains": "原型评审",
+      "start_time": "2026-05-07T15:00:00+08:00"
+    }
+  ],
+  "expected_decisions": [
+    {
+      "decision_contains": "首页先保留待确认事项和最近知识库更新"
+    }
+  ],
+  "expected_risks": [
+    {
+      "risk_contains": "首页信息过散"
+    }
+  ],
+  "expected_topic_keywords": ["产品原型", "首页", "确认事项"],
+  "expected_should_create_kb": false,
+  "covered_scenarios": ["unrelated_meetings_no_create_kb"],
+  "notes": "产品评审样本验证行动项、明确日程和关键决策抽取。"
+}

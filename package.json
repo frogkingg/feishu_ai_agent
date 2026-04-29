@@ -11,6 +11,8 @@
     "build": "tsc",
     "start": "node dist/src/index.js",
     "demo:full-p0": "tsx scripts/demo-full-p0.ts",
+    "evaluate": "tsx scripts/evaluate-fixtures.ts",
+    "eval": "tsx scripts/evaluate-effectiveness.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",

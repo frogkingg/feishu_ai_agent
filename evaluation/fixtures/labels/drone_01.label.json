@@ -1,0 +1,29 @@
+{
+  "expected_action_items": [
+    {
+      "title_contains": "整理无人机现有操作流程",
+      "owner": "张三",
+      "due_date": "2026-05-01"
+    },
+    {
+      "title_contains": "确认试飞场地权限",
+      "owner": "李四"
+    }
+  ],
+  "expected_calendar_drafts": [
+    {
+      "title_contains": "操作员访谈",
+      "start_time": "2026-05-05T10:00:00+08:00"
+    }
+  ],
+  "expected_decisions": [],
+  "expected_risks": [
+    {
+      "risk_contains": "操作流程分散"
+    }
+  ],
+  "expected_topic_keywords": ["无人机", "操作流程", "试飞权限"],
+  "expected_should_create_kb": false,
+  "covered_scenarios": ["explicit_action_owner_due", "explicit_calendar"],
+  "notes": "首场无人机会议应抽取两个待办和一个明确访谈日程，但只进入主题观察，不创建知识库。"
+}

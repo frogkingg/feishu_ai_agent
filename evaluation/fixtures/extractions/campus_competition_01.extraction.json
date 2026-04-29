@@ -1,0 +1,58 @@
+{
+  "meeting_summary": "校园比赛 Demo 冲刺会明确比赛交付重点、Demo 主线、效果验证报告、演示视频和彩排时间。",
+  "key_decisions": [
+    {
+      "decision": "Demo 主线只展示会议抽取、确认卡片、任务日程 dry-run 和主题知识库结果。",
+      "evidence": "Henry：我们决定 Demo 主线只展示会议抽取、确认卡片、任务日程 dry-run 和主题知识库结果。"
+    }
+  ],
+  "action_items": [
+    {
+      "title": "整理比赛效果验证报告",
+      "description": "输出准确率、接受度和效率提升三部分效果验证。",
+      "owner": "孙同学",
+      "collaborators": [],
+      "due_date": "2026-05-10",
+      "priority": "P0",
+      "evidence": "孙同学：我来整理比赛效果验证报告，2026-05-10 前给出准确率、接受度和效率提升三部分。",
+      "confidence": 0.94,
+      "suggested_reason": "明确负责人、交付内容和截止日期。",
+      "missing_fields": []
+    },
+    {
+      "title": "录制 3 分钟演示视频",
+      "description": "录制并发出 3 分钟比赛演示视频。",
+      "owner": "赵同学",
+      "collaborators": [],
+      "due_date": "2026-05-11",
+      "priority": "P0",
+      "evidence": "赵同学：我负责录制 3 分钟演示视频，2026-05-11 前发到群里。",
+      "confidence": 0.93,
+      "suggested_reason": "明确负责人、交付内容和截止日期。",
+      "missing_fields": []
+    }
+  ],
+  "calendar_drafts": [
+    {
+      "title": "正式彩排会议",
+      "start_time": "2026-05-12T20:00:00+08:00",
+      "end_time": null,
+      "duration_minutes": 60,
+      "participants": ["Henry", "孙同学", "赵同学"],
+      "agenda": "按比赛时间限制完整走一遍 Demo。",
+      "location": "线上会议室",
+      "evidence": "孙同学：正式彩排建议放在 2026-05-12 20:00，地点线上会议室。",
+      "confidence": 0.91,
+      "missing_fields": ["end_time"]
+    }
+  ],
+  "topic_keywords": ["比赛", "效果验证", "Demo", "dry-run"],
+  "risks": [
+    {
+      "risk": "比赛提交前效果验证和演示资产仍需补齐。",
+      "evidence": "Henry：比赛提交前，我们要把 MeetingAtlas 的 Demo 报告、演示脚本和效果验证补齐。"
+    }
+  ],
+  "source_mentions": [],
+  "confidence": 0.91
+}

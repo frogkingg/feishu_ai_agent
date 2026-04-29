@@ -1,0 +1,39 @@
+{
+  "meeting_summary": "操作员访谈继续围绕无人机操作流程、试飞权限和风险控制展开，决定建立统一 SOP，并提出将两次访谈整理成知识库。",
+  "key_decisions": [
+    {
+      "decision": "建立统一无人机操作 SOP，把操作流程、权限审批和风险控制串起来。",
+      "evidence": "Henry：我们需要建立统一无人机操作 SOP，把操作流程、权限审批和风险控制串起来。"
+    }
+  ],
+  "action_items": [
+    {
+      "title": "整理风险清单",
+      "description": "列出试飞权限、天气、电池状态和现场安全员等风险项。",
+      "owner": "王五",
+      "collaborators": [],
+      "due_date": "2026-05-03",
+      "priority": "P1",
+      "evidence": "王五：我负责在 2026-05-03 前整理风险清单，把天气、电池状态和现场安全员都列进去。",
+      "confidence": 0.93,
+      "suggested_reason": "发言人明确认领风险清单，并给出截止日期。",
+      "missing_fields": []
+    }
+  ],
+  "calendar_drafts": [],
+  "topic_keywords": ["无人机", "操作流程", "试飞权限", "风险控制", "SOP"],
+  "risks": [
+    {
+      "risk": "操作流程不统一，试飞前权限确认分散。",
+      "evidence": "王五：现在操作流程不统一，试飞前权限确认也比较分散。"
+    }
+  ],
+  "source_mentions": [
+    {
+      "type": "doc",
+      "name_or_keyword": "无人机安全规范",
+      "reason": "会议要求继续参考上次提到的规范。"
+    }
+  ],
+  "confidence": 0.92
+}

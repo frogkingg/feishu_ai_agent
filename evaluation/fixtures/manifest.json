@@ -1,0 +1,90 @@
+[
+  {
+    "id": "drone_01",
+    "title": "无人机操作方案初步访谈",
+    "participants": ["张三", "李四", "Henry"],
+    "organizer": "Henry",
+    "started_at": "2026-04-28T10:00:00+08:00",
+    "ended_at": "2026-04-28T11:00:00+08:00",
+    "meeting_file": "evaluation/fixtures/meetings/drone_01.txt",
+    "label_file": "evaluation/fixtures/labels/drone_01.label.json",
+    "extraction_file": "evaluation/fixtures/extractions/drone_01.extraction.json"
+  },
+  {
+    "id": "drone_02",
+    "title": "无人机操作员访谈",
+    "participants": ["张三", "王五", "Henry"],
+    "organizer": "Henry",
+    "started_at": "2026-04-29T10:00:00+08:00",
+    "ended_at": "2026-04-29T11:00:00+08:00",
+    "meeting_file": "evaluation/fixtures/meetings/drone_02.txt",
+    "label_file": "evaluation/fixtures/labels/drone_02.label.json",
+    "extraction_file": "evaluation/fixtures/extractions/drone_02.extraction.json"
+  },
+  {
+    "id": "product_review_01",
+    "title": "产品原型评审会",
+    "participants": ["刘敏", "陈一", "Henry"],
+    "organizer": "刘敏",
+    "started_at": "2026-04-30T14:00:00+08:00",
+    "ended_at": "2026-04-30T15:00:00+08:00",
+    "meeting_file": "evaluation/fixtures/meetings/product_review_01.txt",
+    "label_file": "evaluation/fixtures/labels/product_review_01.label.json",
+    "extraction_file": "evaluation/fixtures/extractions/product_review_01.extraction.json"
+  },
+  {
+    "id": "product_review_02",
+    "title": "产品原型复盘同步",
+    "participants": ["刘敏", "陈一", "周宁", "Henry"],
+    "organizer": "刘敏",
+    "started_at": "2026-05-02T16:00:00+08:00",
+    "ended_at": "2026-05-02T16:45:00+08:00",
+    "meeting_file": "evaluation/fixtures/meetings/product_review_02.txt",
+    "label_file": "evaluation/fixtures/labels/product_review_02.label.json",
+    "extraction_file": "evaluation/fixtures/extractions/product_review_02.extraction.json"
+  },
+  {
+    "id": "campus_competition_01",
+    "title": "校园比赛 Demo 冲刺会",
+    "participants": ["Henry", "孙同学", "赵同学"],
+    "organizer": "Henry",
+    "started_at": "2026-05-03T19:00:00+08:00",
+    "ended_at": "2026-05-03T20:00:00+08:00",
+    "meeting_file": "evaluation/fixtures/meetings/campus_competition_01.txt",
+    "label_file": "evaluation/fixtures/labels/campus_competition_01.label.json",
+    "extraction_file": "evaluation/fixtures/extractions/campus_competition_01.extraction.json"
+  },
+  {
+    "id": "no_action_chitchat_01",
+    "title": "午后闲聊",
+    "participants": ["Henry", "小林"],
+    "organizer": "Henry",
+    "started_at": "2026-05-04T13:00:00+08:00",
+    "ended_at": "2026-05-04T13:20:00+08:00",
+    "meeting_file": "evaluation/fixtures/meetings/no_action_chitchat_01.txt",
+    "label_file": "evaluation/fixtures/labels/no_action_chitchat_01.label.json",
+    "extraction_file": "evaluation/fixtures/extractions/no_action_chitchat_01.extraction.json"
+  },
+  {
+    "id": "ambiguous_schedule_01",
+    "title": "接口对齐沟通",
+    "participants": ["Henry", "周宁"],
+    "organizer": "Henry",
+    "started_at": "2026-05-04T15:00:00+08:00",
+    "ended_at": "2026-05-04T15:30:00+08:00",
+    "meeting_file": "evaluation/fixtures/meetings/ambiguous_schedule_01.txt",
+    "label_file": "evaluation/fixtures/labels/ambiguous_schedule_01.label.json",
+    "extraction_file": "evaluation/fixtures/extractions/ambiguous_schedule_01.extraction.json"
+  },
+  {
+    "id": "deadline_vs_calendar_01",
+    "title": "方案截止时间确认",
+    "participants": ["Henry", "陈一"],
+    "organizer": "Henry",
+    "started_at": "2026-05-04T17:00:00+08:00",
+    "ended_at": "2026-05-04T17:20:00+08:00",
+    "meeting_file": "evaluation/fixtures/meetings/deadline_vs_calendar_01.txt",
+    "label_file": "evaluation/fixtures/labels/deadline_vs_calendar_01.label.json",
+    "extraction_file": "evaluation/fixtures/extractions/deadline_vs_calendar_01.extraction.json"
+  }
+]
