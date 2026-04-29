@@ -99,7 +99,18 @@ describe("TopicClusteringAgent", () => {
       meeting_ids: second.topic_match.candidate_meeting_ids,
       match_reasons: second.topic_match.match_reasons,
       score: second.topic_match.score,
-      default_structure: expect.arrayContaining(["00 首页 / 总览", "06 单个会议总结"])
+      default_structure: expect.arrayContaining(["00 首页 / 总览", "06 单个会议总结"]),
+      card_preview: {
+        card_type: "create_kb_confirmation",
+        request_id: createKbRequests[0].id,
+        actions: [
+          expect.objectContaining({ key: "create_kb" }),
+          expect.objectContaining({ key: "edit_and_create" }),
+          expect.objectContaining({ key: "append_current_only" }),
+          expect.objectContaining({ key: "reject" }),
+          expect.objectContaining({ key: "never_remind_topic" })
+        ]
+      }
     });
   });
 

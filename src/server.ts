@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { z, ZodError } from "zod";
 import { AppConfig } from "./config";
 import { ManualMeetingInputSchema } from "./schemas";
+import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
 import { confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
@@ -22,6 +23,40 @@ function briefError(error: unknown): string {
   }
 
   return error instanceof Error ? error.message : String(error);
+}
+
+function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest"]>) {
+  if (request === null) {
+    return null;
+  }
+
+  return {
+    ...request,
+    dry_run_card: buildConfirmationCardFromRequest(request)
+  };
+}
+
+function isUnfinishedConfirmation(request: ReturnType<Repositories["listConfirmationRequests"]>[number]): boolean {
+  return !["executed", "rejected", "failed"].includes(request.status);
+}
+
+function cardPreviewStubAction(input: {
+  repos: Repositories;
+  id: string;
+  action: "remind_later" | "convert_to_task" | "append_current_only";
+}) {
+  const confirmation = input.repos.getConfirmationRequest(input.id);
+  if (confirmation === null) {
+    return null;
+  }
+
+  return {
+    ok: true,
+    dry_run: true,
+    confirmation_id: input.id,
+    action: input.action,
+    message: "This card action is preview-only in the current phase."
+  };
 }
 
 export function buildServer(input: {
@@ -109,7 +144,29 @@ export function buildServer(input: {
     });
   });
 
-  app.get("/dev/confirmations", async () => input.repos.listConfirmationRequests());
+  app.get("/dev/confirmations", async () =>
+    input.repos.listConfirmationRequests().map((request) => ({
+      ...request,
+      dry_run_card: buildConfirmationCardFromRequest(request)
+    }))
+  );
+
+  app.get("/dev/cards", async () =>
+    input.repos
+      .listConfirmationRequests()
+      .filter(isUnfinishedConfirmation)
+      .map((request) => buildConfirmationCardFromRequest(request))
+  );
+
+  app.get("/dev/confirmations/:id/card", async (request, reply) => {
+    const params = request.params as { id: string };
+    const confirmation = withDryRunCard(input.repos.getConfirmationRequest(params.id));
+    if (!confirmation) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    return confirmation.dry_run_card;
+  });
 
   app.post("/dev/confirmations/:id/confirm", async (request) => {
     const params = request.params as { id: string };
@@ -132,6 +189,51 @@ export function buildServer(input: {
         reason: body.reason
       })
     };
+  });
+
+  app.post("/dev/confirmations/:id/remind-later", async (request, reply) => {
+    const params = request.params as { id: string };
+    const result = cardPreviewStubAction({
+      repos: input.repos,
+      id: params.id,
+      action: "remind_later"
+    });
+
+    if (result === null) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    return result;
+  });
+
+  app.post("/dev/confirmations/:id/convert-to-task", async (request, reply) => {
+    const params = request.params as { id: string };
+    const result = cardPreviewStubAction({
+      repos: input.repos,
+      id: params.id,
+      action: "convert_to_task"
+    });
+
+    if (result === null) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    return result;
+  });
+
+  app.post("/dev/confirmations/:id/append-current-only", async (request, reply) => {
+    const params = request.params as { id: string };
+    const result = cardPreviewStubAction({
+      repos: input.repos,
+      id: params.id,
+      action: "append_current_only"
+    });
+
+    if (result === null) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    return result;
   });
 
   app.get("/dev/state", async () => input.repos.getStateSummary());
