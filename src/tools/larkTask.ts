@@ -32,14 +32,15 @@ export async function createTask(input: {
     "--summary",
     input.draft.title,
     "--description",
-    input.draft.description ?? "",
-    "--due",
-    input.draft.due_date ?? "",
-    "--assignee",
-    input.draft.owner ?? "",
-    "--as",
-    "user"
+    input.draft.description ?? ""
   ];
+  if (input.draft.due_date) {
+    args.push("--due", input.draft.due_date);
+  }
+  if (input.draft.owner?.startsWith("ou_")) {
+    args.push("--assignee", input.draft.owner);
+  }
+  args.push("--as", "user");
 
   const result = await runLarkCli(args, {
     repos: input.repos,

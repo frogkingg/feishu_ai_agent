@@ -39,6 +39,15 @@ export async function createCalendarEvent(input: {
   draft: CalendarDraftRow;
   runner?: LarkCliRunner;
 }): Promise<CreateCalendarEventResult> {
+  if (!input.draft.start_time) {
+    return {
+      calendar_event_id: `pending_event_${input.draft.id}`,
+      event_url: `mock://feishu/calendar/${input.draft.id}`,
+      dry_run: true,
+      cli_run_id: "skipped_no_start_time"
+    };
+  }
+
   const participantIds = parseParticipantIds(input.draft.participants_json);
   const args = [
     "calendar",

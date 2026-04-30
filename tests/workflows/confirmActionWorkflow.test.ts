@@ -165,7 +165,8 @@ describe("confirm action request", () => {
       confirmation_status: "created"
     });
     expect(args).toContain("修订后的飞行安全清单");
-    expect(args).toContain("王五");
+    expect(args).not.toContain("王五");
+    expect(args).not.toContain("--assignee");
     expect(args).toContain("2026-05-08");
     expect(args).toEqual(
       expect.arrayContaining([
@@ -175,8 +176,6 @@ describe("confirm action request", () => {
         "修订后的飞行安全清单",
         "--due",
         "2026-05-08",
-        "--assignee",
-        "王五",
         "--as",
         "user"
       ])
