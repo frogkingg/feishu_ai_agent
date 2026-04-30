@@ -44,6 +44,28 @@ describe("loadConfig", () => {
     });
   });
 
+  it("loads optional Lark webhook credentials", () => {
+    expect(
+      loadConfig({
+        larkVerificationToken: null,
+        larkEncryptKey: null
+      })
+    ).toMatchObject({
+      larkVerificationToken: null,
+      larkEncryptKey: null
+    });
+
+    expect(
+      loadConfig({
+        larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key"
+      })
+    ).toMatchObject({
+      larkVerificationToken: "verification-token",
+      larkEncryptKey: "encrypt-key"
+    });
+  });
+
   it("throws a clear error when OpenAI-compatible config is incomplete", () => {
     expect(() =>
       loadConfig({

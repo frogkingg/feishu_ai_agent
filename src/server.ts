@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { AppConfig } from "./config";
 import { ManualMeetingInputSchema } from "./schemas";
@@ -10,6 +10,7 @@ import { MeetingRow, Repositories } from "./services/store/repositories";
 import { sendCard } from "./tools/larkIm";
 import { type LarkCliRunner } from "./tools/larkCli";
 import { nowIso } from "./utils/dates";
+import { verifyLarkWebhookSignature } from "./utils/larkSignature";
 import { processMeetingWorkflow } from "./workflows/processMeetingWorkflow";
 
 const LlmSmokeTestInputSchema = z.object({
@@ -25,6 +26,116 @@ const SendCardBodySchema = z
   .refine((body) => !(body.recipient && body.chat_id), {
     message: "Provide either recipient or chat_id, not both"
   });
+
+const FeishuTranscriptionUpdatedEventType = "vc.meeting.transcription_updated";
+const TranscriptPendingText =
+  "【transcript pending - to be fetched via lark-cli vc transcript get】";
+const CardActionPendingMessage = "此操作暂未实现，将在 PR-2 中完成";
+
+const FeishuTranscriptionUpdatedEventSchema = z
+  .object({
+    meeting_id: z.string().trim().min(1),
+    topic: z.string().trim().min(1).optional().nullable(),
+    operator_id: z
+      .object({
+        open_id: z.string().trim().min(1).optional().nullable()
+      })
+      .optional()
+      .nullable()
+  })
+  .passthrough();
+
+const FeishuCardActionPayloadSchema = z
+  .object({
+    open_id: z.string().optional(),
+    action: z
+      .object({
+        value: z.record(z.unknown()).default({})
+      })
+      .passthrough()
+  })
+  .passthrough();
+
+type FeishuEventWebhookPayload = {
+  challenge?: unknown;
+  event_type?: unknown;
+  header?: {
+    event_type?: unknown;
+  };
+  event?: unknown;
+};
+
+type FastifyRequestWithRawBody = FastifyRequest & { rawBody?: string };
+
+function configureJsonBodyParser(app: FastifyInstance) {
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+    const rawBody = typeof body === "string" ? body : body.toString("utf8");
+    (request as FastifyRequestWithRawBody).rawBody = rawBody;
+
+    try {
+      done(null, rawBody.length > 0 ? (JSON.parse(rawBody) as unknown) : {});
+    } catch (error) {
+      done(error as Error);
+    }
+  });
+}
+
+function getRawBody(request: FastifyRequest): string {
+  return (request as FastifyRequestWithRawBody).rawBody ?? JSON.stringify(request.body ?? {});
+}
+
+function getHeaderString(request: FastifyRequest, name: string): string | null {
+  const value = request.headers[name.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return typeof value === "string" ? value : null;
+}
+
+function isLarkSignatureValid(input: {
+  request: FastifyRequest;
+  body: string;
+  verificationToken: string | null;
+}): boolean {
+  if (input.verificationToken === null) {
+    return true;
+  }
+
+  const timestamp = getHeaderString(input.request, "x-lark-request-timestamp");
+  const nonce = getHeaderString(input.request, "x-lark-request-nonce");
+  const signature = getHeaderString(input.request, "x-lark-signature");
+
+  if (timestamp === null || nonce === null || signature === null) {
+    return false;
+  }
+
+  return verifyLarkWebhookSignature({
+    timestamp,
+    nonce,
+    body: input.body,
+    verificationToken: input.verificationToken,
+    signature
+  });
+}
+
+function getFeishuEventType(payload: FeishuEventWebhookPayload): string | null {
+  if (typeof payload.event_type === "string") {
+    return payload.event_type;
+  }
+
+  return typeof payload.header?.event_type === "string" ? payload.header.event_type : null;
+}
+
+function toast(type: "success" | "error", content: string) {
+  return {
+    toast: {
+      type,
+      content
+    }
+  };
+}
 
 const CONFIRM_CARD_ACTION_KEYS = new Set([
   "confirm",
@@ -139,15 +250,20 @@ function extractCardCallbackPayload(payload: unknown): {
     asRecord(payload)
   ]);
   const requestId = firstString([
+    actionValue.confirmation_id,
     actionValue.request_id,
+    root.confirmation_id,
     root.request_id,
+    valueAtPath(payload, ["event", "confirmation_id"]),
     valueAtPath(payload, ["event", "request_id"])
   ]);
   const actionKey = firstString([
+    actionValue.action,
     actionValue.action_key,
     actionValue.key,
-    actionValue.action,
+    root.action,
     root.action_key,
+    valueAtPath(payload, ["event", "action"]),
     valueAtPath(payload, ["event", "action_key"])
   ]);
   const editedPayload =
@@ -226,6 +342,7 @@ export function buildServer(input: {
   const app = Fastify({
     logger: true
   });
+  configureJsonBodyParser(app);
 
   app.get("/health", async () => ({
     ok: true,
@@ -238,13 +355,70 @@ export function buildServer(input: {
   }));
 
   app.post("/webhooks/feishu/event", async (request, reply) => {
-    const payload = (request.body ?? {}) as { challenge?: unknown };
-    request.log.info({ payload }, "received feishu event webhook");
+    const rawBody = getRawBody(request);
+    if (
+      !isLarkSignatureValid({
+        request,
+        body: rawBody,
+        verificationToken: input.config.larkVerificationToken
+      })
+    ) {
+      request.log.warn("rejected feishu event webhook with invalid signature");
+      return reply.code(401).send({ error: "Invalid Lark webhook signature" });
+    }
+
+    const payload = (request.body ?? {}) as FeishuEventWebhookPayload;
+    const eventType = getFeishuEventType(payload);
+    request.log.info({ event_type: eventType }, "received feishu event webhook");
 
     if (typeof payload.challenge === "string") {
       return { challenge: payload.challenge };
     }
 
+    if (eventType === FeishuTranscriptionUpdatedEventType) {
+      const event = FeishuTranscriptionUpdatedEventSchema.parse(payload.event ?? {});
+      const organizer = event.operator_id?.open_id ?? null;
+      const title = event.topic?.trim() || event.meeting_id;
+
+      void processMeetingWorkflow({
+        repos: input.repos,
+        llm: input.llm,
+        meeting: {
+          external_meeting_id: event.meeting_id,
+          title,
+          participants: organizer === null ? [] : [organizer],
+          organizer,
+          started_at: null,
+          ended_at: null,
+          transcript_text: TranscriptPendingText
+        }
+      })
+        .then((result) => {
+          request.log.info(
+            {
+              event_type: eventType,
+              external_meeting_id: event.meeting_id,
+              meeting_id: result.meeting_id,
+              confirmation_requests: result.confirmation_requests.length
+            },
+            "triggered meeting workflow from feishu transcription event"
+          );
+        })
+        .catch((error) => {
+          request.log.error(
+            {
+              event_type: eventType,
+              external_meeting_id: event.meeting_id,
+              err: error
+            },
+            "failed meeting workflow from feishu transcription event"
+          );
+        });
+
+      return reply.code(202).send({ accepted: true });
+    }
+
+    request.log.info({ event_type: eventType }, "accepted unsupported feishu event webhook");
     return reply.code(202).send({ accepted: true });
   });
 
@@ -362,6 +536,86 @@ export function buildServer(input: {
         action_key: parsed.actionKey,
         request_id: parsed.requestId,
         error: briefError(error)
+      });
+    }
+  });
+
+  app.post("/webhooks/feishu/card-action", async (request, reply) => {
+    const parsed = extractCardCallbackPayload(request.body ?? {});
+
+    if (parsed.requestId === null) {
+      return reply.code(404).send(toast("error", "确认请求不存在"));
+    }
+
+    const confirmation = input.repos.getConfirmationRequest(parsed.requestId);
+    if (confirmation === null) {
+      return reply.code(404).send(toast("error", "确认请求不存在"));
+    }
+
+    if (parsed.actionKey === null) {
+      return reply.code(400).send(toast("error", "暂不支持此操作"));
+    }
+
+    try {
+      if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        const result = await confirmRequest({
+          repos: input.repos,
+          config: input.config,
+          id: parsed.requestId,
+          editedPayload: parsed.editedPayload,
+          runner: input.larkCliRunner
+        });
+
+        return {
+          ok: result.confirmation.status !== "failed",
+          confirmation_id: parsed.requestId,
+          action: parsed.actionKey,
+          confirmation: result.confirmation,
+          result: result.result,
+          ...toast("success", "已确认")
+        };
+      }
+
+      if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        const result = rejectRequest({
+          repos: input.repos,
+          id: parsed.requestId,
+          reason: parsed.reason ?? parsed.actionKey
+        });
+
+        return {
+          ok: true,
+          confirmation_id: parsed.requestId,
+          action: parsed.actionKey,
+          confirmation: result,
+          ...toast("success", "已拒绝")
+        };
+      }
+
+      const previewAction =
+        PREVIEW_STUB_CARD_ACTIONS[parsed.actionKey as keyof typeof PREVIEW_STUB_CARD_ACTIONS];
+      if (previewAction !== undefined) {
+        return {
+          ok: true,
+          dry_run: true,
+          confirmation_id: parsed.requestId,
+          action: previewAction,
+          message: CardActionPendingMessage,
+          ...toast("success", CardActionPendingMessage)
+        };
+      }
+
+      return reply.code(400).send(toast("error", "暂不支持此操作"));
+    } catch (error) {
+      request.log.error(
+        { err: error, confirmation_id: parsed.requestId, action: parsed.actionKey },
+        "card action failed"
+      );
+      return reply.code(500).send({
+        ok: false,
+        confirmation_id: parsed.requestId,
+        action: parsed.actionKey,
+        ...toast("error", briefError(error))
       });
     }
   });

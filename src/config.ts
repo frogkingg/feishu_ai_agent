@@ -9,6 +9,8 @@ export interface AppConfig {
   sqlitePath: string;
   feishuDryRun: boolean;
   feishuCardSendDryRun: boolean;
+  larkVerificationToken: string | null;
+  larkEncryptKey: string | null;
   larkCliBin: string;
   llmProvider: "mock" | "openai-compatible";
   llmApiKey: string | null;
@@ -74,6 +76,8 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     sqlitePath: path.isAbsolute(sqlitePath) ? sqlitePath : path.join(process.cwd(), sqlitePath),
     feishuDryRun: parseBoolean(process.env.FEISHU_DRY_RUN, true),
     feishuCardSendDryRun: parseBoolean(process.env.FEISHU_CARD_SEND_DRY_RUN, true),
+    larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN || null,
+    larkEncryptKey: process.env.LARK_ENCRYPT_KEY || null,
     larkCliBin: process.env.LARK_CLI_BIN || "lark-cli",
     llmProvider: parseLlmProvider(process.env.LLM_PROVIDER),
     llmApiKey: process.env.LLM_API_KEY || null,

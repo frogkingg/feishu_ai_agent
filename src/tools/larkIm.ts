@@ -153,9 +153,12 @@ export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): Feishu
         },
         type: buttonType(action.style),
         value: {
+          confirmation_id: card.request_id,
+          action: action.key,
           request_id: card.request_id,
           action_key: action.key,
           endpoint: action.endpoint,
+          ...(action.payload_template ?? {}),
           payload_template: action.payload_template ?? {}
         }
       }))

@@ -63,7 +63,7 @@ export async function processMeetingWorkflow(input: {
 }): Promise<ProcessMeetingResult> {
   const meeting = input.repos.createMeeting({
     id: createId("mtg"),
-    external_meeting_id: null,
+    external_meeting_id: input.meeting.external_meeting_id ?? null,
     title: input.meeting.title,
     started_at: input.meeting.started_at,
     ended_at: input.meeting.ended_at,
