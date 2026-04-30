@@ -42,6 +42,8 @@ describe("processMeetingWorkflow", () => {
         organizer: "ou_organizer",
         started_at: "2026-04-28T10:00:00+08:00",
         ended_at: "2026-04-28T11:00:00+08:00",
+        minutes_url: "https://example.feishu.cn/minutes/min_001",
+        transcript_url: "https://example.feishu.cn/minutes/transcript_001",
         transcript_text: transcript
       }
     });
@@ -83,6 +85,10 @@ describe("processMeetingWorkflow", () => {
     expect(calendarPayload.card_preview).toMatchObject({
       card_type: "calendar_confirmation",
       request_id: calendarRequest!.id
+    });
+    expect(repos.getMeeting(result.meeting_id)).toMatchObject({
+      minutes_url: "https://example.feishu.cn/minutes/min_001",
+      transcript_url: "https://example.feishu.cn/minutes/transcript_001"
     });
     expect(repos.listCliRuns()).toHaveLength(0);
   });

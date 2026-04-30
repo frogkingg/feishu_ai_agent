@@ -6,6 +6,7 @@ import { runTopicClusteringAgent } from "../agents/topicClusteringAgent";
 import { LlmClient } from "../services/llm/llmClient";
 import { createConfirmationRequest } from "../services/confirmationService";
 import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
+import { formatMeetingReference } from "../utils/display";
 import { createId } from "../utils/id";
 
 const KnowledgeBaseActionIntentPatterns = [
@@ -59,7 +60,13 @@ function actionConfirmationRecipient(input: {
 }
 
 function appendMeetingPayload(input: {
-  meetingId: string;
+  meeting: {
+    id: string;
+    title: string;
+    external_meeting_id: string | null;
+    minutes_url: string | null;
+    transcript_url: string | null;
+  };
   kbId: string;
   kbName: string | null;
   extraction: MeetingExtractionResult;
@@ -68,7 +75,13 @@ function appendMeetingPayload(input: {
   return {
     kb_id: input.kbId,
     kb_name: input.kbName,
-    meeting_id: input.meetingId,
+    meeting_id: input.meeting.id,
+    meeting_title: input.meeting.title,
+    meeting_reference: formatMeetingReference(input.meeting, {
+      preferredLink: "minutes"
+    }),
+    minutes_url: input.meeting.minutes_url,
+    transcript_url: input.meeting.transcript_url,
     meeting_summary: input.extraction.meeting_summary,
     key_decisions: input.extraction.key_decisions,
     risks: input.extraction.risks,
@@ -78,6 +91,17 @@ function appendMeetingPayload(input: {
     topic_match: input.topicMatch,
     reason: "检测到当前会议与已有知识库高度相关，建议确认后追加到知识库。"
   };
+}
+
+function meetingReferencesForIds(input: { repos: Repositories; meetingIds: string[] }): string[] {
+  return input.meetingIds
+    .map((meetingId) => input.repos.getMeeting(meetingId))
+    .filter((meeting): meeting is NonNullable<typeof meeting> => meeting !== null)
+    .map((meeting) =>
+      formatMeetingReference(meeting, {
+        preferredLink: "minutes"
+      })
+    );
 }
 
 export async function processMeetingWorkflow(input: {
@@ -93,8 +117,8 @@ export async function processMeetingWorkflow(input: {
     ended_at: input.meeting.ended_at,
     organizer: input.meeting.organizer,
     participants_json: JSON.stringify(input.meeting.participants),
-    minutes_url: null,
-    transcript_url: null,
+    minutes_url: input.meeting.minutes_url ?? null,
+    transcript_url: input.meeting.transcript_url ?? null,
     transcript_text: input.meeting.transcript_text,
     summary: null,
     keywords_json: JSON.stringify([]),
@@ -198,6 +222,10 @@ export async function processMeetingWorkflow(input: {
           topic_name: topicName,
           suggested_goal: suggestGoal(topicName),
           candidate_meeting_ids: topicMatch.candidate_meeting_ids,
+          candidate_meeting_refs: meetingReferencesForIds({
+            repos: input.repos,
+            meetingIds: topicMatch.candidate_meeting_ids
+          }),
           match_reasons: topicMatch.match_reasons,
           score: topicMatch.score,
           default_structure: defaultKnowledgeBaseStructure(),
@@ -217,7 +245,7 @@ export async function processMeetingWorkflow(input: {
         targetId: meeting.id,
         recipient: input.meeting.organizer,
         originalPayload: appendMeetingPayload({
-          meetingId: meeting.id,
+          meeting,
           kbId: topicMatch.matched_kb_id,
           kbName: topicMatch.matched_kb_name,
           extraction,

@@ -32,6 +32,8 @@ async function processDroneMeetings(
       organizer,
       started_at: "2026-04-28T10:00:00+08:00",
       ended_at: "2026-04-28T11:00:00+08:00",
+      minutes_url: "https://example.feishu.cn/minutes/min_001",
+      transcript_url: "https://example.feishu.cn/minutes/transcript_001",
       transcript_text: readFixture("drone_interview_01.txt")
     }
   });
@@ -45,6 +47,8 @@ async function processDroneMeetings(
       organizer,
       started_at: "2026-04-29T10:00:00+08:00",
       ended_at: "2026-04-29T11:00:00+08:00",
+      minutes_url: "https://example.feishu.cn/minutes/min_002",
+      transcript_url: "https://example.feishu.cn/minutes/transcript_002",
       transcript_text: readFixture("drone_interview_02.txt")
     }
   });
@@ -80,12 +84,17 @@ describe("createKnowledgeBaseWorkflow", () => {
 
     const markdown = updates[0].after_text ?? "";
     expect(markdown).toContain("00 首页 / 总览");
-    expect(markdown).toContain("01 整体目标");
-    expect(markdown).toContain("02 整体分析");
-    expect(markdown).toContain("03 当前进度");
-    expect(markdown).toContain("05 待办与日程索引");
-    expect(markdown).toContain("06 单个会议总结");
-    expect(markdown).toContain("07 会议转写记录");
+    expect(markdown).toContain("自适应结构");
+    expect(markdown).toContain("01 单个会议总结");
+    expect(markdown).toContain("02 会议转写记录");
+    expect(markdown).toContain("关键结论与决策");
+    expect(markdown).toContain("待办与日程索引");
+    expect(markdown).toContain("风险、问题与待验证假设");
+    expect(markdown).toContain("关联资料");
+    expect(markdown).not.toContain("整体目标");
+    expect(markdown).not.toContain("整体分析");
+    expect(markdown).toContain("https://example.feishu.cn/minutes/min_001");
+    expect(markdown).toContain("https://example.feishu.cn/minutes/transcript_001");
     expect(markdown).toContain("本次会议围绕无人机操作方案初步访谈展开");
     expect(markdown).toContain("本次会议继续围绕无人机操作方案");
     expect(markdown).toContain("无人机安全规范");
@@ -94,10 +103,12 @@ describe("createKnowledgeBaseWorkflow", () => {
       .listMeetings()
       .filter((meeting) => meeting.archive_status === "archived");
     expect(archivedMeetings).toHaveLength(2);
+    expect(markdown).not.toContain(archivedMeetings[0].id);
+    expect(markdown).not.toContain(archivedMeetings[1].id);
     expect(repos.getConfirmationRequest(request!.id)?.status).toBe("executed");
   });
 
-  it("creates a wiki space and writes child doc pages in real mode", async () => {
+  it("creates a wiki space for the owner and writes child doc pages in real mode", async () => {
     const repos = await processDroneMeetings(undefined, {
       organizer: "ou_owner",
       firstParticipants: ["ou_owner", "ou_member_a", "not_open_id"],
@@ -193,10 +204,11 @@ describe("createKnowledgeBaseWorkflow", () => {
       (args) => args[0] === "wiki" && args[1] === "members" && args[2] === "create"
     );
     const updateArgs = createdArgs.filter((args) => args[0] === "docs" && args[1] === "+update");
+    const childPageCount = wikiNodeCreateArgs.length;
     expect(spaceCreateArgs).toHaveLength(1);
-    expect(memberCreateArgs).toHaveLength(3);
-    expect(wikiNodeCreateArgs).toHaveLength(10);
-    expect(updateArgs).toHaveLength(10);
+    expect(memberCreateArgs).toHaveLength(1);
+    expect(childPageCount).toBe(6);
+    expect(updateArgs).toHaveLength(6);
     expect(spaceCreateArgs[0]).toEqual([
       "wiki",
       "spaces",
@@ -215,7 +227,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     });
     expect(
       memberCreateArgs.map((args) => JSON.parse(args[args.indexOf("--data") + 1]).member_id)
-    ).toEqual(["ou_owner", "ou_member_a", "ou_member_b"]);
+    ).toEqual(["ou_owner"]);
     expect(
       memberCreateArgs.every(
         (args) =>
@@ -224,7 +236,10 @@ describe("createKnowledgeBaseWorkflow", () => {
       )
     ).toBe(true);
     expect(wikiNodeCreateArgs[0]).toEqual(
-      expect.arrayContaining(["--space-id", "space_1", "--title", "01 整体目标"])
+      expect.arrayContaining(["--space-id", "space_1", "--title", "01 单个会议总结"])
+    );
+    expect(wikiNodeCreateArgs[1]).toEqual(
+      expect.arrayContaining(["--space-id", "space_1", "--title", "02 会议转写记录"])
     );
     expect(wikiNodeCreateArgs.every((args) => !args.includes("--parent-node-token"))).toBe(true);
     expect(updateArgs[0]).toEqual(
@@ -244,7 +259,9 @@ describe("createKnowledgeBaseWorkflow", () => {
       ])
     );
     const firstUpdateContent = updateArgs[0][updateArgs[0].indexOf("--content") + 1];
-    expect(firstUpdateContent).toContain("# 01 整体目标");
-    expect(repos.listCliRuns().map((run) => run.status)).toEqual(Array(24).fill("success"));
+    expect(firstUpdateContent).toContain("# 01 单个会议总结");
+    expect(repos.listCliRuns().map((run) => run.status)).toEqual(
+      Array(2 + childPageCount * 2).fill("success")
+    );
   });
 });

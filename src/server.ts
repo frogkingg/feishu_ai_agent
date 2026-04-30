@@ -6,7 +6,7 @@ import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent"
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
 import { confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
-import { MeetingRow, Repositories } from "./services/store/repositories";
+import { ConfirmationRequestRow, MeetingRow, Repositories } from "./services/store/repositories";
 import { sendCard } from "./tools/larkIm";
 import { type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
@@ -146,6 +146,10 @@ const PREVIEW_STUB_CARD_ACTIONS = {
   convert_to_task: "convert_to_task",
   append_current_only: "append_current_only"
 } as const;
+const PERSONAL_KNOWLEDGE_REQUEST_TYPES = new Set<ConfirmationRequestRow["request_type"]>([
+  "create_kb",
+  "append_meeting"
+]);
 const PROCESSED_CONFIRMATION_STATUSES = new Set(["executed", "rejected", "failed"]);
 const IN_FLIGHT_CONFIRMATION_STATUSES = new Set(["confirmed"]);
 const INTERNAL_CARD_VALUE_KEYS = new Set([
@@ -427,6 +431,44 @@ function sendCardStatusCode(result: { ok: boolean; error: string | null }): numb
   }
 
   return result.error?.includes("requires recipient or chat_id") ? 400 : 502;
+}
+
+function automaticCardDestination(input: {
+  confirmation: ConfirmationRequestRow;
+  sendToChatId?: string | null;
+}): { recipient: string | null; chatId: string | null } {
+  if (PERSONAL_KNOWLEDGE_REQUEST_TYPES.has(input.confirmation.request_type)) {
+    return {
+      recipient: input.confirmation.recipient,
+      chatId: null
+    };
+  }
+
+  const chatId = stringValue(input.sendToChatId);
+  return {
+    recipient: chatId === null ? input.confirmation.recipient : null,
+    chatId
+  };
+}
+
+function bulkCardDestination(input: {
+  confirmation: ConfirmationRequestRow;
+  recipient?: string | null;
+  chatId?: string | null;
+}): { recipient: string | null; chatId: string | null } {
+  const explicitRecipient = stringValue(input.recipient);
+  if (PERSONAL_KNOWLEDGE_REQUEST_TYPES.has(input.confirmation.request_type)) {
+    return {
+      recipient: explicitRecipient ?? input.confirmation.recipient,
+      chatId: null
+    };
+  }
+
+  const chatId = stringValue(input.chatId);
+  return {
+    recipient: chatId === null ? (explicitRecipient ?? input.confirmation.recipient) : null,
+    chatId
+  };
 }
 
 export function buildServer(input: {
@@ -733,15 +775,23 @@ export function buildServer(input: {
     if (!input.config.feishuCardSendDryRun && result.confirmation_requests.length > 0) {
       for (const confirmationId of result.confirmation_requests) {
         const confirmation = input.repos.getConfirmationRequest(confirmationId);
-        if (confirmation && (meeting.send_to_chat_id || confirmation.recipient)) {
+        if (confirmation) {
+          const destination = automaticCardDestination({
+            confirmation,
+            sendToChatId: meeting.send_to_chat_id
+          });
+          if (destination.chatId === null && destination.recipient === null) {
+            continue;
+          }
+
           const card = buildConfirmationCardFromRequest(confirmation);
           await sendCard({
             repos: input.repos,
             config: input.config,
             confirmation,
             card,
-            recipient: meeting.send_to_chat_id ? null : confirmation.recipient,
-            chatId: meeting.send_to_chat_id ?? null,
+            recipient: destination.recipient,
+            chatId: destination.chatId,
             runner: input.larkCliRunner
           });
         }
@@ -814,13 +864,18 @@ export function buildServer(input: {
       .listConfirmationRequests()
       .filter(isUnfinishedConfirmation)) {
       const card = buildConfirmationCardFromRequest(confirmation);
+      const destination = bulkCardDestination({
+        confirmation,
+        recipient: body.recipient,
+        chatId: body.chat_id
+      });
       const result = await sendCard({
         repos: input.repos,
         config: input.config,
         confirmation,
         card,
-        recipient: body.recipient,
-        chatId: body.chat_id,
+        recipient: destination.recipient,
+        chatId: destination.chatId,
         identity: body.identity,
         runner: input.larkCliRunner
       });

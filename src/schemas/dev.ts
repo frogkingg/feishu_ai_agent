@@ -8,6 +8,8 @@ export const ManualMeetingInputSchema = z.object({
   organizer: z.string().nullable(),
   started_at: IsoDateTimeSchema.nullable(),
   ended_at: IsoDateTimeSchema.nullable(),
+  minutes_url: z.string().trim().min(1).nullable().optional(),
+  transcript_url: z.string().trim().min(1).nullable().optional(),
   send_to_chat_id: z.string().trim().min(1).optional(),
   transcript_text: z.string().trim().min(1)
 });

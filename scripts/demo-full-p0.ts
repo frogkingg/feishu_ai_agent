@@ -1206,7 +1206,7 @@ export async function runFullP0Demo(
   const thirdCards = await listCards(context);
   const thirdActionCards = cardsForMeeting(third, thirdCards, "action_confirmation");
   const thirdCalendarCards = cardsForMeeting(third, thirdCards, "calendar_confirmation");
-  const appendMeetingCards = cardsForMeeting(third, thirdCards, "generic_confirmation");
+  const appendMeetingCards = cardsForMeeting(third, thirdCards, "append_meeting_confirmation");
   assertDemo(
     thirdActionRequests.length === third.extraction.action_items.length,
     `Third meeting action confirmations should match extracted actions, got ${thirdActionRequests.length}`

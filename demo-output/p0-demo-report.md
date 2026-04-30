@@ -2,9 +2,9 @@
 
 ✅ MeetingAtlas P0 Demo passed
 
-- Generated at: 2026-04-30T14:09:50.176Z
+- Generated at: 2026-04-30T15:08:58.664Z
 - Mode: full-p0
-- Base URL: http://127.0.0.1:3000
+- Base URL: http://127.0.0.1:3001
 - LLM Provider: mock
 - Feishu Write Mode: dry-run
 - Mode note: FEISHU_DRY_RUN=true; this demo did not perform real Feishu writes.
@@ -29,14 +29,14 @@
 
 ## Topic Flow
 
-- First meeting: mtg_fcb90d8161734e0982b0
+- First meeting: mtg_187ac1f6dd4046c09a37
 - First topic action: observe
 - First extraction: actions=2, calendars=1
-- Second meeting: mtg_77ca9ea7d6c947c3beb5
+- Second meeting: mtg_e8ea4d8102a4456b8d51
 - Second topic action: ask_create
 - Second topic score: 0.9
-- Candidate meetings: mtg_fcb90d8161734e0982b0, mtg_77ca9ea7d6c947c3beb5
-- Third meeting: mtg_b693977c93a64870bb56
+- Candidate meetings: mtg_187ac1f6dd4046c09a37, mtg_e8ea4d8102a4456b8d51
+- Third meeting: mtg_d65938e6d4a34970ae67
 - Third topic action: ask_append
 - Third matched knowledge base: kb\_无人机操作流程主题知识库
 - Third extraction: actions=1, calendars=1

@@ -2,6 +2,15 @@ import { z } from "zod";
 
 export const KnowledgeBaseStatusSchema = z.enum(["candidate", "active", "archived"]);
 
+export const KnowledgeBasePageSignalSchema = z.enum([
+  "always",
+  "actions",
+  "calendars",
+  "decisions",
+  "risks",
+  "sources"
+]);
+
 export const KnowledgeBasePageSchema = z.object({
   title: z.string().min(1),
   markdown: z.string().min(1),
@@ -17,7 +26,8 @@ export const KnowledgeBasePageSchema = z.object({
     "sources",
     "risks",
     "changelog"
-  ])
+  ]),
+  source_signals: z.array(KnowledgeBasePageSignalSchema).default([])
 });
 
 export const KnowledgeBaseDraftSchema = z.object({
@@ -54,5 +64,6 @@ export const KnowledgeUpdateSchema = z.object({
 });
 
 export type KnowledgeBasePage = z.infer<typeof KnowledgeBasePageSchema>;
+export type KnowledgeBasePageSignal = z.infer<typeof KnowledgeBasePageSignalSchema>;
 export type KnowledgeBaseDraft = z.infer<typeof KnowledgeBaseDraftSchema>;
 export type KnowledgeUpdate = z.infer<typeof KnowledgeUpdateSchema>;

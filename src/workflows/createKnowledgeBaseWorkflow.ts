@@ -60,13 +60,6 @@ function asObject(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function parseOpenIds(value: string): string[] {
-  const parsed = JSON.parse(value) as unknown;
-  return Array.isArray(parsed)
-    ? parsed.filter((id): id is string => typeof id === "string" && id.startsWith("ou_"))
-    : [];
-}
-
 function parsePayload(request: ConfirmationRequestRow): CreateKnowledgeBasePayload {
   const original = JSON.parse(request.original_payload_json) as unknown;
   const edited = request.edited_payload_json
@@ -115,7 +108,7 @@ export async function createKnowledgeBaseWorkflow(input: {
     .listCalendarDrafts()
     .filter((calendar) => meetingIds.has(calendar.meeting_id));
   const owner =
-    meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? request.recipient;
+    request.recipient ?? meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? null;
   const dryRun = input.config?.feishuDryRun ?? true;
 
   const draft = runKnowledgeCuratorAgent({
@@ -131,15 +124,14 @@ export async function createKnowledgeBaseWorkflow(input: {
   let homepageUrl = `mock://feishu/wiki/${draft.kb_id}/00-home`;
 
   if (!dryRun) {
-    const memberIds = meetings.flatMap((meeting) => parseOpenIds(meeting.participants_json));
-    const uniqueMembers = [...new Set([owner, ...memberIds].filter(Boolean))] as string[];
+    const members = owner === null ? [] : [owner];
     const config = input.config ?? loadConfig();
     const wikiSpace = await createWikiSpace({
       repos: input.repos,
       config,
       name: payload.topic_name,
       description: draft.description ?? "",
-      members: uniqueMembers,
+      members,
       runner: input.runner
     });
     wikiUrl = wikiSpace.wiki_space_url;

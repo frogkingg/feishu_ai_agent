@@ -139,6 +139,8 @@ async function processThirdDroneMeeting(input: {
       organizer: "张三",
       started_at: "2026-05-03T10:00:00+08:00",
       ended_at: "2026-05-03T11:00:00+08:00",
+      minutes_url: "https://example.feishu.cn/minutes/min_003",
+      transcript_url: "https://example.feishu.cn/minutes/transcript_003",
       transcript_text: [
         "本次继续讨论无人机操作方案。",
         "操作流程、试飞权限和风险控制都需要进入已有沉淀。",
@@ -184,6 +186,14 @@ describe("appendMeetingToKnowledgeBaseWorkflow", () => {
       .listConfirmationRequests()
       .find((request) => request.request_type === "append_meeting");
     expect(appendRequest).toBeTruthy();
+    const appendPayload = JSON.parse(appendRequest!.original_payload_json) as {
+      card_preview?: { card_type: string };
+      meeting_reference?: string;
+    };
+    expect(appendPayload.card_preview).toMatchObject({
+      card_type: "append_meeting_confirmation"
+    });
+    expect(appendPayload.meeting_reference).toContain("https://example.feishu.cn/minutes/min_003");
     expect(third.topic_match.suggested_action).toBe("ask_append");
     expect(repos.listKnowledgeUpdates()).toHaveLength(1);
     expect(repos.getMeeting(third.meeting_id)).toMatchObject({
@@ -217,7 +227,10 @@ describe("appendMeetingToKnowledgeBaseWorkflow", () => {
     expect(appendedUpdate!.after_text).toContain("## 日程索引");
     expect(appendedUpdate!.after_text).toContain("无人机试飞前检查会议");
     expect(appendedUpdate!.after_text).toContain("## 会议转写记录引用");
-    expect(appendedUpdate!.after_text).toContain(`会议 ${third.meeting_id}`);
+    expect(appendedUpdate!.after_text).toContain(
+      "https://example.feishu.cn/minutes/transcript_003"
+    );
+    expect(appendedUpdate!.after_text).not.toContain(`会议 ${third.meeting_id}`);
     expect(repos.getMeeting(third.meeting_id)).toMatchObject({
       matched_kb_id: knowledgeBase.id,
       archive_status: "archived"

@@ -1,5 +1,6 @@
 import {
   buildActionConfirmationCard,
+  buildAppendMeetingConfirmationCard,
   buildCalendarConfirmationCard,
   buildConfirmationCardFromRequest,
   buildCreateKbConfirmationCard,
@@ -169,7 +170,7 @@ describe("CardInteractionAgent", () => {
         "suggested_goal",
         "score",
         "match_reasons",
-        "candidate_meeting_ids",
+        "candidate_meetings",
         "default_structure",
         "safety_note"
       ])
@@ -191,6 +192,61 @@ describe("CardInteractionAgent", () => {
       "reject",
       "never_remind_topic"
     ]);
+  });
+
+  it("formats open_ids and append-meeting links for card display", () => {
+    const actionCard = expectValidCard(
+      buildActionConfirmationCard({
+        id: "conf_open_id",
+        target_id: "act_open_id",
+        recipient: "ou_recipient_123456",
+        status: "sent",
+        original_payload: {
+          draft: {
+            ...actionDraft,
+            owner: "ou_owner_abcdef",
+            collaborators: ["ou_helper_654321", "李四"],
+            evidence: "ou_owner_abcdef 负责，李四协作。"
+          },
+          meeting_id: "mtg_001"
+        }
+      })
+    );
+
+    const serializedActionCard = JSON.stringify(actionCard);
+    expect(serializedActionCard).not.toContain("ou_recipient_123456");
+    expect(serializedActionCard).not.toContain("ou_owner_abcdef");
+    expect(serializedActionCard).not.toContain("ou_helper_654321");
+    expect(serializedActionCard).toContain("@用户(123456)");
+    expect(serializedActionCard).toContain("@用户(abcdef)");
+    expect(serializedActionCard).toContain("@用户(654321)");
+    expect(serializedActionCard).toContain("李四");
+
+    const appendCard = expectValidCard(
+      buildAppendMeetingConfirmationCard({
+        id: "conf_append",
+        target_id: "mtg_001",
+        recipient: "ou_recipient_123456",
+        status: "sent",
+        original_payload: {
+          kb_name: "无人机操作流程主题知识库",
+          meeting_id: "mtg_001",
+          meeting_title: "无人机操作方案风险评审",
+          meeting_reference:
+            "无人机操作方案风险评审（转写记录：https://example.feishu.cn/minutes/transcript）",
+          meeting_summary: "会议确认继续沉淀风险控制。",
+          key_decisions: [{ decision: "继续沉淀风险控制", evidence: "会议明确提出。" }],
+          risks: [{ risk: "试飞权限未确认", evidence: "权限仍待确认。" }],
+          match_reasons: ["主题高度相关"],
+          topic_keywords: ["无人机", "风险控制"],
+          score: 0.88
+        }
+      })
+    );
+
+    expect(appendCard.card_type).toBe("append_meeting_confirmation");
+    expect(JSON.stringify(appendCard)).toContain("https://example.feishu.cn/minutes/transcript");
+    expect(JSON.stringify(appendCard)).not.toContain("ou_recipient_123456");
   });
 
   it("redacts API keys, Authorization headers, and .env content from card JSON", () => {

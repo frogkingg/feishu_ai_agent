@@ -14,11 +14,12 @@ import {
   DryRunConfirmationCardSchema
 } from "../schemas";
 import { ConfirmationRequestRow } from "../services/store/repositories";
+import { formatOpenIdsInText } from "../utils/display";
 
 type CardInput = ReturnType<typeof CardConfirmationInputSchema.parse>;
 
 function sanitizeText(value: string): string {
-  return value
+  const redacted = value
     .replace(/Authorization\s*[:=]\s*(?:Bearer\s+)?[^\s,;\n]+/gi, "[REDACTED]")
     .replace(
       /\b[A-Z0-9_]*(?:API[_\s-]?KEY|APP_SECRET|TOKEN|SECRET)\b\s*[:=]\s*[^\s,;\n]+/gi,
@@ -29,6 +30,8 @@ function sanitizeText(value: string): string {
     .replace(/API\s*Key/gi, "[REDACTED]")
     .replace(/Authorization/gi, "[REDACTED]")
     .replace(/\.env\b/gi, "[REDACTED]");
+
+  return formatOpenIdsInText(redacted);
 }
 
 function sanitizeForCard<T>(value: T): T {
@@ -112,6 +115,22 @@ function parseStringArray(value: unknown): string[] {
   }
 
   return [];
+}
+
+function parseTextArray(value: unknown, objectKey: string): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === "string") {
+          return item.trim();
+        }
+
+        return asString(asObject(item)[objectKey]) ?? "";
+      })
+      .filter(Boolean);
+  }
+
+  return parseStringArray(value);
 }
 
 function firstString(values: unknown[], fallback: string): string {
@@ -627,14 +646,17 @@ export function buildCreateKbConfirmationCard(
   const candidateMeetingIds = parseStringArray(
     payload.candidate_meeting_ids ?? payload.meeting_ids
   );
+  const candidateMeetingRefs = parseStringArray(payload.candidate_meeting_refs);
   const matchReasons = parseStringArray(payload.match_reasons);
   const defaultStructure = parseStringArray(payload.default_structure);
   const score = asNumber(payload.score);
   const reason = firstString([payload.reason], "检测到相关会议，建议创建主题知识库。");
+  const candidateMeetings =
+    candidateMeetingRefs.length > 0 ? candidateMeetingRefs : candidateMeetingIds;
   const summary = [
     `主题：${topicName}`,
     score === null ? null : `匹配分：${score}`,
-    candidateMeetingIds.length > 0 ? `会议数：${candidateMeetingIds.length}` : null
+    candidateMeetings.length > 0 ? `会议数：${candidateMeetings.length}` : null
   ]
     .filter((item): item is string => item !== null)
     .join("；");
@@ -660,7 +682,7 @@ export function buildCreateKbConfirmationCard(
         title: "关联会议",
         fields: [
           displayField("match_reasons", "match_reasons", matchReasons),
-          displayField("candidate_meeting_ids", "candidate_meeting_ids", candidateMeetingIds),
+          displayField("candidate_meetings", "关联会议", candidateMeetings),
           displayField("reason", "触发原因", reason)
         ]
       }),
@@ -695,6 +717,82 @@ export function buildCreateKbConfirmationCard(
       })
     ],
     actions: createKbConfirmationActions(parsed.id),
+    dry_run: true,
+    version: "dry_run_v1"
+  });
+}
+
+export function buildAppendMeetingConfirmationCard(
+  input: CardConfirmationInput
+): DryRunConfirmationCard {
+  const parsed = CardConfirmationInputSchema.parse(input);
+  const payload = asObject(parsed.original_payload);
+  const kbName = firstString([payload.kb_name], "现有知识库");
+  const meetingReference = firstString(
+    [
+      payload.meeting_reference,
+      payload.transcript_url,
+      payload.minutes_url,
+      payload.meeting_title,
+      payload.meeting_id
+    ],
+    "当前会议"
+  );
+  const meetingSummary = firstString([payload.meeting_summary], "暂无摘要");
+  const matchReasons = parseStringArray(payload.match_reasons);
+  const topicKeywords = parseStringArray(payload.topic_keywords);
+  const score = asNumber(payload.score);
+  const reason = firstString([payload.reason], "检测到当前会议与已有知识库相关。");
+  const keyDecisions = parseTextArray(payload.key_decisions, "decision");
+  const risks = parseTextArray(payload.risks, "risk");
+  const summary = [
+    `知识库：${kbName}`,
+    `会议：${meetingReference}`,
+    score === null ? null : `匹配分：${score}`
+  ]
+    .filter((item): item is string => item !== null)
+    .join("；");
+
+  return buildCard({
+    card_type: "append_meeting_confirmation",
+    request_id: parsed.id,
+    target_id: parsed.target_id,
+    recipient: parsed.recipient,
+    status: parsed.status,
+    title: `确认追加会议：${kbName}`,
+    summary,
+    sections: [
+      section({
+        title: "追加建议",
+        fields: [
+          displayField("kb_name", "知识库", kbName),
+          displayField("meeting_reference", "会议", meetingReference),
+          displayField("score", "匹配分", score),
+          displayField("reason", "触发原因", reason)
+        ]
+      }),
+      section({
+        title: "会议摘要",
+        fields: [
+          displayField("meeting_summary", "摘要", meetingSummary),
+          displayField("key_decisions", "关键结论", keyDecisions),
+          displayField("risks", "风险", risks)
+        ]
+      }),
+      section({
+        title: "匹配依据",
+        fields: [
+          displayField("match_reasons", "match_reasons", matchReasons),
+          displayField("topic_keywords", "topic_keywords", topicKeywords)
+        ]
+      }),
+      section({
+        title: "安全说明",
+        fields: [displayField("safety_note", "安全说明", "用户确认前不会更新知识库")]
+      })
+    ],
+    editable_fields: [],
+    actions: basicActions(parsed.id, "确认追加"),
     dry_run: true,
     version: "dry_run_v1"
   });
@@ -745,6 +843,10 @@ export function buildConfirmationCard(input: CardConfirmationInput): DryRunConfi
 
   if (parsed.request_type === "create_kb") {
     return buildCreateKbConfirmationCard(parsed);
+  }
+
+  if (parsed.request_type === "append_meeting") {
+    return buildAppendMeetingConfirmationCard(parsed);
   }
 
   return buildGenericConfirmationCard(parsed);

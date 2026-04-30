@@ -5,6 +5,7 @@ export const ConfirmationCardTypeSchema = z.enum([
   "action_confirmation",
   "calendar_confirmation",
   "create_kb_confirmation",
+  "append_meeting_confirmation",
   "generic_confirmation"
 ]);
 

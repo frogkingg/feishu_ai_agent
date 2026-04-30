@@ -11,6 +11,11 @@ import {
   Repositories
 } from "../services/store/repositories";
 import { nowIso } from "../utils/dates";
+import {
+  formatMeetingReference,
+  formatUserForDisplay,
+  formatUserListForDisplay
+} from "../utils/display";
 import { createId } from "../utils/id";
 
 const KeyDecisionSchema = z.object({
@@ -82,29 +87,39 @@ function bulletList(values: string[], fallback: string): string {
   return values.length > 0 ? values.map((value) => `- ${value}`).join("\n") : `- ${fallback}`;
 }
 
-function renderActionIndex(actions: ActionItemRow[]): string[] {
+function renderActionIndex(actions: ActionItemRow[], meeting: MeetingRow): string[] {
   return actions.map((action) => {
-    const owner = action.owner ? `，负责人 ${action.owner}` : "";
+    const owner = action.owner ? `，负责人 ${formatUserForDisplay(action.owner)}` : "";
     const due = action.due_date ? `，截止 ${action.due_date}` : "";
-    return `${action.title}${owner}${due}（来源会议 ${action.meeting_id}）`;
+    return `${action.title}${owner}${due}（来源${formatMeetingReference(meeting, {
+      preferredLink: "minutes"
+    })}）`;
   });
 }
 
-function renderCalendarIndex(calendars: CalendarDraftRow[]): string[] {
+function renderCalendarIndex(calendars: CalendarDraftRow[], meeting: MeetingRow): string[] {
   return calendars.map((calendar) => {
     const time = calendar.start_time ? `，时间 ${calendar.start_time}` : "";
-    return `${calendar.title}${time}（来源会议 ${calendar.meeting_id}）`;
+    const participants = formatUserListForDisplay(parseStringArray(calendar.participants_json));
+    const participantText = participants.length > 0 ? `，参与人 ${participants.join("、")}` : "";
+    return `${calendar.title}${time}${participantText}（来源${formatMeetingReference(meeting, {
+      preferredLink: "minutes"
+    })}）`;
   });
 }
 
 function transcriptReference(meeting: MeetingRow): string {
-  if (meeting.transcript_url) {
-    return `会议 ${meeting.id}：${meeting.title}，转写记录 ${meeting.transcript_url}`;
+  const reference = formatMeetingReference(meeting, {
+    preferredLink: "transcript"
+  });
+  if (
+    meeting.transcript_url ||
+    meeting.minutes_url ||
+    /^https?:\/\//i.test(meeting.external_meeting_id ?? "")
+  ) {
+    return reference;
   }
-  if (meeting.minutes_url) {
-    return `会议 ${meeting.id}：${meeting.title}，纪要 ${meeting.minutes_url}`;
-  }
-  return `会议 ${meeting.id}：${meeting.title}，transcript_text 已存入本地 meetings 表`;
+  return `${reference}，transcript_text 已存入本地 meetings 表`;
 }
 
 function renderAppendMarkdown(input: {
@@ -124,7 +139,9 @@ function renderAppendMarkdown(input: {
     `# 增量更新：${input.meeting.title}`,
     "",
     `知识库：${input.knowledgeBase.name}`,
-    `来源会议：${input.meeting.id}`,
+    `来源会议：${formatMeetingReference(input.meeting, {
+      preferredLink: "minutes"
+    })}`,
     "",
     "## 会议摘要",
     summary,
@@ -136,10 +153,10 @@ function renderAppendMarkdown(input: {
     bulletList(risks, "暂无风险、问题与待验证假设"),
     "",
     "## 待办索引",
-    bulletList(renderActionIndex(input.actions), "暂无待办"),
+    bulletList(renderActionIndex(input.actions, input.meeting), "暂无待办"),
     "",
     "## 日程索引",
-    bulletList(renderCalendarIndex(input.calendars), "暂无日程"),
+    bulletList(renderCalendarIndex(input.calendars, input.meeting), "暂无日程"),
     "",
     "## 会议转写记录引用",
     `- ${transcriptReference(input.meeting)}`,

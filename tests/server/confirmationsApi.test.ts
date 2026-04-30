@@ -28,6 +28,69 @@ function readExpectedExtraction(name: string): MeetingExtractionResult {
   ) as MeetingExtractionResult;
 }
 
+function firstDroneExtraction(): MeetingExtractionResult {
+  return {
+    ...readExpectedExtraction("drone_interview_01.extraction.json"),
+    topic_keywords: ["无人机", "操作流程", "试飞权限", "操作员访谈"]
+  };
+}
+
+function secondDroneExtraction(): MeetingExtractionResult {
+  return readExpectedExtraction("drone_interview_02.extraction.json");
+}
+
+function thirdDroneExtraction(): MeetingExtractionResult {
+  return {
+    ...secondDroneExtraction(),
+    meeting_summary:
+      "本次会议继续围绕无人机操作方案风险评审，明确试飞权限、现场安全员和电池状态检查仍需跟进。",
+    topic_keywords: ["无人机", "操作流程", "试飞权限", "风险控制"],
+    key_decisions: [
+      {
+        decision: "试飞前必须完成场地权限、现场安全员和电池状态三项检查。",
+        evidence: "试飞前必须确认场地权限、现场安全员和电池状态。"
+      }
+    ],
+    risks: [
+      {
+        risk: "试飞权限尚未确认会阻塞试飞排期。",
+        evidence: "会议强调试飞前必须确认场地权限。"
+      }
+    ],
+    action_items: [
+      {
+        title: "确认试飞权限",
+        description: "在试飞前完成场地权限确认。",
+        owner: "李四",
+        collaborators: [],
+        due_date: "2026-05-06",
+        priority: "P1",
+        evidence: "试飞前必须确认场地权限。",
+        confidence: 0.88,
+        suggested_reason: "会议明确提出权限确认要求。",
+        missing_fields: []
+      }
+    ],
+    calendar_drafts: []
+  };
+}
+
+function cardSendArgsForConfirmation(
+  repos: ReturnType<typeof createRepositories>,
+  confirmationId: string
+): string[] {
+  const run = repos.listCliRuns().find((cliRun) => {
+    if (cliRun.tool !== "lark.im.send_card") {
+      return false;
+    }
+
+    const args = JSON.parse(cliRun.args_json) as string[];
+    return args.includes(`meeting-atlas-card-${confirmationId}`);
+  });
+  expect(run).toBeTruthy();
+  return JSON.parse(run!.args_json) as string[];
+}
+
 describe("confirmation dev APIs", () => {
   it("confirms and rejects requests through HTTP", async () => {
     const repos = createRepositories(createMemoryDatabase());
@@ -407,6 +470,184 @@ describe("confirmation dev APIs", () => {
     });
     expect(cardSendRuns[0]).not.toHaveProperty("args_json");
     expect(cardSendRuns[0]).not.toHaveProperty("tool");
+  });
+
+  it("keeps knowledge cards personal when send-all targets a chat", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        larkCliBin: "definitely-not-real-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new QueueLlmClient([firstDroneExtraction(), secondDroneExtraction()])
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/dev/meetings/manual",
+      payload: {
+        title: "无人机操作方案初步访谈",
+        participants: ["ou_owner", "ou_member_a"],
+        organizer: "ou_owner",
+        started_at: "2026-04-28T10:00:00+08:00",
+        ended_at: "2026-04-28T11:00:00+08:00",
+        transcript_text: readFileSync(
+          join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+          "utf8"
+        )
+      }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/dev/meetings/manual",
+      payload: {
+        title: "无人机操作员访谈",
+        participants: ["ou_owner", "ou_member_b"],
+        organizer: "ou_owner",
+        started_at: "2026-04-29T10:00:00+08:00",
+        ended_at: "2026-04-29T11:00:00+08:00",
+        transcript_text: `${readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_02.txt"), "utf8")}
+后续要把这两次访谈整理成一个无人机操作方案知识库。`
+      }
+    });
+
+    const createKb = repos
+      .listConfirmationRequests()
+      .find((request) => request.request_type === "create_kb");
+    expect(createKb).toMatchObject({
+      recipient: "ou_owner"
+    });
+
+    const sendAllResponse = await app.inject({
+      method: "POST",
+      url: "/dev/cards/send-all",
+      payload: { chat_id: "oc_team_room" }
+    });
+    expect(sendAllResponse.statusCode).toBe(200);
+
+    const createKbArgs = cardSendArgsForConfirmation(repos, createKb!.id);
+    expect(createKbArgs).toEqual(expect.arrayContaining(["--user-id", "ou_owner"]));
+    expect(createKbArgs).not.toContain("--chat-id");
+    expect(
+      repos.listCliRuns().some((cliRun) => {
+        const args = JSON.parse(cliRun.args_json) as string[];
+        return args.includes("--chat-id") && args.includes("oc_team_room");
+      })
+    ).toBe(true);
+  });
+
+  it("auto-sends knowledge decisions to the organizer even when a chat id is provided", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const runner: LarkCliRunner = async (_bin, _args) => ({
+      stdout: JSON.stringify({
+        data: {
+          message_id: `om_${repos.listCliRuns().length + 1}`
+        }
+      }),
+      stderr: ""
+    });
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCardSendDryRun: false,
+        larkCliBin: "fake-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new QueueLlmClient([
+        firstDroneExtraction(),
+        secondDroneExtraction(),
+        thirdDroneExtraction()
+      ]),
+      larkCliRunner: runner
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/dev/meetings/manual",
+      payload: {
+        title: "无人机操作方案初步访谈",
+        participants: ["ou_owner", "ou_member_a"],
+        organizer: "ou_owner",
+        send_to_chat_id: "oc_team_room",
+        started_at: "2026-04-28T10:00:00+08:00",
+        ended_at: "2026-04-28T11:00:00+08:00",
+        transcript_text: readFileSync(
+          join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+          "utf8"
+        )
+      }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/dev/meetings/manual",
+      payload: {
+        title: "无人机操作员访谈",
+        participants: ["ou_owner", "ou_member_b"],
+        organizer: "ou_owner",
+        send_to_chat_id: "oc_team_room",
+        started_at: "2026-04-29T10:00:00+08:00",
+        ended_at: "2026-04-29T11:00:00+08:00",
+        transcript_text: `${readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_02.txt"), "utf8")}
+后续要把这两次访谈整理成一个无人机操作方案知识库。`
+      }
+    });
+
+    const createKb = repos
+      .listConfirmationRequests()
+      .find((request) => request.request_type === "create_kb");
+    expect(createKb).toMatchObject({
+      recipient: "ou_owner"
+    });
+    const createKbArgs = cardSendArgsForConfirmation(repos, createKb!.id);
+    expect(createKbArgs).toEqual(expect.arrayContaining(["--user-id", "ou_owner"]));
+    expect(createKbArgs).not.toContain("--chat-id");
+    expect(
+      repos.listCliRuns().some((cliRun) => {
+        const args = JSON.parse(cliRun.args_json) as string[];
+        return args.includes("--chat-id") && args.includes("oc_team_room");
+      })
+    ).toBe(true);
+
+    const confirmResponse = await app.inject({
+      method: "POST",
+      url: `/dev/confirmations/${createKb!.id}/confirm`,
+      payload: {}
+    });
+    expect(confirmResponse.statusCode).toBe(200);
+
+    const thirdResponse = await app.inject({
+      method: "POST",
+      url: "/dev/meetings/manual",
+      payload: {
+        title: "无人机操作方案风险评审",
+        participants: ["ou_owner", "ou_member_b"],
+        organizer: "ou_owner",
+        send_to_chat_id: "oc_team_room",
+        started_at: "2026-05-03T10:00:00+08:00",
+        ended_at: "2026-05-03T11:00:00+08:00",
+        transcript_text: [
+          "本次继续讨论无人机操作方案。",
+          "操作流程、试飞权限和风险控制都需要进入已有沉淀。",
+          "试飞前必须确认场地权限、现场安全员和电池状态。"
+        ].join("\n")
+      }
+    });
+    expect(thirdResponse.statusCode).toBe(200);
+
+    const appendMeeting = repos
+      .listConfirmationRequests()
+      .find((request) => request.request_type === "append_meeting");
+    expect(appendMeeting).toMatchObject({
+      recipient: "ou_owner"
+    });
+    const appendArgs = cardSendArgsForConfirmation(repos, appendMeeting!.id);
+    expect(appendArgs).toEqual(expect.arrayContaining(["--user-id", "ou_owner"]));
+    expect(appendArgs).not.toContain("--chat-id");
   });
 
   it("fails send-card in real mode when lark CLI cannot execute", async () => {
