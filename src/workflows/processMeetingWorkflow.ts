@@ -23,11 +23,6 @@ export interface ProcessMeetingResult {
 }
 
 function suggestTopicName(input: { title: string; keywords: string[] }): string {
-  const haystack = [input.title, input.keywords.join(" ")].join(" ");
-  if (haystack.includes("无人机")) {
-    return "无人机操作方案";
-  }
-
   const primaryKeywords = input.keywords.slice(0, 2).join("");
   return primaryKeywords ? `${primaryKeywords}主题知识库` : `${input.title}主题知识库`;
 }

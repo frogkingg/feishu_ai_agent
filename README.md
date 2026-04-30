@@ -97,6 +97,43 @@ MeetingAtlas 当前使用两个开关分层控制飞书能力：
 
 当 `FEISHU_DRY_RUN=false` 时，action/calendar 必须真实调用 `LARK_CLI_BIN` 且命令成功；CLI 不存在或命令失败会把确认请求标记为 `failed`，不会写成 created。知识库真实创建依赖 Phase 7 的 `larkWiki` / `larkDoc` 集成，当前真实模式会失败而不是生成虚假 wiki URL。若只想验证真实卡片发送，不要关闭 `FEISHU_DRY_RUN`，改用 `FEISHU_CARD_SEND_DRY_RUN=false`。
 
+## 真实闭环配置检查清单
+
+打通真实飞书闭环需要确认以下四项：
+
+1. **飞书开放平台配置**
+   - 事件订阅 → 请求地址：`https://your-domain/webhooks/feishu/event`
+   - 事件订阅 → 勾选 `vc.meeting.transcription_updated`
+   - 消息卡片 → 请求地址：`https://your-domain/webhooks/feishu/card-action`
+   - 记录 Verification Token → 填入 `LARK_VERIFICATION_TOKEN`
+
+2. **环境变量**（最小真实发卡配置）
+
+   ```env
+   FEISHU_DRY_RUN=true
+   FEISHU_CARD_SEND_DRY_RUN=false
+   LARK_VERIFICATION_TOKEN=<your-token>
+   LARK_CLI_BIN=lark-cli
+   LLM_PROVIDER=openai-compatible
+   LLM_BASE_URL=...
+   LLM_API_KEY=...
+   LLM_MODEL=...
+   ```
+
+3. **lark-cli 登录验证**
+
+   ```bash
+   lark-cli auth status
+   lark-cli im messages send --help
+   ```
+
+4. **本地端口暴露**（需要 ngrok 或类似工具）
+
+   ```bash
+   ngrok http 3000
+   # 把 https://xxx.ngrok.io 填到飞书开放平台
+   ```
+
 真实 LLM 实验时保持 `FEISHU_DRY_RUN=true`，只切换模型提供方：
 
 ```bash

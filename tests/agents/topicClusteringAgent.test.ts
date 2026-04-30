@@ -235,8 +235,8 @@ describe("TopicClusteringAgent", () => {
     expect(createKbRequests).toHaveLength(1);
     expect(second.confirmation_requests).toContain(createKbRequests[0].id);
     expect(JSON.parse(createKbRequests[0].original_payload_json)).toMatchObject({
-      topic_name: "无人机操作方案",
-      suggested_goal: expect.stringContaining("无人机操作方案"),
+      topic_name: "无人机操作流程主题知识库",
+      suggested_goal: expect.stringContaining("无人机操作流程主题知识库"),
       candidate_meeting_ids: second.topic_match.candidate_meeting_ids,
       meeting_ids: second.topic_match.candidate_meeting_ids,
       match_reasons: second.topic_match.match_reasons,

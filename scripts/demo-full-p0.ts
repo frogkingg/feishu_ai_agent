@@ -1076,8 +1076,8 @@ export async function runFullP0Demo(
     "Final state should include at least one knowledge update"
   );
   assertDemo(
-    latestKnowledgeBase?.name.includes("无人机操作方案"),
-    "Latest knowledge base name should contain 无人机操作方案"
+    latestKnowledgeBase?.name.includes("无人机操作流程主题知识库"),
+    "Latest knowledge base name should contain 无人机操作流程主题知识库"
   );
   assertDemo(
     latestKnowledgeBase?.wiki_url?.startsWith("mock://"),
