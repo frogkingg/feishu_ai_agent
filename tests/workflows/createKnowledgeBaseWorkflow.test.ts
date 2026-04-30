@@ -96,13 +96,28 @@ describe("createKnowledgeBaseWorkflow", () => {
       .find((item) => item.request_type === "create_kb");
     expect(request).toBeTruthy();
     const createdArgs: string[][] = [];
+    let createdNodeCount = 0;
     const runner: LarkCliRunner = async (_bin, args) => {
       createdArgs.push(args);
-      const nodeToken = `node_${createdArgs.length}`;
+      if (args[0] === "docs" && args[1] === "+update") {
+        return {
+          stdout: JSON.stringify({
+            data: {
+              result: "success",
+              updated_blocks_count: 1
+            }
+          }),
+          stderr: ""
+        };
+      }
+
+      createdNodeCount += 1;
+      const nodeToken = `node_${createdNodeCount}`;
       return {
         stdout: JSON.stringify({
           data: {
             node_token: nodeToken,
+            obj_token: `doc_${createdNodeCount}`,
             url: `https://example.feishu.cn/wiki/${nodeToken}`,
             space_id: "my_library"
           }
@@ -130,8 +145,15 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(
       repos.listMeetings().filter((meeting) => meeting.archive_status === "archived")
     ).toHaveLength(2);
-    expect(createdArgs).toHaveLength(11);
-    expect(createdArgs[0]).toEqual([
+    const wikiCreateArgs = createdArgs.filter(
+      (args) => args[0] === "wiki" && args[1] === "+node-create"
+    );
+    const updateArgs = createdArgs.filter(
+      (args) => args[0] === "docs" && args[1] === "+update"
+    );
+    expect(wikiCreateArgs).toHaveLength(11);
+    expect(updateArgs).toHaveLength(10);
+    expect(wikiCreateArgs[0]).toEqual([
       "wiki",
       "+node-create",
       "--space-id",
@@ -143,12 +165,27 @@ describe("createKnowledgeBaseWorkflow", () => {
       "--as",
       "user"
     ]);
-    expect(createdArgs.slice(1).every((args) => args[0] === "wiki")).toBe(true);
-    expect(createdArgs.slice(1).every((args) => args[1] === "+node-create")).toBe(true);
     expect(
-      createdArgs.slice(1).every((args) => args.includes("--parent-node-token"))
+      wikiCreateArgs.slice(1).every((args) => args.includes("--parent-node-token"))
     ).toBe(true);
-    expect(createdArgs.flat()).not.toContain("+update");
-    expect(repos.listCliRuns().map((run) => run.status)).toEqual(Array(11).fill("success"));
+    expect(updateArgs[0]).toEqual(
+      expect.arrayContaining([
+        "docs",
+        "+update",
+        "--api-version",
+        "v2",
+        "--doc",
+        "doc_2",
+        "--command",
+        "append",
+        "--doc-format",
+        "markdown",
+        "--as",
+        "user"
+      ])
+    );
+    const firstUpdateContent = updateArgs[0][updateArgs[0].indexOf("--content") + 1];
+    expect(firstUpdateContent).toContain("# 01 整体目标");
+    expect(repos.listCliRuns().map((run) => run.status)).toEqual(Array(21).fill("success"));
   });
 });

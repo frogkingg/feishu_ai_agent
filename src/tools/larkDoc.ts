@@ -9,6 +9,8 @@ export interface CreateDocResult {
   cli_run_id: string;
 }
 
+const MaxMarkdownChunkLength = 12000;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -25,11 +27,46 @@ function firstString(values: unknown[]): string | null {
   return null;
 }
 
+function chunkMarkdown(markdown: string): string[] {
+  const trimmed = markdown.trim();
+  if (trimmed.length <= MaxMarkdownChunkLength) {
+    return trimmed.length > 0 ? [trimmed] : [];
+  }
+
+  const chunks: string[] = [];
+  const blocks = trimmed.split(/\n{2,}/);
+  let current = "";
+
+  for (const block of blocks) {
+    const next = current.length === 0 ? block : `${current}\n\n${block}`;
+    if (next.length <= MaxMarkdownChunkLength) {
+      current = next;
+      continue;
+    }
+
+    if (current.length > 0) {
+      chunks.push(current);
+      current = "";
+    }
+
+    for (let index = 0; index < block.length; index += MaxMarkdownChunkLength) {
+      chunks.push(block.slice(index, index + MaxMarkdownChunkLength));
+    }
+  }
+
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
 export async function createDoc(input: {
   repos: Repositories;
   config?: AppConfig;
   title: string;
   content?: string;
+  markdownContent?: string;
   spaceId?: string | null;
   parentNodeToken?: string | null;
   runner?: LarkCliRunner;
@@ -76,18 +113,53 @@ export async function createDoc(input: {
 
   const data = asRecord(asRecord(result.parsed)?.data);
   const nodeToken = firstString([data?.node_token]);
+  const docToken = firstString([data?.obj_token]);
   const url = firstString([data?.url]);
 
-  if (nodeToken === null) {
-    throw new Error("lark.doc.create succeeded without node_token");
+  if (docToken === null) {
+    throw new Error("lark.doc.create succeeded without obj_token");
   }
 
-  // TODO: write input.content into the created docx node once the CLI exposes a supported path.
-  void input.content;
+  const markdownContent = input.markdownContent ?? input.content ?? "";
+  if (markdownContent.trim().length > 0) {
+    const chunks = chunkMarkdown(markdownContent);
+    for (const chunk of chunks) {
+      const updateResult = await runLarkCli(
+        [
+          "docs",
+          "+update",
+          "--api-version",
+          "v2",
+          "--doc",
+          docToken,
+          "--command",
+          "append",
+          "--content",
+          chunk,
+          "--doc-format",
+          "markdown",
+          "--as",
+          "user"
+        ],
+        {
+          repos: input.repos,
+          config: input.config,
+          toolName: "lark.docs.update",
+          dryRun: false,
+          expectJson: true,
+          runner: input.runner
+        }
+      );
+
+      if (updateResult.status === "failed") {
+        throw new Error(`lark.docs.update failed: ${updateResult.error ?? "unknown error"}`);
+      }
+    }
+  }
 
   return {
-    doc_token: nodeToken,
-    doc_url: url ?? `mock://feishu/wiki/${nodeToken}`,
+    doc_token: docToken,
+    doc_url: url ?? `mock://feishu/wiki/${nodeToken ?? docToken}`,
     dry_run: false,
     cli_run_id: result.id
   };
