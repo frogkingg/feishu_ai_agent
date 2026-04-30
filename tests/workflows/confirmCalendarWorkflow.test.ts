@@ -5,6 +5,7 @@ import { confirmRequest, createConfirmationRequest } from "../../src/services/co
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkflow";
 
 function createCalendarTestMeeting(repos: ReturnType<typeof createRepositories>) {
@@ -168,7 +169,85 @@ describe("confirm calendar request", () => {
       confirmation_status: "created"
     });
     expect(args).toContain("2026-05-06T14:30:00+08:00");
-    expect(args).toContain(JSON.stringify(["王五", "赵六"]));
+    expect(args).not.toContain("--attendee-ids");
+    expect(args).not.toContain(JSON.stringify(["王五", "赵六"]));
+  });
+
+  it("creates real Feishu events with calendar +create and filters attendees to open_ids", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createCalendarTestMeeting(repos);
+    const calendar = repos.createCalendarDraft({
+      id: "cal_real_event_create",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "无人机操作员访谈",
+      start_time: "2026-05-05T10:00:00+08:00",
+      end_time: "2026-05-05T11:00:00+08:00",
+      duration_minutes: 60,
+      participants_json: JSON.stringify(["ou_alpha", "张三", "ou_beta", "oc_group"]),
+      agenda: "确认真实操作步骤和限制",
+      location: null,
+      evidence: "下周二上午 10 点再约操作员访谈。",
+      confidence: 0.82,
+      missing_fields_json: JSON.stringify([]),
+      confirmation_status: "sent",
+      calendar_event_id: null,
+      event_url: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "calendar",
+      targetId: calendar.id,
+      recipient: meeting.organizer,
+      originalPayload: { draft: calendar }
+    });
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const runner: LarkCliRunner = async (bin, args) => {
+      calls.push({ bin, args });
+      return {
+        stdout: JSON.stringify({
+          data: {
+            event: {
+              event_id: "event_real",
+              applink: "https://applink.feishu.cn/client/calendar/event_real"
+            }
+          }
+        }),
+        stderr: ""
+      };
+    };
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: false, larkCliBin: "fake-lark-cli" }),
+      id: request.id,
+      runner
+    });
+
+    const updatedCalendar = repos.getCalendarDraft(calendar.id);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ bin: "fake-lark-cli" });
+    expect(calls[0].args).toEqual([
+      "calendar",
+      "+create",
+      "--summary",
+      "无人机操作员访谈",
+      "--start",
+      "2026-05-05T10:00:00+08:00",
+      "--end",
+      "2026-05-05T11:00:00+08:00",
+      "--description",
+      "确认真实操作步骤和限制",
+      "--attendee-ids",
+      "ou_alpha,ou_beta",
+      "--as",
+      "user"
+    ]);
+    expect(updatedCalendar).toMatchObject({
+      confirmation_status: "created",
+      calendar_event_id: "event_real",
+      event_url: "https://applink.feishu.cn/client/calendar/event_real"
+    });
   });
 
   it("removes filled participants and location while keeping still-missing end time", async () => {

@@ -167,6 +167,96 @@ describe("confirm action request", () => {
     expect(args).toContain("修订后的飞行安全清单");
     expect(args).toContain("王五");
     expect(args).toContain("2026-05-08");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "task",
+        "+create",
+        "--summary",
+        "修订后的飞行安全清单",
+        "--due",
+        "2026-05-08",
+        "--assignee",
+        "王五",
+        "--as",
+        "user"
+      ])
+    );
+  });
+
+  it("creates real Feishu tasks with task +create and nested task response parsing", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createActionTestMeeting(repos);
+    const action = repos.createActionItem({
+      id: "act_real_task_create",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "确认试飞场地权限",
+      description: "确认宝石湖试飞是否需要额外审批。",
+      owner: "ou_owner",
+      collaborators_json: JSON.stringify([]),
+      due_date: "2026-05-08",
+      priority: "P1",
+      evidence: "李四说他去确认试飞场地权限。",
+      confidence: 0.84,
+      suggested_reason: "会议明确点名负责人。",
+      missing_fields_json: JSON.stringify([]),
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null,
+      rejection_reason: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "action",
+      targetId: action.id,
+      recipient: action.owner,
+      originalPayload: { draft: action }
+    });
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const runner: LarkCliRunner = async (bin, args) => {
+      calls.push({ bin, args });
+      return {
+        stdout: JSON.stringify({
+          data: {
+            task: {
+              guid: "task_guid_real",
+              applink: "https://applink.feishu.cn/client/todo/task?guid=task_guid_real"
+            }
+          }
+        }),
+        stderr: ""
+      };
+    };
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: false, larkCliBin: "fake-lark-cli" }),
+      id: request.id,
+      runner
+    });
+
+    const updatedAction = repos.getActionItem(action.id);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ bin: "fake-lark-cli" });
+    expect(calls[0].args).toEqual([
+      "task",
+      "+create",
+      "--summary",
+      "确认试飞场地权限",
+      "--description",
+      "确认宝石湖试飞是否需要额外审批。",
+      "--due",
+      "2026-05-08",
+      "--assignee",
+      "ou_owner",
+      "--as",
+      "user"
+    ]);
+    expect(updatedAction).toMatchObject({
+      confirmation_status: "created",
+      feishu_task_guid: "task_guid_real",
+      task_url: "https://applink.feishu.cn/client/todo/task?guid=task_guid_real"
+    });
   });
 
   it("removes due date from missing fields when edited payload fills it", async () => {

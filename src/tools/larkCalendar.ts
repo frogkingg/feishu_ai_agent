@@ -9,26 +9,51 @@ export interface CreateCalendarEventResult {
   cli_run_id: string;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function eventFromParsed(parsed: unknown): Record<string, unknown> | null {
+  const root = asRecord(parsed);
+  return asRecord(asRecord(root?.data)?.event) ?? asRecord(root?.event);
+}
+
+function parseParticipantIds(value: string): string {
+  const parsed = JSON.parse(value) as unknown;
+  if (!Array.isArray(parsed)) {
+    return "";
+  }
+
+  return parsed
+    .filter((participant): participant is string => typeof participant === "string")
+    .map((participant) => participant.trim())
+    .filter((participant) => participant.startsWith("ou_"))
+    .join(",");
+}
+
 export async function createCalendarEvent(input: {
   repos: Repositories;
   config?: AppConfig;
   draft: CalendarDraftRow;
   runner?: LarkCliRunner;
 }): Promise<CreateCalendarEventResult> {
+  const participantIds = parseParticipantIds(input.draft.participants_json);
   const args = [
     "calendar",
-    "event",
-    "create",
-    "--title",
+    "+create",
+    "--summary",
     input.draft.title,
     "--start",
     input.draft.start_time ?? "",
     "--end",
     input.draft.end_time ?? "",
-    "--participants",
-    input.draft.participants_json,
-    "--agenda",
-    input.draft.agenda ?? ""
+    "--description",
+    input.draft.agenda ?? "",
+    ...(participantIds.length > 0 ? ["--attendee-ids", participantIds] : []),
+    "--as",
+    "user"
   ];
 
   const result = await runLarkCli(args, {
@@ -53,14 +78,21 @@ export async function createCalendarEvent(input: {
     throw new Error(`lark.calendar.create failed: ${result.error ?? "unknown error"}`);
   }
 
-  const parsed = result.parsed as { event_id?: string; event_url?: string } | null;
-  if (!parsed?.event_id || !parsed?.event_url) {
-    throw new Error("lark.calendar.create succeeded without event_id/event_url");
+  const event = eventFromParsed(result.parsed);
+  const eventId = event?.event_id;
+  const applink = event?.applink;
+  if (
+    typeof eventId !== "string" ||
+    eventId.length === 0 ||
+    typeof applink !== "string" ||
+    applink.length === 0
+  ) {
+    throw new Error("lark.calendar.create succeeded without event_id/applink");
   }
 
   return {
-    calendar_event_id: parsed.event_id,
-    event_url: parsed.event_url,
+    calendar_event_id: eventId,
+    event_url: applink,
     dry_run: false,
     cli_run_id: result.id
   };

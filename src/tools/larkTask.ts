@@ -9,6 +9,17 @@ export interface CreateTaskResult {
   cli_run_id: string;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function taskFromParsed(parsed: unknown): Record<string, unknown> | null {
+  const root = asRecord(parsed);
+  return asRecord(asRecord(root?.data)?.task) ?? asRecord(root?.task);
+}
+
 export async function createTask(input: {
   repos: Repositories;
   config?: AppConfig;
@@ -17,15 +28,17 @@ export async function createTask(input: {
 }): Promise<CreateTaskResult> {
   const args = [
     "task",
-    "create",
-    "--title",
+    "+create",
+    "--summary",
     input.draft.title,
     "--description",
     input.draft.description ?? "",
-    "--due-date",
+    "--due",
     input.draft.due_date ?? "",
-    "--owner",
-    input.draft.owner ?? ""
+    "--assignee",
+    input.draft.owner ?? "",
+    "--as",
+    "user"
   ];
 
   const result = await runLarkCli(args, {
@@ -50,14 +63,21 @@ export async function createTask(input: {
     throw new Error(`lark.task.create failed: ${result.error ?? "unknown error"}`);
   }
 
-  const parsed = result.parsed as { task_guid?: string; task_url?: string } | null;
-  if (!parsed?.task_guid || !parsed?.task_url) {
-    throw new Error("lark.task.create succeeded without task_guid/task_url");
+  const task = taskFromParsed(result.parsed);
+  const guid = task?.guid;
+  const applink = task?.applink;
+  if (
+    typeof guid !== "string" ||
+    guid.length === 0 ||
+    typeof applink !== "string" ||
+    applink.length === 0
+  ) {
+    throw new Error("lark.task.create succeeded without task guid/applink");
   }
 
   return {
-    feishu_task_guid: parsed.task_guid,
-    task_url: parsed.task_url,
+    feishu_task_guid: guid,
+    task_url: applink,
     dry_run: false,
     cli_run_id: result.id
   };
