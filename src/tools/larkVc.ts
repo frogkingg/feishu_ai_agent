@@ -37,12 +37,24 @@ function contentFromRecord(record: Record<string, unknown> | null): string | nul
 }
 
 function textFromNotesResult(parsed: unknown): string | null {
+  const root = asRecord(parsed);
+  const notes = root?.data;
+  const notesRecord = asRecord(notes);
+  const notesArr = notesRecord?.notes;
+  if (Array.isArray(notesArr) && notesArr.length > 0) {
+    const first = asRecord(notesArr[0]);
+    const artifacts = asRecord(first?.artifacts);
+    const summary = artifacts?.summary;
+    if (typeof summary === "string" && summary.trim().length > 0) {
+      return summary.trim();
+    }
+  }
+
   const parsedText = textFromParsed(parsed);
   if (parsedText !== null) {
     return parsedText;
   }
 
-  const root = asRecord(parsed);
   const minutes = root?.minutes;
   if (Array.isArray(minutes) && minutes.length > 0) {
     const content = contentFromRecord(asRecord(minutes[0]));
@@ -65,14 +77,18 @@ export async function fetchTranscript(input: {
   repos: Repositories;
   config: AppConfig;
   meetingId: string;
+  minuteToken?: string | null;
   runner?: LarkCliRunner;
 }): Promise<string> {
   if (input.config.feishuDryRun) {
     return TranscriptDryRunText;
   }
 
+  const args = input.minuteToken
+    ? ["vc", "+notes", "--minute-tokens", input.minuteToken, "--format", "json"]
+    : ["vc", "+notes", "--meeting-ids", input.meetingId, "--format", "json"];
   const result = await runLarkCli(
-    ["vc", "+notes", "--meeting-ids", input.meetingId, "--format", "json"],
+    args,
     {
       repos: input.repos,
       config: input.config,

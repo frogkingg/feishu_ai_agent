@@ -36,15 +36,16 @@ const TranscriptFetchTimeoutMs = 3000;
 
 const FeishuRecordingReadyEventSchema = z
   .object({
-    meeting_id: z.string().trim().min(1),
+    meeting_id: z.string().trim().min(1).optional().nullable(),
     topic: z.string().trim().optional().nullable(),
-    operator_id: z
+    minute_token: z.string().trim().optional().nullable(),
+    host_user_id: z
       .object({
         open_id: z.string().trim().optional().nullable()
       })
       .optional()
       .nullable(),
-    host_user_id: z
+    operator_id: z
       .object({
         open_id: z.string().trim().optional().nullable()
       })
@@ -398,7 +399,8 @@ export function buildServer(input: {
     if (eventType === FeishuRecordingReadyEventType) {
       const event = FeishuRecordingReadyEventSchema.parse(payload.event ?? {});
       const organizer = event.operator_id?.open_id ?? event.host_user_id?.open_id ?? null;
-      const title = event.topic?.trim() || event.meeting_id;
+      const externalMeetingId = event.meeting_id ?? event.minute_token ?? "unknown";
+      const title = event.topic?.trim() || externalMeetingId;
 
       void (async () => {
         // 等待妙记生成
@@ -407,11 +409,12 @@ export function buildServer(input: {
           fetchTranscript({
             repos: input.repos,
             config: input.config,
-            meetingId: event.meeting_id,
+            meetingId: externalMeetingId,
+            minuteToken: event.minute_token ?? null,
             runner: input.larkCliRunner
           }).catch((error) => {
             request.log.warn(
-              { err: error, external_meeting_id: event.meeting_id },
+              { err: error, external_meeting_id: externalMeetingId },
               "failed to fetch transcript for feishu recording_ready event; using fallback text"
             );
             return TranscriptPendingText;
@@ -424,7 +427,7 @@ export function buildServer(input: {
           repos: input.repos,
           llm: input.llm,
           meeting: {
-            external_meeting_id: event.meeting_id,
+            external_meeting_id: externalMeetingId,
             title,
             participants: organizer === null ? [] : [organizer],
             organizer,
@@ -437,7 +440,7 @@ export function buildServer(input: {
         request.log.info(
           {
             event_type: eventType,
-            external_meeting_id: event.meeting_id,
+            external_meeting_id: externalMeetingId,
             meeting_id: result.meeting_id,
             confirmation_requests: result.confirmation_requests.length,
             transcript_preview: transcript.slice(0, 80)
@@ -448,7 +451,7 @@ export function buildServer(input: {
         request.log.error(
           {
             event_type: eventType,
-            external_meeting_id: event.meeting_id,
+            external_meeting_id: externalMeetingId,
             err: error
           },
           "failed meeting workflow from feishu recording_ready event"
