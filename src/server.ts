@@ -454,6 +454,11 @@ export function buildServer(input: {
   });
 
   app.post("/webhooks/feishu/card-action", async (request, reply) => {
+    const bodyRecord = asRecord(request.body ?? {});
+    if (bodyRecord !== null && typeof bodyRecord.challenge === "string") {
+      return { challenge: bodyRecord.challenge };
+    }
+
     const parsed = extractCardCallbackPayload(request.body ?? {});
 
     if (parsed.requestId === null) {
