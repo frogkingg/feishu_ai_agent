@@ -75,9 +75,14 @@ type FeishuCardElement =
       tag: "action";
       actions: Array<{
         tag: "button";
+        name: string;
         text: FeishuText;
         type: "primary" | "danger" | "default";
         value: Record<string, unknown>;
+        behaviors: Array<{
+          type: "callback";
+          value: Record<string, unknown>;
+        }>;
       }>;
     };
 
@@ -485,6 +490,21 @@ function buttonLabel(
   return fallback;
 }
 
+function buttonValue(
+  card: DryRunConfirmationCard,
+  action: DryRunConfirmationCard["actions"][number]
+) {
+  return {
+    confirmation_id: card.request_id,
+    action: action.key,
+    request_id: card.request_id,
+    action_key: action.key,
+    endpoint: action.endpoint,
+    ...(action.payload_template ?? {}),
+    payload_template: action.payload_template ?? {}
+  };
+}
+
 function headerTitle(card: DryRunConfirmationCard, profile: CardVisualProfile): string {
   return `${profile.icon} ${card.title}`;
 }
@@ -522,23 +542,25 @@ export function buildFeishuInteractiveCard(
   if (actions.length > 0) {
     elements.push({
       tag: "action",
-      actions: actions.map((action) => ({
-        tag: "button",
-        text: {
-          tag: "plain_text",
-          content: buttonLabel(card, action.key, action.label, mode)
-        },
-        type: buttonType(action.style),
-        value: {
-          confirmation_id: card.request_id,
-          action: action.key,
-          request_id: card.request_id,
-          action_key: action.key,
-          endpoint: action.endpoint,
-          ...(action.payload_template ?? {}),
-          payload_template: action.payload_template ?? {}
-        }
-      }))
+      actions: actions.map((action) => {
+        const value = buttonValue(card, action);
+        return {
+          tag: "button",
+          name: action.key,
+          text: {
+            tag: "plain_text",
+            content: buttonLabel(card, action.key, action.label, mode)
+          },
+          type: buttonType(action.style),
+          value,
+          behaviors: [
+            {
+              type: "callback",
+              value
+            }
+          ]
+        };
+      })
     });
   }
 

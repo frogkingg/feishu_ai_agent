@@ -217,10 +217,8 @@ describe("confirm action request", () => {
       return {
         stdout: JSON.stringify({
           data: {
-            task: {
-              guid: "task_guid_real",
-              applink: "https://applink.feishu.cn/client/todo/task?guid=task_guid_real"
-            }
+            guid: "task_guid_real",
+            url: "https://applink.feishu.cn/client/todo/detail?guid=task_guid_real"
           }
         }),
         stderr: ""
@@ -239,6 +237,7 @@ describe("confirm action request", () => {
     });
 
     const updatedAction = repos.getActionItem(action.id);
+    const updatedRequest = repos.getConfirmationRequest(request.id);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ bin: "fake-lark-cli" });
     expect(calls[0].args).toEqual([
@@ -255,10 +254,14 @@ describe("confirm action request", () => {
       "--as",
       "user"
     ]);
+    expect(updatedRequest).toMatchObject({
+      status: "executed",
+      error: null
+    });
     expect(updatedAction).toMatchObject({
       confirmation_status: "created",
       feishu_task_guid: "task_guid_real",
-      task_url: "https://applink.feishu.cn/client/todo/task?guid=task_guid_real"
+      task_url: "https://applink.feishu.cn/client/todo/detail?guid=task_guid_real"
     });
   });
 

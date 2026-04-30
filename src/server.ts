@@ -31,6 +31,7 @@ const SendCardBodySchema = z
 const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
 const TranscriptPendingText = "【transcript pending - to be fetched via lark-cli vc +notes】";
 const CardActionPendingMessage = "此操作暂未实现，将在 PR-2 中完成";
+const CardActionAcceptedMessage = "已收到请求，正在添加到飞书…";
 const TranscriptFetchTimeoutMs = 3000;
 
 const FeishuRecordingReadyEventSchema = z
@@ -716,7 +717,7 @@ export function buildServer(input: {
         return {
           confirmation_id: parsed.requestId,
           action: parsed.actionKey,
-          ...toast("success", "已确认，正在处理中…")
+          ...toast("success", CardActionAcceptedMessage)
         };
       }
 

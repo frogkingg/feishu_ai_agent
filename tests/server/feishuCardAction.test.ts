@@ -101,7 +101,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       action: "confirm",
       toast: {
         type: "success",
-        content: "已确认，正在处理中…"
+        content: "已收到请求，正在添加到飞书…"
       }
     });
     await flushAsyncWork();
@@ -130,6 +130,33 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     });
     expect(repos.getConfirmationRequest(calendar.id)?.status).toBe("rejected");
+  });
+
+  it("returns an error toast for unsupported card actions", async () => {
+    const { app, action } = await createAppWithConfirmations();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        event: {
+          action: {
+            value: {
+              confirmation_id: action.id,
+              action_key: "unexpected_action"
+            }
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      toast: {
+        type: "error",
+        content: "暂不支持此操作"
+      }
+    });
   });
 
   it("parses real Feishu action payloads and applies user edited fields", async () => {

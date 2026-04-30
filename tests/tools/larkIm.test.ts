@@ -77,6 +77,23 @@ describe("larkIm.sendCard", () => {
     expect(actionElement?.tag === "action" ? actionElement.actions.length : 0).toBeLessThanOrEqual(
       3
     );
+    if (actionElement?.tag !== "action") {
+      throw new Error("Expected action element");
+    }
+    const confirmButton = actionElement.actions[0];
+    expect(confirmButton.name).toBe("confirm");
+    expect(confirmButton.value).toMatchObject({
+      confirmation_id: "conf_card_send",
+      request_id: "conf_card_send",
+      action: "confirm",
+      action_key: "confirm"
+    });
+    expect(confirmButton.behaviors).toEqual([
+      {
+        type: "callback",
+        value: confirmButton.value
+      }
+    ]);
   });
 
   it("renders calendar cards with calendar color and focused actions", () => {

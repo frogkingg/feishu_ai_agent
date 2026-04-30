@@ -17,7 +17,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function taskFromParsed(parsed: unknown): Record<string, unknown> | null {
   const root = asRecord(parsed);
-  return asRecord(asRecord(root?.data)?.task) ?? asRecord(root?.task);
+  const data = asRecord(root?.data);
+  return asRecord(data?.task) ?? data ?? asRecord(root?.task);
 }
 
 export async function createTask(input: {
@@ -66,14 +67,14 @@ export async function createTask(input: {
 
   const task = taskFromParsed(result.parsed);
   const guid = task?.guid;
-  const applink = task?.applink;
+  const applink = task?.applink ?? task?.url;
   if (
     typeof guid !== "string" ||
     guid.length === 0 ||
     typeof applink !== "string" ||
     applink.length === 0
   ) {
-    throw new Error("lark.task.create succeeded without task guid/applink");
+    throw new Error("lark.task.create succeeded without task guid/applink/url");
   }
 
   return {
