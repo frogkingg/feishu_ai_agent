@@ -28,13 +28,13 @@ const SendCardBodySchema = z
     message: "Provide either recipient or chat_id, not both"
   });
 
-const FeishuMeetingRecordingEndedEventType = "vc.meeting.recording_ended";
+const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
 const TranscriptPendingText =
-  "【transcript pending - to be fetched via lark-cli vc transcript get】";
+  "【transcript pending - to be fetched via lark-cli vc +notes】";
 const CardActionPendingMessage = "此操作暂未实现，将在 PR-2 中完成";
 const TranscriptFetchTimeoutMs = 3000;
 
-const FeishuMeetingEventSchema = z
+const FeishuRecordingReadyEventSchema = z
   .object({
     meeting_id: z.string().trim().min(1),
     topic: z.string().trim().optional().nullable(),
@@ -44,14 +44,9 @@ const FeishuMeetingEventSchema = z
       })
       .optional()
       .nullable(),
-    host_user: z
+    host_user_id: z
       .object({
-        id: z
-          .object({
-            open_id: z.string().trim().optional().nullable()
-          })
-          .optional()
-          .nullable()
+        open_id: z.string().trim().optional().nullable()
       })
       .optional()
       .nullable()
@@ -400,9 +395,9 @@ export function buildServer(input: {
       return { challenge: payload.challenge };
     }
 
-    if (eventType === FeishuMeetingRecordingEndedEventType) {
-      const event = FeishuMeetingEventSchema.parse(payload.event ?? {});
-      const organizer = event.operator_id?.open_id ?? event.host_user?.id?.open_id ?? null;
+    if (eventType === FeishuRecordingReadyEventType) {
+      const event = FeishuRecordingReadyEventSchema.parse(payload.event ?? {});
+      const organizer = event.operator_id?.open_id ?? event.host_user_id?.open_id ?? null;
       const title = event.topic?.trim() || event.meeting_id;
 
       void (async () => {
@@ -417,7 +412,7 @@ export function buildServer(input: {
           }).catch((error) => {
             request.log.warn(
               { err: error, external_meeting_id: event.meeting_id },
-              "failed to fetch transcript for feishu recording-ended event; using fallback text"
+              "failed to fetch transcript for feishu recording_ready event; using fallback text"
             );
             return TranscriptPendingText;
           }),
@@ -447,7 +442,7 @@ export function buildServer(input: {
             confirmation_requests: result.confirmation_requests.length,
             transcript_preview: transcript.slice(0, 80)
           },
-          "triggered meeting workflow from feishu recording-ended event"
+          "triggered meeting workflow from feishu recording_ready event"
         );
       })().catch((error) => {
         request.log.error(
@@ -456,7 +451,7 @@ export function buildServer(input: {
             external_meeting_id: event.meeting_id,
             err: error
           },
-          "failed meeting workflow from feishu recording-ended event"
+          "failed meeting workflow from feishu recording_ready event"
         );
       });
 

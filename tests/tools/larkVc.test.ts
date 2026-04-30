@@ -25,13 +25,13 @@ describe("larkVc.fetchTranscript", () => {
     expect(repos.listCliRuns()).toHaveLength(0);
   });
 
-  it("calls lark-cli and prefers parsed transcript or text fields in real mode", async () => {
+  it("calls lark-cli and prefers parsed notes content in real mode", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const calls: Array<{ bin: string; args: string[] }> = [];
     const runner: LarkCliRunner = async (bin, args) => {
       calls.push({ bin, args });
       return {
-        stdout: JSON.stringify({ transcript: "逐字稿内容" }),
+        stdout: JSON.stringify({ minutes: [{ content: "逐字稿内容" }] }),
         stderr: ""
       };
     };
@@ -51,15 +51,41 @@ describe("larkVc.fetchTranscript", () => {
     expect(calls).toEqual([
       {
         bin: "fake-lark-cli",
-        args: ["vc", "transcript", "get", "--meeting-id", "om_real"]
+        args: ["vc", "+notes", "--meeting-ids", "om_real", "--format", "json"]
       }
     ]);
     expect(repos.listCliRuns()).toHaveLength(1);
     expect(repos.listCliRuns()[0]).toMatchObject({
-      tool: "lark.vc.transcript.get",
+      tool: "lark.vc.notes",
       dry_run: 0,
       status: "success"
     });
+  });
+
+  it("reads notes content from array or root payloads", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const outputs = [JSON.stringify([{ content: "数组逐字稿" }]), JSON.stringify({ content: "根逐字稿" })];
+    const runner: LarkCliRunner = async () => ({
+      stdout: outputs.shift() ?? "",
+      stderr: ""
+    });
+
+    await expect(
+      fetchTranscript({
+        repos,
+        config: loadConfig({ feishuDryRun: false }),
+        meetingId: "om_array",
+        runner
+      })
+    ).resolves.toBe("数组逐字稿");
+    await expect(
+      fetchTranscript({
+        repos,
+        config: loadConfig({ feishuDryRun: false }),
+        meetingId: "om_root",
+        runner
+      })
+    ).resolves.toBe("根逐字稿");
   });
 
   it("falls back to raw stdout text when JSON fields are absent", async () => {

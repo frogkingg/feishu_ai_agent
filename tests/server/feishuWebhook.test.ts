@@ -85,12 +85,12 @@ describe("POST /webhooks/feishu/event", () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it("accepts recording-ended events and triggers the meeting workflow in the background", async () => {
+  it("accepts recording_ready events and triggers the meeting workflow in the background", async () => {
     const body = JSON.stringify({
       schema: "2.0",
       header: {
         event_id: "evt_test",
-        event_type: "vc.meeting.recording_ended",
+        event_type: "vc.meeting.recording_ready_v1",
         create_time: "1234567890000",
         token: "verification-token",
         app_id: "cli_test",
@@ -99,7 +99,7 @@ describe("POST /webhooks/feishu/event", () => {
       event: {
         meeting_id: "om_test",
         topic: "测试会议",
-        host_user: { id: { open_id: "ou_test" } },
+        host_user_id: { open_id: "ou_test" },
         recording: { url: "https://example.test/recording" }
       }
     });
@@ -146,7 +146,7 @@ describe("POST /webhooks/feishu/event", () => {
   it("uses fetched transcript text before triggering the workflow in real mode", async () => {
     const body = JSON.stringify({
       header: {
-        event_type: "vc.meeting.recording_ended"
+        event_type: "vc.meeting.recording_ready_v1"
       },
       event: {
         meeting_id: "om_real_transcript",
@@ -161,9 +161,16 @@ describe("POST /webhooks/feishu/event", () => {
       body
     };
     const runner: LarkCliRunner = async (_bin, args) => {
-      expect(args).toEqual(["vc", "transcript", "get", "--meeting-id", "om_real_transcript"]);
+      expect(args).toEqual([
+        "vc",
+        "+notes",
+        "--meeting-ids",
+        "om_real_transcript",
+        "--format",
+        "json"
+      ]);
       return {
-        stdout: JSON.stringify({ text: "这是真实拉取到的逐字稿文本。" }),
+        stdout: JSON.stringify({ minutes: [{ content: "这是真实拉取到的逐字稿文本。" }] }),
         stderr: ""
       };
     };
