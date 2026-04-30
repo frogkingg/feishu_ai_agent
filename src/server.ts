@@ -488,21 +488,23 @@ export function buildServer(input: {
 
     try {
       if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        const result = await confirmRequest({
+        void confirmRequest({
           repos: input.repos,
           config: input.config,
           id: parsed.requestId,
           editedPayload: parsed.editedPayload,
           runner: input.larkCliRunner
+        }).catch((error) => {
+          request.log.error(
+            { err: error, confirmation_id: parsed.requestId },
+            "async confirm failed"
+          );
         });
 
         return {
-          ok: result.confirmation.status !== "failed",
           confirmation_id: parsed.requestId,
           action: parsed.actionKey,
-          confirmation: result.confirmation,
-          result: result.result,
-          ...toast("success", "已确认")
+          ...toast("success", "已确认，正在处理中…")
         };
       }
 

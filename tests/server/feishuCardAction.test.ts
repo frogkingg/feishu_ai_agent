@@ -6,6 +6,10 @@ import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { ConfirmationRequestRow, createRepositories } from "../../src/services/store/repositories";
 
+function flushAsyncWork(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 async function createAppWithConfirmations() {
   const repos = createRepositories(createMemoryDatabase());
   const app = buildServer({
@@ -93,13 +97,14 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
     expect(confirmResponse.statusCode).toBe(200);
     expect(confirmResponse.json()).toMatchObject({
-      ok: true,
       confirmation_id: action.id,
+      action: "confirm",
       toast: {
         type: "success",
-        content: "已确认"
+        content: "已确认，正在处理中…"
       }
     });
+    await flushAsyncWork();
     expect(repos.getConfirmationRequest(action.id)?.status).toBe("executed");
 
     const rejectResponse = await app.inject({
