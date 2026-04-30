@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { buildActionConfirmationCard } from "../../src/agents/cardInteractionAgent";
 import { loadConfig } from "../../src/config";
 import { createMemoryDatabase } from "../../src/services/store/db";
@@ -31,6 +32,12 @@ describe("larkIm.sendCard", () => {
   const failingRunner: LarkCliRunner = async () => {
     throw new Error("fake lark CLI failure");
   };
+
+  function contentArg(args: string[]) {
+    const contentIndex = args.indexOf("--content");
+    expect(contentIndex).toBeGreaterThanOrEqual(0);
+    return args[contentIndex + 1];
+  }
 
   it("builds an interactive card payload from the dry-run preview", () => {
     const interactive = buildFeishuInteractiveCard(card);
@@ -80,6 +87,8 @@ describe("larkIm.sendCard", () => {
         "interactive"
       ])
     );
+    expect(contentArg(args)).toMatch(/^@.+meeting-atlas-card-conf_card_send-.+\.json$/);
+    expect(contentArg(args)).not.toContain("整理无人机操作流程");
     expect(args).not.toContain("--dry-run");
   });
 
@@ -119,6 +128,9 @@ describe("larkIm.sendCard", () => {
     const calls: Array<{ bin: string; args: string[] }> = [];
     const runner: LarkCliRunner = async (bin, args) => {
       calls.push({ bin, args });
+      const cardJson = readFileSync(contentArg(args).slice(1), "utf8");
+      expect(cardJson).toContain("整理无人机操作流程");
+      expect(cardJson).toContain("张三");
       return {
         stdout: JSON.stringify({ message_id: "om_fake_card_message" }),
         stderr: ""
@@ -157,6 +169,7 @@ describe("larkIm.sendCard", () => {
         "--content"
       ])
     );
+    expect(contentArg(calls[0].args)).toMatch(/^@.+meeting-atlas-card-conf_card_send-.+\.json$/);
     expect(repos.listCliRuns()).toHaveLength(1);
     expect(repos.listCliRuns()[0]).toMatchObject({
       tool: "lark.im.send_card",
