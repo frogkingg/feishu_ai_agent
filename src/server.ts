@@ -11,7 +11,7 @@ import { sendCard } from "./tools/larkIm";
 import { type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
-import { verifyLarkWebhookSignature } from "./utils/larkSignature";
+import { verifyLarkCardActionSignature, verifyLarkWebhookSignature } from "./utils/larkSignature";
 import { processMeetingWorkflow } from "./workflows/processMeetingWorkflow";
 
 const LlmSmokeTestInputSchema = z.object({
@@ -116,6 +116,58 @@ function isLarkSignatureValid(input: {
     verificationToken: input.verificationToken,
     signature
   });
+}
+
+function isLarkCardActionSignatureValid(input: {
+  request: FastifyRequest;
+  rawBody: string;
+  body: unknown;
+  verificationToken: string | null;
+}): boolean {
+  if (input.verificationToken === null) {
+    return true;
+  }
+
+  const timestamp = getHeaderString(input.request, "x-lark-request-timestamp");
+  const nonce = getHeaderString(input.request, "x-lark-request-nonce");
+  const signature = getHeaderString(input.request, "x-lark-signature");
+
+  if (timestamp === null || nonce === null || signature === null) {
+    return false;
+  }
+
+  if (
+    verifyLarkWebhookSignature({
+      timestamp,
+      nonce,
+      body: input.rawBody,
+      verificationToken: input.verificationToken,
+      signature
+    })
+  ) {
+    return true;
+  }
+
+  return verifyLarkCardActionSignature({
+    timestamp,
+    nonce,
+    body: input.body,
+    verificationToken: input.verificationToken,
+    signature
+  });
+}
+
+function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, unknown> {
+  const timestamp = getHeaderString(request, "x-lark-request-timestamp");
+  const nonce = getHeaderString(request, "x-lark-request-nonce");
+  const signature = getHeaderString(request, "x-lark-signature");
+
+  return {
+    has_timestamp: timestamp !== null,
+    has_nonce: nonce !== null,
+    has_signature: signature !== null,
+    signature_length: signature?.length ?? 0
+  };
 }
 
 function getFeishuEventType(payload: FeishuEventWebhookPayload): string | null {
@@ -402,28 +454,13 @@ function cardPreviewStubAction(input: {
 }
 
 function alreadyProcessedToast(input: {
-  confirmationId: string;
-  action: string | null;
   status: string;
 }) {
-  return {
-    ok: true,
-    already_processed: true,
-    confirmation_id: input.confirmationId,
-    action: input.action,
-    status: input.status,
-    ...toast("success", `该确认请求已处理（${input.status}），不会重复执行`)
-  };
+  return toast("success", `该确认请求已处理（${input.status}），不会重复执行`);
 }
 
-function alreadyProcessingToast(input: { confirmationId: string; action: string | null }) {
-  return {
-    ok: true,
-    already_processing: true,
-    confirmation_id: input.confirmationId,
-    action: input.action,
-    ...toast("success", "该确认请求正在处理中，不会重复执行")
-  };
+function alreadyProcessingToast() {
+  return toast("success", "该确认请求正在处理中，不会重复执行");
 }
 
 function sendCardStatusCode(result: { ok: boolean; error: string | null }): number {
@@ -556,6 +593,11 @@ export function buildServer(input: {
 
   app.post("/webhooks/feishu/event", async (request, reply) => {
     const rawBody = getRawBody(request);
+    const payload = (request.body ?? {}) as FeishuEventWebhookPayload;
+    if (typeof payload.challenge === "string") {
+      return { challenge: payload.challenge };
+    }
+
     if (
       !isLarkSignatureValid({
         request,
@@ -563,17 +605,15 @@ export function buildServer(input: {
         verificationToken: input.config.larkVerificationToken
       })
     ) {
-      request.log.warn("rejected feishu event webhook with invalid signature");
+      request.log.warn(
+        getLarkSignatureDiagnostics(request),
+        "rejected feishu event webhook with invalid signature"
+      );
       return reply.code(401).send({ error: "Invalid Lark webhook signature" });
     }
 
-    const payload = (request.body ?? {}) as FeishuEventWebhookPayload;
     const eventType = getFeishuEventType(payload);
     request.log.info({ event_type: eventType }, "received feishu event webhook");
-
-    if (typeof payload.challenge === "string") {
-      return { challenge: payload.challenge };
-    }
 
     if (eventType === FeishuRecordingReadyEventType) {
       const event = FeishuRecordingReadyEventSchema.parse(payload.event ?? {});
@@ -653,50 +693,49 @@ export function buildServer(input: {
 
   app.post("/webhooks/feishu/card-action", async (request, reply) => {
     const rawBody = getRawBody(request);
-    if (
-      !isLarkSignatureValid({
-        request,
-        body: rawBody,
-        verificationToken: input.config.larkVerificationToken
-      })
-    ) {
-      request.log.warn("rejected feishu card action webhook with invalid signature");
-      return reply.code(401).send({ error: "Invalid Lark webhook signature" });
-    }
-
     const bodyRecord = asRecord(request.body ?? {});
     if (bodyRecord !== null && typeof bodyRecord.challenge === "string") {
       return { challenge: bodyRecord.challenge };
     }
 
+    if (
+      !isLarkCardActionSignatureValid({
+        request,
+        rawBody,
+        body: request.body ?? {},
+        verificationToken: input.config.larkVerificationToken
+      })
+    ) {
+      request.log.warn(
+        getLarkSignatureDiagnostics(request),
+        "rejected feishu card action webhook with invalid signature"
+      );
+      return reply.code(401).send({ error: "Invalid Lark webhook signature" });
+    }
+
     const parsed = extractCardCallbackPayload(request.body ?? {});
 
     if (parsed.requestId === null) {
-      return reply.code(404).send(toast("error", "确认请求不存在"));
+      return toast("error", "确认请求不存在");
     }
 
     const confirmation = input.repos.getConfirmationRequest(parsed.requestId);
     if (confirmation === null) {
-      return reply.code(404).send(toast("error", "确认请求不存在"));
+      return toast("error", "确认请求不存在");
     }
 
     if (parsed.actionKey === null) {
-      return reply.code(400).send(toast("error", "暂不支持此操作"));
+      return toast("error", "暂不支持此操作");
     }
 
     if (PROCESSED_CONFIRMATION_STATUSES.has(confirmation.status)) {
       return alreadyProcessedToast({
-        confirmationId: parsed.requestId,
-        action: parsed.actionKey,
         status: confirmation.status
       });
     }
 
     if (IN_FLIGHT_CONFIRMATION_STATUSES.has(confirmation.status)) {
-      return alreadyProcessingToast({
-        confirmationId: parsed.requestId,
-        action: parsed.actionKey
-      });
+      return alreadyProcessingToast();
     }
 
     try {
@@ -714,27 +753,17 @@ export function buildServer(input: {
           );
         });
 
-        return {
-          confirmation_id: parsed.requestId,
-          action: parsed.actionKey,
-          ...toast("success", CardActionAcceptedMessage)
-        };
+        return toast("success", CardActionAcceptedMessage);
       }
 
       if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        const result = rejectRequest({
+        rejectRequest({
           repos: input.repos,
           id: parsed.requestId,
           reason: parsed.reason ?? parsed.actionKey
         });
 
-        return {
-          ok: true,
-          confirmation_id: parsed.requestId,
-          action: parsed.actionKey,
-          confirmation: result,
-          ...toast("success", "已拒绝")
-        };
+        return toast("success", "已拒绝");
       }
 
       const previewAction =
@@ -746,27 +775,19 @@ export function buildServer(input: {
           action: previewAction
         });
         if (result === null) {
-          return reply.code(404).send(toast("error", "确认请求不存在"));
+          return toast("error", "确认请求不存在");
         }
 
-        return {
-          ...result,
-          ...toast("success", CardActionPendingMessage)
-        };
+        return toast("success", CardActionPendingMessage);
       }
 
-      return reply.code(400).send(toast("error", "暂不支持此操作"));
+      return toast("error", "暂不支持此操作");
     } catch (error) {
       request.log.error(
         { err: error, confirmation_id: parsed.requestId, action: parsed.actionKey },
         "card action failed"
       );
-      return reply.code(500).send({
-        ok: false,
-        confirmation_id: parsed.requestId,
-        action: parsed.actionKey,
-        ...toast("error", briefError(error))
-      });
+      return toast("error", briefError(error));
     }
   });
 

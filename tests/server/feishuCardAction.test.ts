@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config";
@@ -10,14 +11,25 @@ function flushAsyncWork(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-async function createAppWithConfirmations() {
+function signLegacyCardAction(input: {
+  timestamp: string;
+  nonce: string;
+  body: unknown;
+  verificationToken: string;
+}) {
+  return createHash("sha1")
+    .update(input.timestamp + input.nonce + input.verificationToken + JSON.stringify(input.body))
+    .digest("hex");
+}
+
+async function createAppWithConfirmations(larkVerificationToken: string | null = null) {
   const repos = createRepositories(createMemoryDatabase());
   const app = buildServer({
     config: loadConfig({
       feishuDryRun: true,
       larkCliBin: "definitely-not-real-lark",
       sqlitePath: ":memory:",
-      larkVerificationToken: null
+      larkVerificationToken
     }),
     repos,
     llm: new MockLlmClient()
@@ -53,7 +65,95 @@ async function createAppWithConfirmations() {
 }
 
 describe("POST /webhooks/feishu/card-action", () => {
-  it("returns a toast 404 when the confirmation does not exist", async () => {
+  it("returns the Feishu challenge value before signature verification", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        sqlitePath: ":memory:",
+        larkVerificationToken: "verification-token"
+      }),
+      repos,
+      llm: new MockLlmClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: { challenge: "challenge-token" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ challenge: "challenge-token" });
+  });
+
+  it("accepts legacy Feishu card-action callbacks signed with 40-character sha1 signatures", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = "1777574290";
+    const nonce = "legacy-card-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      toast: {
+        type: "error",
+        content: "确认请求不存在"
+      }
+    });
+  });
+
+  it("rejects invalid legacy Feishu card-action signatures", async () => {
+    const { app } = await createAppWithConfirmations("verification-token");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": "1777574290",
+        "x-lark-request-nonce": "legacy-card-nonce",
+        "x-lark-signature": "bad-signature"
+      },
+      payload: {
+        open_id: "ou_test",
+        action: {
+          value: {
+            confirmation_id: "nonexistent",
+            action: "confirm"
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
+  it("returns an error toast when the confirmation does not exist", async () => {
     const { app } = await createAppWithConfirmations();
 
     const response = await app.inject({
@@ -70,7 +170,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     });
 
-    expect(response.statusCode).toBe(404);
+    expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       toast: {
         type: "error",
@@ -96,9 +196,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     });
     expect(confirmResponse.statusCode).toBe(200);
-    expect(confirmResponse.json()).toMatchObject({
-      confirmation_id: action.id,
-      action: "confirm",
+    expect(confirmResponse.json()).toEqual({
       toast: {
         type: "success",
         content: "已收到请求，正在添加到飞书…"
@@ -121,9 +219,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     });
     expect(rejectResponse.statusCode).toBe(200);
-    expect(rejectResponse.json()).toMatchObject({
-      ok: true,
-      confirmation_id: calendar.id,
+    expect(rejectResponse.json()).toEqual({
       toast: {
         type: "success",
         content: "已拒绝"
@@ -150,7 +246,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     });
 
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       toast: {
         type: "error",
@@ -200,9 +296,11 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      confirmation_id: action.id,
-      action: "confirm_with_edits"
+    expect(response.json()).toEqual({
+      toast: {
+        type: "success",
+        content: "已收到请求，正在添加到飞书…"
+      }
     });
     await flushAsyncWork();
 
@@ -258,11 +356,6 @@ describe("POST /webhooks/feishu/card-action", () => {
 
     expect(duplicateResponse.statusCode).toBe(200);
     expect(duplicateResponse.json()).toMatchObject({
-      ok: true,
-      already_processed: true,
-      confirmation_id: action.id,
-      action: "confirm",
-      status: "executed",
       toast: {
         type: "success"
       }
@@ -290,13 +383,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toMatchObject({
-        ok: true,
-        dry_run: true,
-        confirmation_id: action.id,
-        action: callbackAction,
-        status: "preview_only",
-        message: "此操作暂未实现，将在 PR-2 中完成",
+      expect(response.json()).toEqual({
         toast: {
           type: "success",
           content: "此操作暂未实现，将在 PR-2 中完成"

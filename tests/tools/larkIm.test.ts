@@ -53,7 +53,7 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain("待办确认");
     expect(serialized).toContain("详情依据");
     expect(serialized).toContain("[会议纪要](https://example.feishu.cn/minutes/min_001)");
-    expect(serialized).toContain("/dev/confirmations/conf_card_send/confirm");
+    expect(serialized).not.toContain("/dev/confirmations/conf_card_send/confirm");
     expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
     expect(serialized).not.toContain('"action":"not_mine"');
@@ -88,6 +88,8 @@ describe("larkIm.sendCard", () => {
       action: "confirm",
       action_key: "confirm"
     });
+    expect(confirmButton.value).not.toHaveProperty("endpoint");
+    expect(confirmButton.value).not.toHaveProperty("payload_template");
     expect(confirmButton.behaviors).toEqual([
       {
         type: "callback",
@@ -144,14 +146,81 @@ describe("larkIm.sendCard", () => {
     expect(serialized).not.toContain("mtg_001");
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
-        { text: { content: "添加日程" } },
+        {
+          text: { content: "添加日程" },
+          value: {
+            action_key: "confirm",
+            action: "confirm",
+            confirmation_id: "conf_calendar_send",
+            request_id: "conf_calendar_send"
+          },
+          behaviors: [
+            {
+              type: "callback",
+              value: expect.objectContaining({ action_key: "confirm", action: "confirm" })
+            }
+          ]
+        },
         { text: { content: "转待办" } },
         { text: { content: "不添加" } }
       ]
     });
   });
 
-  it("keeps only missing key inputs on cards", () => {
+  it("allows adding calendar cards when start time is present even if location is missing", () => {
+    const calendarCard = buildCalendarConfirmationCard({
+      id: "conf_calendar_missing_location",
+      target_id: "cal_card_missing_location",
+      recipient: "ou_recipient",
+      status: "sent",
+      original_payload: {
+        draft: {
+          title: "无人机操作员访谈会议",
+          start_time: "2026-05-05T10:00:00+08:00",
+          end_time: null,
+          duration_minutes: 60,
+          participants: ["张三"],
+          agenda: "确认真实操作步骤和限制。",
+          location: null,
+          evidence: "下周二上午 10 点我们再约操作员访谈。",
+          confidence: 0.7,
+          missing_fields: ["location"]
+        }
+      }
+    });
+
+    const interactive = buildFeishuInteractiveCard(calendarCard);
+    const serialized = JSON.stringify(interactive);
+
+    expect(serialized).not.toContain("需补充");
+    const actionElement = interactive.elements.find((element) => element.tag === "action");
+    expect(actionElement).toMatchObject({
+      actions: [
+        {
+          text: { content: "添加日程" },
+          value: {
+            action_key: "confirm",
+            action: "confirm",
+            confirmation_id: "conf_calendar_missing_location",
+            request_id: "conf_calendar_missing_location"
+          },
+          behaviors: [
+            {
+              type: "callback",
+              value: expect.objectContaining({
+                action_key: "confirm",
+                action: "confirm"
+              })
+            }
+          ]
+        },
+        { text: { content: "转待办" } },
+        { text: { content: "不添加" } }
+      ]
+    });
+  });
+
+  it("keeps only missing start time input on calendar cards", () => {
     const calendarCard = buildCalendarConfirmationCard({
       id: "conf_calendar_missing",
       target_id: "cal_card_missing",
@@ -178,10 +247,36 @@ describe("larkIm.sendCard", () => {
 
     expect(serialized).toContain("需补充");
     expect(serialized).toContain('"name":"start_time"');
-    expect(serialized).toContain('"name":"duration_minutes"');
-    expect(serialized).toContain('"name":"location"');
+    expect(serialized).not.toContain('"name":"duration_minutes"');
+    expect(serialized).not.toContain('"name":"location"');
     expect(serialized).not.toContain('"name":"agenda"');
     expect(serialized).not.toContain("可修改信息");
+    const actionElement = interactive.elements.find((element) => element.tag === "action");
+    expect(actionElement).toMatchObject({
+      actions: [
+        {
+          text: { content: "补全后添加日程" },
+          value: {
+            action_key: "confirm_with_edits",
+            action: "confirm_with_edits",
+            confirmation_id: "conf_calendar_missing",
+            request_id: "conf_calendar_missing",
+            edited_payload: "$editable_fields"
+          },
+          behaviors: [
+            {
+              type: "callback",
+              value: expect.objectContaining({
+                action_key: "confirm_with_edits",
+                action: "confirm_with_edits"
+              })
+            }
+          ]
+        },
+        { text: { content: "转待办" } },
+        { text: { content: "不添加" } }
+      ]
+    });
   });
 
   it("renders knowledge-base cards with knowledge color and fewer actions", () => {
@@ -232,7 +327,21 @@ describe("larkIm.sendCard", () => {
     expect(serialized).not.toContain("match_reasons");
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
-        { text: { content: "创建知识库" } },
+        {
+          text: { content: "创建知识库" },
+          value: {
+            action_key: "create_kb",
+            action: "create_kb",
+            confirmation_id: "conf_kb_send",
+            request_id: "conf_kb_send"
+          },
+          behaviors: [
+            {
+              type: "callback",
+              value: expect.objectContaining({ action_key: "create_kb", action: "create_kb" })
+            }
+          ]
+        },
         { text: { content: "仅归档本次" } },
         { text: { content: "不创建" } }
       ]

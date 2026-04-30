@@ -17,7 +17,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function eventFromParsed(parsed: unknown): Record<string, unknown> | null {
   const root = asRecord(parsed);
-  return asRecord(asRecord(root?.data)?.event) ?? asRecord(root?.event);
+  const data = asRecord(root?.data);
+  return asRecord(data?.event) ?? data ?? asRecord(root?.event);
 }
 
 function parseParticipantIds(value: string): string {
@@ -84,19 +85,14 @@ export async function createCalendarEvent(input: {
 
   const event = eventFromParsed(result.parsed);
   const eventId = event?.event_id;
-  const applink = event?.applink;
-  if (
-    typeof eventId !== "string" ||
-    eventId.length === 0 ||
-    typeof applink !== "string" ||
-    applink.length === 0
-  ) {
-    throw new Error("lark.calendar.create succeeded without event_id/applink");
+  const applink = event?.applink ?? event?.url;
+  if (typeof eventId !== "string" || eventId.length === 0) {
+    throw new Error("lark.calendar.create succeeded without event_id");
   }
 
   return {
     calendar_event_id: eventId,
-    event_url: applink,
+    event_url: typeof applink === "string" ? applink : "",
     dry_run: false,
     cli_run_id: result.id
   };

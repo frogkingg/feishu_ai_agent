@@ -54,6 +54,19 @@ describe("POST /webhooks/feishu/event", () => {
     expect(response.json()).toEqual({ challenge: "challenge-token" });
   });
 
+  it("returns the Feishu challenge value before signature verification", async () => {
+    const { app } = createApp({ larkVerificationToken: "verification-token" });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      payload: { challenge: "challenge-token" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ challenge: "challenge-token" });
+  });
+
   it("accepts unrecognized events", async () => {
     const { app } = createApp();
 

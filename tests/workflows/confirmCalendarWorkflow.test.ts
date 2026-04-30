@@ -207,10 +207,8 @@ describe("confirm calendar request", () => {
       return {
         stdout: JSON.stringify({
           data: {
-            event: {
-              event_id: "event_real",
-              applink: "https://applink.feishu.cn/client/calendar/event_real"
-            }
+            event_id: "event_real",
+            url: "https://applink.feishu.cn/client/calendar/event_real"
           }
         }),
         stderr: ""
@@ -229,6 +227,7 @@ describe("confirm calendar request", () => {
     });
 
     const updatedCalendar = repos.getCalendarDraft(calendar.id);
+    const updatedRequest = repos.getConfirmationRequest(request.id);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ bin: "fake-lark-cli" });
     expect(calls[0].args).toEqual([
@@ -247,10 +246,74 @@ describe("confirm calendar request", () => {
       "--as",
       "user"
     ]);
+    expect(updatedRequest).toMatchObject({
+      status: "executed",
+      error: null
+    });
     expect(updatedCalendar).toMatchObject({
       confirmation_status: "created",
       calendar_event_id: "event_real",
       event_url: "https://applink.feishu.cn/client/calendar/event_real"
+    });
+  });
+
+  it("treats a real Feishu calendar response with event_id only as successful", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createCalendarTestMeeting(repos);
+    const calendar = repos.createCalendarDraft({
+      id: "cal_real_event_id_only",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "REAL-CALENDAR-CANARY Henry SHA1 日历会议",
+      start_time: "2026-05-01T22:45:00+08:00",
+      end_time: "2026-05-01T23:00:00+08:00",
+      duration_minutes: 15,
+      participants_json: JSON.stringify(["Henry"]),
+      agenda: "card-action 40 位 SHA1 签名验证",
+      location: "线上会议",
+      evidence: "真实 CLI 仅返回 data.event_id。",
+      confidence: 1,
+      missing_fields_json: JSON.stringify([]),
+      confirmation_status: "sent",
+      calendar_event_id: null,
+      event_url: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "calendar",
+      targetId: calendar.id,
+      recipient: meeting.organizer,
+      originalPayload: { draft: calendar }
+    });
+    const runner: LarkCliRunner = async () => ({
+      stdout: JSON.stringify({
+        data: {
+          event_id: "672e330d-fc32-4e41-9e84-201b547a08f8_0",
+          summary: "REAL-CALENDAR-CANARY Henry SHA1 日历会议"
+        }
+      }),
+      stderr: ""
+    });
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCalendarCreateDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
+      id: request.id,
+      runner
+    });
+
+    expect(repos.getConfirmationRequest(request.id)).toMatchObject({
+      status: "executed",
+      error: null
+    });
+    expect(repos.getCalendarDraft(calendar.id)).toMatchObject({
+      confirmation_status: "created",
+      calendar_event_id: "672e330d-fc32-4e41-9e84-201b547a08f8_0",
+      event_url: ""
     });
   });
 

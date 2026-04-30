@@ -25,3 +25,29 @@ export function verifyLarkWebhookSignature(input: {
 
   return timingSafeEqual(expectedBuffer, signatureBuffer);
 }
+
+export function verifyLarkCardActionSignature(input: {
+  timestamp: string;
+  nonce: string;
+  body: unknown;
+  verificationToken: string;
+  signature?: string | null;
+}): boolean {
+  const signature = input.signature?.trim().toLowerCase();
+  if (!signature) {
+    return false;
+  }
+
+  const expected = createHash("sha1")
+    .update(input.timestamp + input.nonce + input.verificationToken + JSON.stringify(input.body))
+    .digest("hex");
+
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const signatureBuffer = Buffer.from(signature, "utf8");
+
+  if (expectedBuffer.length !== signatureBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expectedBuffer, signatureBuffer);
+}

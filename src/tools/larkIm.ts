@@ -403,7 +403,7 @@ function requiredEditableKeys(card: DryRunConfirmationCard): string[] {
   }
 
   if (card.card_type === "calendar_confirmation") {
-    return ["start_time", "duration_minutes", "participants", "location"];
+    return ["start_time"];
   }
 
   if (card.card_type === "create_kb_confirmation") {
@@ -460,7 +460,20 @@ function buttonLabel(
 ): string {
   const prefix = mode === "dry_run" ? "预览" : "";
 
-  if (key === "confirm" || key === "confirm_with_edits") {
+  if (key === "confirm_with_edits") {
+    if (card.card_type === "action_confirmation") {
+      return `${prefix}补全后添加待办`;
+    }
+    if (card.card_type === "calendar_confirmation") {
+      return `${prefix}补全后添加日程`;
+    }
+    if (card.card_type === "append_meeting_confirmation") {
+      return `${prefix}补全后追加到知识库`;
+    }
+    return `${prefix}补全后确认`;
+  }
+
+  if (key === "confirm") {
     if (card.card_type === "action_confirmation") {
       return `${prefix}添加待办`;
     }
@@ -499,9 +512,7 @@ function buttonValue(
     action: action.key,
     request_id: card.request_id,
     action_key: action.key,
-    endpoint: action.endpoint,
-    ...(action.payload_template ?? {}),
-    payload_template: action.payload_template ?? {}
+    ...(action.payload_template ?? {})
   };
 }
 
