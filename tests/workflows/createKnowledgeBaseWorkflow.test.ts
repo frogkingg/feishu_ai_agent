@@ -210,7 +210,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     const updateArgs = createdArgs.filter((args) => args[0] === "docs" && args[1] === "+update");
     const childPageCount = wikiNodeCreateArgs.length;
     expect(spaceCreateArgs).toHaveLength(1);
-    expect(memberCreateArgs).toHaveLength(1);
+    expect(memberCreateArgs).toHaveLength(0);
     expect(childPageCount).toBe(6);
     expect(updateArgs).toHaveLength(6);
     expect(spaceCreateArgs[0]).toEqual([
@@ -229,16 +229,6 @@ describe("createKnowledgeBaseWorkflow", () => {
       name: "无人机操作流程主题知识库",
       description: "由 2 场相关会议 dry-run 创建的主题知识库。"
     });
-    expect(
-      memberCreateArgs.map((args) => JSON.parse(args[args.indexOf("--data") + 1]).member_id)
-    ).toEqual(["ou_owner"]);
-    expect(
-      memberCreateArgs.every(
-        (args) =>
-          args.includes("--params") &&
-          JSON.parse(args[args.indexOf("--params") + 1]).space_id === "space_1"
-      )
-    ).toBe(true);
     expect(wikiNodeCreateArgs[0]).toEqual(
       expect.arrayContaining(["--space-id", "space_1", "--title", "01 单个会议总结"])
     );
@@ -265,7 +255,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     const firstUpdateContent = updateArgs[0][updateArgs[0].indexOf("--content") + 1];
     expect(firstUpdateContent).toContain("# 01 单个会议总结");
     expect(repos.listCliRuns().map((run) => run.status)).toEqual(
-      Array(2 + childPageCount * 2).fill("success")
+      Array(1 + childPageCount * 2).fill("success")
     );
   });
 });

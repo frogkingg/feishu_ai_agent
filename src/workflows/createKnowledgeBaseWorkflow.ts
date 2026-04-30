@@ -124,14 +124,12 @@ export async function createKnowledgeBaseWorkflow(input: {
   let homepageUrl = `mock://feishu/wiki/${draft.kb_id}/00-home`;
 
   if (!dryRun) {
-    const members = owner === null ? [] : [owner];
     const config = input.config ?? loadConfig();
     const wikiSpace = await createWikiSpace({
       repos: input.repos,
       config,
       name: payload.topic_name,
       description: draft.description ?? "",
-      members,
       runner: input.runner
     });
     wikiUrl = wikiSpace.wiki_space_url;
