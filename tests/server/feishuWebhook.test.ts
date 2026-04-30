@@ -85,12 +85,12 @@ describe("POST /webhooks/feishu/event", () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it("accepts transcription updates and triggers the meeting workflow in the background", async () => {
+  it("accepts recording-ended events and triggers the meeting workflow in the background", async () => {
     const body = JSON.stringify({
       schema: "2.0",
       header: {
         event_id: "evt_test",
-        event_type: "vc.meeting.transcription_updated",
+        event_type: "vc.meeting.recording_ended",
         create_time: "1234567890000",
         token: "verification-token",
         app_id: "cli_test",
@@ -99,8 +99,8 @@ describe("POST /webhooks/feishu/event", () => {
       event: {
         meeting_id: "om_test",
         topic: "测试会议",
-        operator_id: { open_id: "ou_test" },
-        transcript_id: "transcript_test"
+        host_user: { id: { open_id: "ou_test" } },
+        recording: { url: "https://example.test/recording" }
       }
     });
     const signatureInput = {
@@ -126,24 +126,27 @@ describe("POST /webhooks/feishu/event", () => {
     expect(response.statusCode).toBe(202);
     expect(response.json()).toEqual({ accepted: true });
 
-    await vi.waitFor(() => {
-      expect(repos.listMeetings()).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            external_meeting_id: "om_test",
-            title: "测试会议",
-            organizer: "ou_test",
-            transcript_text: "【transcript pending - dry-run mode】"
-          })
-        ])
-      );
-    });
+    await vi.waitFor(
+      () => {
+        expect(repos.listMeetings()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              external_meeting_id: "om_test",
+              title: "测试会议",
+              organizer: "ou_test",
+              transcript_text: "【transcript pending - dry-run mode】"
+            })
+          ])
+        );
+      },
+      { timeout: 7000 }
+    );
   });
 
   it("uses fetched transcript text before triggering the workflow in real mode", async () => {
     const body = JSON.stringify({
       header: {
-        event_type: "vc.meeting.transcription_updated"
+        event_type: "vc.meeting.recording_ended"
       },
       event: {
         meeting_id: "om_real_transcript",
@@ -187,17 +190,20 @@ describe("POST /webhooks/feishu/event", () => {
     expect(response.statusCode).toBe(202);
     expect(response.json()).toEqual({ accepted: true });
 
-    await vi.waitFor(() => {
-      expect(repos.listMeetings()).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            external_meeting_id: "om_real_transcript",
-            title: "真实转写会议",
-            organizer: "ou_real",
-            transcript_text: "这是真实拉取到的逐字稿文本。"
-          })
-        ])
-      );
-    });
+    await vi.waitFor(
+      () => {
+        expect(repos.listMeetings()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              external_meeting_id: "om_real_transcript",
+              title: "真实转写会议",
+              organizer: "ou_real",
+              transcript_text: "这是真实拉取到的逐字稿文本。"
+            })
+          ])
+        );
+      },
+      { timeout: 7000 }
+    );
   });
 });

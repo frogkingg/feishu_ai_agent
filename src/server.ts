@@ -28,19 +28,30 @@ const SendCardBodySchema = z
     message: "Provide either recipient or chat_id, not both"
   });
 
-const FeishuTranscriptionUpdatedEventType = "vc.meeting.transcription_updated";
+const FeishuMeetingRecordingEndedEventType = "vc.meeting.recording_ended";
 const TranscriptPendingText =
   "【transcript pending - to be fetched via lark-cli vc transcript get】";
 const CardActionPendingMessage = "此操作暂未实现，将在 PR-2 中完成";
 const TranscriptFetchTimeoutMs = 3000;
 
-const FeishuTranscriptionUpdatedEventSchema = z
+const FeishuMeetingEventSchema = z
   .object({
     meeting_id: z.string().trim().min(1),
-    topic: z.string().trim().min(1).optional().nullable(),
+    topic: z.string().trim().optional().nullable(),
     operator_id: z
       .object({
-        open_id: z.string().trim().min(1).optional().nullable()
+        open_id: z.string().trim().optional().nullable()
+      })
+      .optional()
+      .nullable(),
+    host_user: z
+      .object({
+        id: z
+          .object({
+            open_id: z.string().trim().optional().nullable()
+          })
+          .optional()
+          .nullable()
       })
       .optional()
       .nullable()
@@ -389,62 +400,65 @@ export function buildServer(input: {
       return { challenge: payload.challenge };
     }
 
-    if (eventType === FeishuTranscriptionUpdatedEventType) {
-      const event = FeishuTranscriptionUpdatedEventSchema.parse(payload.event ?? {});
-      const organizer = event.operator_id?.open_id ?? null;
+    if (eventType === FeishuMeetingRecordingEndedEventType) {
+      const event = FeishuMeetingEventSchema.parse(payload.event ?? {});
+      const organizer = event.operator_id?.open_id ?? event.host_user?.id?.open_id ?? null;
       const title = event.topic?.trim() || event.meeting_id;
-      const transcript = await withTimeout(
-        fetchTranscript({
-          repos: input.repos,
-          config: input.config,
-          meetingId: event.meeting_id,
-          runner: input.larkCliRunner
-        }).catch((error) => {
-          request.log.warn(
-            { err: error, external_meeting_id: event.meeting_id },
-            "failed to fetch transcript for feishu event; using fallback text"
-          );
-          return TranscriptPendingText;
-        }),
-        TranscriptFetchTimeoutMs,
-        TranscriptPendingText
-      );
 
-      void processMeetingWorkflow({
-        repos: input.repos,
-        llm: input.llm,
-        meeting: {
-          external_meeting_id: event.meeting_id,
-          title,
-          participants: organizer === null ? [] : [organizer],
-          organizer,
-          started_at: null,
-          ended_at: null,
-          transcript_text: transcript
-        }
-      })
-        .then((result) => {
-          request.log.info(
-            {
-              event_type: eventType,
-              external_meeting_id: event.meeting_id,
-              meeting_id: result.meeting_id,
-              confirmation_requests: result.confirmation_requests.length,
-              transcript_preview: transcript.slice(0, 80)
-            },
-            "triggered meeting workflow from feishu transcription event"
-          );
-        })
-        .catch((error) => {
-          request.log.error(
-            {
-              event_type: eventType,
-              external_meeting_id: event.meeting_id,
-              err: error
-            },
-            "failed meeting workflow from feishu transcription event"
-          );
+      void (async () => {
+        // 等待妙记生成
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        const transcript = await withTimeout(
+          fetchTranscript({
+            repos: input.repos,
+            config: input.config,
+            meetingId: event.meeting_id,
+            runner: input.larkCliRunner
+          }).catch((error) => {
+            request.log.warn(
+              { err: error, external_meeting_id: event.meeting_id },
+              "failed to fetch transcript for feishu recording-ended event; using fallback text"
+            );
+            return TranscriptPendingText;
+          }),
+          TranscriptFetchTimeoutMs,
+          TranscriptPendingText
+        );
+
+        const result = await processMeetingWorkflow({
+          repos: input.repos,
+          llm: input.llm,
+          meeting: {
+            external_meeting_id: event.meeting_id,
+            title,
+            participants: organizer === null ? [] : [organizer],
+            organizer,
+            started_at: null,
+            ended_at: null,
+            transcript_text: transcript
+          }
         });
+
+        request.log.info(
+          {
+            event_type: eventType,
+            external_meeting_id: event.meeting_id,
+            meeting_id: result.meeting_id,
+            confirmation_requests: result.confirmation_requests.length,
+            transcript_preview: transcript.slice(0, 80)
+          },
+          "triggered meeting workflow from feishu recording-ended event"
+        );
+      })().catch((error) => {
+        request.log.error(
+          {
+            event_type: eventType,
+            external_meeting_id: event.meeting_id,
+            err: error
+          },
+          "failed meeting workflow from feishu recording-ended event"
+        );
+      });
 
       return reply.code(202).send({ accepted: true });
     }
