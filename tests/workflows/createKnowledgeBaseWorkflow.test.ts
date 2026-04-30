@@ -5,6 +5,7 @@ import { confirmRequest } from "../../src/services/confirmationService";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkflow";
 
 function readFixture(name: string): string {
@@ -88,26 +89,66 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(repos.getConfirmationRequest(request!.id)?.status).toBe("executed");
   });
 
-  it("fails in real mode while larkWiki/larkDoc are not implemented", async () => {
+  it("creates wiki nodes in real mode with wiki +node-create", async () => {
     const repos = await processDroneMeetings();
     const request = repos
       .listConfirmationRequests()
       .find((item) => item.request_type === "create_kb");
     expect(request).toBeTruthy();
+    const createdArgs: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      createdArgs.push(args);
+      const nodeToken = `node_${createdArgs.length}`;
+      return {
+        stdout: JSON.stringify({
+          data: {
+            node_token: nodeToken,
+            url: `https://example.feishu.cn/wiki/${nodeToken}`,
+            space_id: "my_library"
+          }
+        }),
+        stderr: ""
+      };
+    };
 
     await confirmRequest({
       repos,
       config: loadConfig({ feishuDryRun: false, sqlitePath: ":memory:" }),
-      id: request!.id
+      id: request!.id,
+      runner
     });
 
     const confirmation = repos.getConfirmationRequest(request!.id);
-    expect(confirmation?.status).toBe("failed");
-    expect(confirmation?.error).toContain("larkWiki/larkDoc");
-    expect(repos.listKnowledgeBases()).toHaveLength(0);
-    expect(repos.listKnowledgeUpdates()).toHaveLength(0);
+    expect(confirmation?.status).toBe("executed");
+    expect(confirmation?.error).toBeNull();
+    expect(repos.listKnowledgeBases()).toHaveLength(1);
+    expect(repos.listKnowledgeBases()[0]).toMatchObject({
+      wiki_url: "https://example.feishu.cn/wiki/node_1",
+      homepage_url: "https://example.feishu.cn/wiki/node_1"
+    });
+    expect(repos.listKnowledgeUpdates()).toHaveLength(1);
     expect(
       repos.listMeetings().filter((meeting) => meeting.archive_status === "archived")
-    ).toHaveLength(0);
+    ).toHaveLength(2);
+    expect(createdArgs).toHaveLength(11);
+    expect(createdArgs[0]).toEqual([
+      "wiki",
+      "+node-create",
+      "--space-id",
+      "my_library",
+      "--title",
+      "无人机操作流程主题知识库",
+      "--obj-type",
+      "docx",
+      "--as",
+      "user"
+    ]);
+    expect(createdArgs.slice(1).every((args) => args[0] === "wiki")).toBe(true);
+    expect(createdArgs.slice(1).every((args) => args[1] === "+node-create")).toBe(true);
+    expect(
+      createdArgs.slice(1).every((args) => args.includes("--parent-node-token"))
+    ).toBe(true);
+    expect(createdArgs.flat()).not.toContain("+update");
+    expect(repos.listCliRuns().map((run) => run.status)).toEqual(Array(11).fill("success"));
   });
 });
