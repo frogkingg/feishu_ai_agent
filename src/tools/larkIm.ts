@@ -1,11 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { unlink, writeFile } from "node:fs/promises";
 import { AppConfig, loadConfig } from "../config";
 import { DryRunConfirmationCard } from "../schemas";
 import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
-import { runLarkCli, type LarkCliResult, type LarkCliRunner } from "./larkCli";
+import { runLarkCli, type LarkCliRunner } from "./larkCli";
 
 export type LarkImIdentity = "bot" | "user";
 
@@ -220,17 +216,6 @@ function messageIdFromParsed(parsed: unknown): string | null {
   return null;
 }
 
-function cardContentTempPath(requestId: string): string {
-  const safeRequestId = requestId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return join(tmpdir(), `meeting-atlas-card-${safeRequestId}-${randomUUID()}.json`);
-}
-
-async function writeCardContentFile(cardContent: FeishuInteractiveCard, requestId: string) {
-  const filePath = cardContentTempPath(requestId);
-  await writeFile(filePath, JSON.stringify(cardContent), "utf8");
-  return filePath;
-}
-
 function failedResult(input: {
   dryRun: boolean;
   cliRunId?: string | null;
@@ -271,7 +256,7 @@ export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
   }
 
   const cardContent = buildFeishuInteractiveCard(input.card);
-  const cardContentPath = await writeCardContentFile(cardContent, input.card.request_id);
+  const cardJson = JSON.stringify(cardContent);
   const args = [
     "im",
     "+messages-send",
@@ -279,26 +264,21 @@ export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
     "--msg-type",
     "interactive",
     "--content",
-    `@${cardContentPath}`,
+    cardJson,
     "--as",
     identity,
     "--idempotency-key",
     `meeting-atlas-card-${input.card.request_id}`
   ];
 
-  let result: LarkCliResult;
-  try {
-    result = await runLarkCli(args, {
-      repos: input.repos,
-      config,
-      toolName: "lark.im.send_card",
-      dryRun: cardSendDryRun,
-      expectJson: true,
-      runner: input.runner
-    });
-  } finally {
-    await unlink(cardContentPath).catch(() => undefined);
-  }
+  const result = await runLarkCli(args, {
+    repos: input.repos,
+    config,
+    toolName: "lark.im.send_card",
+    dryRun: cardSendDryRun,
+    expectJson: true,
+    runner: input.runner
+  });
 
   if (result.dryRun || result.status === "planned") {
     return {

@@ -51,6 +51,13 @@ function isKnowledgeBaseCreationAction(
   return KnowledgeBaseActionIntentPatterns.some((pattern) => pattern.test(text));
 }
 
+function actionConfirmationRecipient(input: {
+  recipient: string | null;
+  organizer: string | null;
+}): string | null {
+  return input.recipient?.startsWith("ou_") ? input.recipient : (input.organizer ?? null);
+}
+
 export async function processMeetingWorkflow(input: {
   repos: Repositories;
   llm: LlmClient;
@@ -125,7 +132,10 @@ export async function processMeetingWorkflow(input: {
         repos: input.repos,
         requestType: "action",
         targetId: record.row.id,
-        recipient: record.recipient,
+        recipient: actionConfirmationRecipient({
+          recipient: record.recipient,
+          organizer: input.meeting.organizer
+        }),
         originalPayload: {
           draft: record.draft,
           meeting_id: meeting.id

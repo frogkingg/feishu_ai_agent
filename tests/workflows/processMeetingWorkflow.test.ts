@@ -39,7 +39,7 @@ describe("processMeetingWorkflow", () => {
       meeting: {
         title: "无人机操作方案初步访谈",
         participants: ["张三", "李四"],
-        organizer: "张三",
+        organizer: "ou_organizer",
         started_at: "2026-04-28T10:00:00+08:00",
         ended_at: "2026-04-28T11:00:00+08:00",
         transcript_text: transcript
@@ -63,6 +63,8 @@ describe("processMeetingWorkflow", () => {
     expect(result.confirmation_requests).toHaveLength(3);
     expect(confirmations.some((item) => item.request_type === "action")).toBe(true);
     expect(confirmations.some((item) => item.request_type === "calendar")).toBe(true);
+    expect(actionRequest?.recipient).toBe("ou_organizer");
+    expect(calendarRequest?.recipient).toBe("ou_organizer");
     expect(actionPayload.draft).toBeTruthy();
     expect(actionPayload.meeting_id).toBe(result.meeting_id);
     expect(actionPayload.card_preview).toMatchObject({
