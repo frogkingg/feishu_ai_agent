@@ -87,11 +87,15 @@ export function preferredMeetingLink(
 
 export function formatMeetingReference(
   meeting: MeetingDisplayInput,
-  options: { preferredLink?: MeetingLinkPreference } = {}
+  options: { preferredLink?: MeetingLinkPreference; hideInternalId?: boolean } = {}
 ): string {
   const link = preferredMeetingLink(meeting, options.preferredLink ?? "minutes");
   if (link !== null) {
     return `${meeting.title}（${link.label}：${link.url}）`;
+  }
+
+  if (options.hideInternalId) {
+    return meeting.title;
   }
 
   return `会议 ${meeting.id}：${meeting.title}`;

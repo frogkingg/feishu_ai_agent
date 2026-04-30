@@ -95,7 +95,8 @@ function renderActionIndex(actions: ActionItemRow[], meeting: MeetingRow): strin
     const owner = action.owner ? `，负责人 ${formatUserForDisplay(action.owner)}` : "";
     const due = action.due_date ? `，截止 ${action.due_date}` : "";
     return `${action.title}${owner}${due}（来源${formatMeetingReference(meeting, {
-      preferredLink: "minutes"
+      preferredLink: "minutes",
+      hideInternalId: true
     })}）`;
   });
 }
@@ -106,14 +107,16 @@ function renderCalendarIndex(calendars: CalendarDraftRow[], meeting: MeetingRow)
     const participants = formatUserListForDisplay(parseStringArray(calendar.participants_json));
     const participantText = participants.length > 0 ? `，参与人 ${participants.join("、")}` : "";
     return `${calendar.title}${time}${participantText}（来源${formatMeetingReference(meeting, {
-      preferredLink: "minutes"
+      preferredLink: "minutes",
+      hideInternalId: true
     })}）`;
   });
 }
 
 function transcriptReference(meeting: MeetingRow): string {
   const reference = formatMeetingReference(meeting, {
-    preferredLink: "transcript"
+    preferredLink: "transcript",
+    hideInternalId: true
   });
   if (
     meeting.transcript_url ||
@@ -143,7 +146,8 @@ function renderAppendMarkdown(input: {
     "",
     `知识库：${input.knowledgeBase.name}`,
     `来源会议：${formatMeetingReference(input.meeting, {
-      preferredLink: "minutes"
+      preferredLink: "minutes",
+      hideInternalId: true
     })}`,
     "",
     "## 会议摘要",

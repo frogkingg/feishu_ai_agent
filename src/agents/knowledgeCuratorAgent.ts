@@ -13,8 +13,8 @@ import {
 } from "../utils/display";
 import { stableDemoId } from "../utils/id";
 
-const HOME_PAGE_LABEL = "首页 / 总览";
-const MEETING_SUMMARY_LABEL = "单个会议总结";
+const HOME_PAGE_LABEL = "Henry 个人工作台 / 总览";
+const MEETING_SUMMARY_LABEL = "会议总结";
 const TRANSCRIPT_LABEL = "会议转写记录";
 const DECISIONS_LABEL = "关键结论与决策";
 const ACTION_CALENDAR_INDEX_LABEL = "待办与日程索引";
@@ -142,9 +142,10 @@ function sourceMeetingReference(meetingsById: Map<string, MeetingRow>, meetingId
   const meeting = meetingsById.get(meetingId);
   return meeting
     ? formatMeetingReference(meeting, {
-        preferredLink: "minutes"
+        preferredLink: "minutes",
+        hideInternalId: true
       })
-    : `会议 ${meetingId}`;
+    : "来源会议";
 }
 
 function renderActionIndex(
@@ -178,7 +179,8 @@ function renderCalendarIndex(
 
 function transcriptReference(meeting: MeetingRow): string {
   const reference = formatMeetingReference(meeting, {
-    preferredLink: "transcript"
+    preferredLink: "transcript",
+    hideInternalId: true
   });
   if (
     meeting.transcript_url ||
@@ -211,7 +213,8 @@ function buildPages(input: {
   const meetingSummaries = input.meetings.map(
     (meeting) =>
       `${formatMeetingReference(meeting, {
-        preferredLink: "minutes"
+        preferredLink: "minutes",
+        hideInternalId: true
       })}：${meeting.summary ?? "暂无摘要"}`
   );
   const transcriptRefs = input.meetings.map(transcriptReference);
@@ -221,7 +224,8 @@ function buildPages(input: {
   const calendarIndex = renderCalendarIndex(input.calendars, meetingsById);
   const meetingRefs = input.meetings.map((meeting) =>
     formatMeetingReference(meeting, {
-      preferredLink: "minutes"
+      preferredLink: "minutes",
+      hideInternalId: true
     })
   );
   const pageDrafts: PageDraft[] = [
@@ -325,9 +329,9 @@ function buildPages(input: {
     markdown: [
       `# ${homeTitle}`,
       "",
-      `主题知识库：${input.name}`,
+      `个人知识库：${input.name}`,
       "",
-      "## 知识库目标",
+      "## 个人工作台目标",
       input.goal,
       "",
       "## 自适应结构",
@@ -377,7 +381,7 @@ export function runKnowledgeCuratorAgent(input: {
     input.meetings.flatMap((meeting) => parseStringArray(meeting.keywords_json))
   );
   const sources = extractSourceReferences(input.meetings);
-  const goal = `沉淀 ${input.topicName} 相关会议结论、执行事项和来源资料。`;
+  const goal = `沉淀 ${input.topicName} 相关会议结论、执行事项和来源资料，形成 Henry 个人工作台的可持续更新记录。`;
   const pages = buildPages({
     name: input.topicName,
     goal,
@@ -392,7 +396,7 @@ export function runKnowledgeCuratorAgent(input: {
     kb_id: stableDemoId("kb", input.topicName),
     name: input.topicName,
     goal,
-    description: `由 ${input.meetings.length} 场相关会议 dry-run 创建的主题知识库。`,
+    description: `由 ${input.meetings.length} 场相关会议 dry-run 创建的 Henry 个人知识库。`,
     owner: input.owner,
     status: "active",
     confidence_origin: input.confidenceOrigin,

@@ -1,5 +1,11 @@
-import { ManualMeetingInput, MeetingExtractionResult, TopicMatchResult } from "../schemas";
+import {
+  DryRunConfirmationCard,
+  ManualMeetingInput,
+  MeetingExtractionResult,
+  TopicMatchResult
+} from "../schemas";
 import { runCalendarAgent } from "../agents/calendarAgent";
+import { buildConfirmationCardFromRequest } from "../agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "../agents/meetingExtractionAgent";
 import { runPersonalActionAgent } from "../agents/personalActionAgent";
 import { runTopicClusteringAgent } from "../agents/topicClusteringAgent";
@@ -15,6 +21,8 @@ const KnowledgeBaseActionIntentPatterns = [
   /归档到.{0,12}知识库/,
   /建立.{0,12}知识库/
 ];
+const PersonalWorkspaceName = "Henry 个人工作台";
+const PersonalKnowledgeBaseMode = "personal";
 
 export interface ProcessMeetingResult {
   meeting_id: string;
@@ -23,25 +31,31 @@ export interface ProcessMeetingResult {
   topic_match: TopicMatchResult;
 }
 
+export interface ProcessMeetingTextResult extends ProcessMeetingResult {
+  personal_workspace: {
+    mode: "personal";
+    name: string;
+    recipient: string | null;
+  };
+  confirmation_summary: Record<ConfirmationRequestRow["request_type"], number>;
+  confirmation_cards: DryRunConfirmationCard[];
+}
+
 function suggestTopicName(input: { title: string; keywords: string[] }): string {
   const primaryKeywords = input.keywords.slice(0, 2).join("");
   return primaryKeywords ? `${primaryKeywords}主题知识库` : `${input.title}主题知识库`;
 }
 
 function suggestGoal(topicName: string): string {
-  return `沉淀${topicName}相关会议结论、行动项、日程与资料来源，` + "形成可持续更新的项目知识库。";
+  return `沉淀${topicName}相关会议结论、行动项、日程与资料来源，形成 Henry 个人可持续更新的项目知识库。`;
 }
 
 function defaultKnowledgeBaseStructure(): string[] {
   return [
-    "00 首页 / 总览",
-    "01 整体目标",
-    "02 整体分析",
-    "03 当前进度",
-    "04 风险与决策",
-    "05 待办与日程索引",
-    "06 单个会议总结",
-    "07 会议转写记录"
+    "00 Henry 个人工作台 / 总览",
+    "01 会议总结",
+    "02 会议转写记录",
+    "03 待办与日程索引"
   ];
 }
 
@@ -57,6 +71,25 @@ function actionConfirmationRecipient(input: {
   organizer: string | null;
 }): string | null {
   return input.recipient?.startsWith("ou_") ? input.recipient : (input.organizer ?? null);
+}
+
+function meetingSourcePayload(meeting: {
+  id: string;
+  title: string;
+  external_meeting_id: string | null;
+  minutes_url: string | null;
+  transcript_url: string | null;
+}): Record<string, unknown> {
+  return {
+    meeting_reference: formatMeetingReference(meeting, {
+      preferredLink: "minutes",
+      hideInternalId: true
+    }),
+    meeting_title: meeting.title,
+    minutes_url: meeting.minutes_url,
+    transcript_url: meeting.transcript_url,
+    external_meeting_id: meeting.external_meeting_id
+  };
 }
 
 function appendMeetingPayload(input: {
@@ -76,12 +109,7 @@ function appendMeetingPayload(input: {
     kb_id: input.kbId,
     kb_name: input.kbName,
     meeting_id: input.meeting.id,
-    meeting_title: input.meeting.title,
-    meeting_reference: formatMeetingReference(input.meeting, {
-      preferredLink: "minutes"
-    }),
-    minutes_url: input.meeting.minutes_url,
-    transcript_url: input.meeting.transcript_url,
+    ...meetingSourcePayload(input.meeting),
     meeting_summary: input.extraction.meeting_summary,
     key_decisions: input.extraction.key_decisions,
     risks: input.extraction.risks,
@@ -99,9 +127,28 @@ function meetingReferencesForIds(input: { repos: Repositories; meetingIds: strin
     .filter((meeting): meeting is NonNullable<typeof meeting> => meeting !== null)
     .map((meeting) =>
       formatMeetingReference(meeting, {
-        preferredLink: "minutes"
+        preferredLink: "minutes",
+        hideInternalId: true
       })
     );
+}
+
+function countConfirmationRequests(
+  confirmations: ConfirmationRequestRow[]
+): Record<ConfirmationRequestRow["request_type"], number> {
+  return confirmations.reduce<Record<ConfirmationRequestRow["request_type"], number>>(
+    (counts, confirmation) => ({
+      ...counts,
+      [confirmation.request_type]: counts[confirmation.request_type] + 1
+    }),
+    {
+      action: 0,
+      calendar: 0,
+      create_kb: 0,
+      append_meeting: 0,
+      archive_source: 0
+    }
+  );
 }
 
 export async function processMeetingWorkflow(input: {
@@ -186,7 +233,8 @@ export async function processMeetingWorkflow(input: {
         }),
         originalPayload: {
           draft: record.draft,
-          meeting_id: meeting.id
+          meeting_id: meeting.id,
+          ...meetingSourcePayload(meeting)
         }
       })
     );
@@ -201,7 +249,8 @@ export async function processMeetingWorkflow(input: {
         recipient: record.recipient,
         originalPayload: {
           draft: record.draft,
-          meeting_id: meeting.id
+          meeting_id: meeting.id,
+          ...meetingSourcePayload(meeting)
         }
       })
     );
@@ -219,6 +268,8 @@ export async function processMeetingWorkflow(input: {
         targetId: createId("kb_candidate"),
         recipient: input.meeting.organizer,
         originalPayload: {
+          knowledge_base_mode: PersonalKnowledgeBaseMode,
+          workspace_name: PersonalWorkspaceName,
           topic_name: topicName,
           suggested_goal: suggestGoal(topicName),
           candidate_meeting_ids: topicMatch.candidate_meeting_ids,
@@ -260,5 +311,30 @@ export async function processMeetingWorkflow(input: {
     extraction,
     confirmation_requests: confirmations.map((confirmation) => confirmation.id),
     topic_match: topicMatch
+  };
+}
+
+export async function processMeetingTextToConfirmationsWorkflow(input: {
+  repos: Repositories;
+  llm: LlmClient;
+  meeting: ManualMeetingInput;
+  personalWorkspaceName?: string;
+}): Promise<ProcessMeetingTextResult> {
+  const result = await processMeetingWorkflow(input);
+  const confirmations = result.confirmation_requests
+    .map((id) => input.repos.getConfirmationRequest(id))
+    .filter((confirmation): confirmation is ConfirmationRequestRow => confirmation !== null);
+
+  return {
+    ...result,
+    personal_workspace: {
+      mode: PersonalKnowledgeBaseMode,
+      name: input.personalWorkspaceName ?? PersonalWorkspaceName,
+      recipient: input.meeting.organizer
+    },
+    confirmation_summary: countConfirmationRequests(confirmations),
+    confirmation_cards: confirmations.map((confirmation) =>
+      buildConfirmationCardFromRequest(confirmation)
+    )
   };
 }

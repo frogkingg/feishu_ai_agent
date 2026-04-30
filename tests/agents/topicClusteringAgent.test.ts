@@ -286,7 +286,12 @@ describe("TopicClusteringAgent", () => {
       meeting_ids: second.topic_match.candidate_meeting_ids,
       match_reasons: second.topic_match.match_reasons,
       score: second.topic_match.score,
-      default_structure: expect.arrayContaining(["00 首页 / 总览", "06 单个会议总结"]),
+      default_structure: [
+        "00 Henry 个人工作台 / 总览",
+        "01 会议总结",
+        "02 会议转写记录",
+        "03 待办与日程索引"
+      ],
       card_preview: {
         card_type: "create_kb_confirmation",
         request_id: createKbRequests[0].id,

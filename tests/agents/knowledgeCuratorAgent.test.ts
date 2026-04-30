@@ -94,8 +94,8 @@ describe("knowledgeCuratorAgent", () => {
       "transcript"
     ]);
     expect(draft.pages.map((page) => page.title)).toEqual([
-      "00 首页 / 总览",
-      "01 单个会议总结",
+      "00 Henry 个人工作台 / 总览",
+      "01 会议总结",
       "02 会议转写记录"
     ]);
     expect(draft.pages.every((page) => page.source_signals.includes("always"))).toBe(true);
@@ -134,8 +134,8 @@ describe("knowledgeCuratorAgent", () => {
       "sources"
     ]);
     expect(draft.pages.map((page) => page.title)).toEqual([
-      "00 首页 / 总览",
-      "01 单个会议总结",
+      "00 Henry 个人工作台 / 总览",
+      "01 会议总结",
       "02 会议转写记录",
       "03 关键结论与决策",
       "04 待办与日程索引",

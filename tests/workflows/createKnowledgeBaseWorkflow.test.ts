@@ -83,9 +83,9 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(updates[0].update_type).toBe("kb_created");
 
     const markdown = updates[0].after_text ?? "";
-    expect(markdown).toContain("00 首页 / 总览");
+    expect(markdown).toContain("00 Henry 个人工作台 / 总览");
     expect(markdown).toContain("自适应结构");
-    expect(markdown).toContain("01 单个会议总结");
+    expect(markdown).toContain("01 会议总结");
     expect(markdown).toContain("02 会议转写记录");
     expect(markdown).toContain("关键结论与决策");
     expect(markdown).toContain("待办与日程索引");
@@ -227,10 +227,10 @@ describe("createKnowledgeBaseWorkflow", () => {
     ]);
     expect(JSON.parse(spaceCreateArgs[0][spaceCreateArgs[0].indexOf("--data") + 1])).toEqual({
       name: "无人机操作流程主题知识库",
-      description: "由 2 场相关会议 dry-run 创建的主题知识库。"
+      description: "由 2 场相关会议 dry-run 创建的 Henry 个人知识库。"
     });
     expect(wikiNodeCreateArgs[0]).toEqual(
-      expect.arrayContaining(["--space-id", "space_1", "--title", "01 单个会议总结"])
+      expect.arrayContaining(["--space-id", "space_1", "--title", "01 会议总结"])
     );
     expect(wikiNodeCreateArgs[1]).toEqual(
       expect.arrayContaining(["--space-id", "space_1", "--title", "02 会议转写记录"])
@@ -253,7 +253,7 @@ describe("createKnowledgeBaseWorkflow", () => {
       ])
     );
     const firstUpdateContent = updateArgs[0][updateArgs[0].indexOf("--content") + 1];
-    expect(firstUpdateContent).toContain("# 01 单个会议总结");
+    expect(firstUpdateContent).toContain("# 01 会议总结");
     expect(repos.listCliRuns().map((run) => run.status)).toEqual(
       Array(1 + childPageCount * 2).fill("success")
     );

@@ -214,6 +214,10 @@ function displayField(key: string, label: string, value: unknown): CardDisplayFi
   };
 }
 
+function publicTargetId(targetId: string): string {
+  return targetId.startsWith("mtg_") ? "current_meeting" : targetId;
+}
+
 function editableField(input: {
   key: string;
   label: string;
@@ -492,7 +496,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   return buildCard({
     card_type: "action_confirmation",
     request_id: parsed.id,
-    target_id: parsed.target_id,
+    target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
     title: `确认待办：${draft.title}`,
@@ -572,7 +576,7 @@ export function buildCalendarConfirmationCard(
   return buildCard({
     card_type: "calendar_confirmation",
     request_id: parsed.id,
-    target_id: parsed.target_id,
+    target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
     title: `确认日程：${draft.title}`,
@@ -667,7 +671,7 @@ export function buildCreateKbConfirmationCard(
   return buildCard({
     card_type: "create_kb_confirmation",
     request_id: parsed.id,
-    target_id: parsed.target_id,
+    target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
     title: `确认创建知识库：${topicName}`,
@@ -746,7 +750,7 @@ export function buildAppendMeetingConfirmationCard(
   return buildCard({
     card_type: "append_meeting_confirmation",
     request_id: parsed.id,
-    target_id: parsed.target_id,
+    target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
     title: `确认追加会议：${kbName}`,
@@ -783,7 +787,7 @@ export function buildGenericConfirmationCard(input: CardConfirmationInput): DryR
   return buildCard({
     card_type: "generic_confirmation",
     request_id: parsed.id,
-    target_id: parsed.target_id,
+    target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
     title: `确认请求：${requestType}`,

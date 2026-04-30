@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { AppConfig } from "./config";
-import { ManualMeetingInputSchema } from "./schemas";
+import { ManualMeetingInputSchema, ProcessMeetingTextInputSchema } from "./schemas";
 import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
 import { confirmRequest, rejectRequest } from "./services/confirmationService";
@@ -12,7 +12,10 @@ import { type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
 import { verifyLarkCardActionSignature, verifyLarkWebhookSignature } from "./utils/larkSignature";
-import { processMeetingWorkflow } from "./workflows/processMeetingWorkflow";
+import {
+  processMeetingTextToConfirmationsWorkflow,
+  processMeetingWorkflow
+} from "./workflows/processMeetingWorkflow";
 
 const LlmSmokeTestInputSchema = z.object({
   text: z.string().min(1)
@@ -854,6 +857,17 @@ export function buildServer(input: {
     });
 
     return result;
+  });
+
+  app.post("/dev/meetings/process-text", async (request) => {
+    const body = ProcessMeetingTextInputSchema.parse(request.body);
+
+    return processMeetingTextToConfirmationsWorkflow({
+      repos: input.repos,
+      llm: input.llm,
+      meeting: body.meeting,
+      personalWorkspaceName: body.personal_workspace_name
+    });
   });
 
   app.get("/dev/confirmations", async () =>

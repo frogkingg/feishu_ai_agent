@@ -106,4 +106,114 @@ describe("POST /dev/meetings/manual", () => {
     expect(createKbRequest).toBeTruthy();
     expect(secondBody.confirmation_requests).toContain(createKbRequest!.id);
   });
+
+  it("processes real meeting text into personal task, calendar, and KB confirmation cards", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({ sqlitePath: ":memory:" }),
+      repos,
+      llm: new MockLlmClient()
+    });
+
+    const firstResponse = await app.inject({
+      method: "POST",
+      url: "/dev/meetings/process-text",
+      payload: {
+        title: "无人机操作方案初步访谈",
+        participants: ["Henry", "李四"],
+        organizer: "Henry",
+        started_at: "2026-04-28T10:00:00+08:00",
+        ended_at: "2026-04-28T11:00:00+08:00",
+        meeting_url: "https://example.feishu.cn/minutes/min_001",
+        transcript_url: "https://example.feishu.cn/minutes/transcript_001",
+        transcript_text: readFileSync(
+          join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+          "utf8"
+        )
+      }
+    });
+
+    expect(firstResponse.statusCode).toBe(200);
+    const firstBody = firstResponse.json() as {
+      confirmation_summary: { action: number; calendar: number; create_kb: number };
+      confirmation_cards: Array<{ card_type: string; sections: unknown[] }>;
+    };
+
+    const secondResponse = await app.inject({
+      method: "POST",
+      url: "/dev/meetings/process-text",
+      payload: {
+        title: "无人机操作员访谈",
+        participants: ["Henry", "王五"],
+        organizer: "Henry",
+        started_at: "2026-04-29T10:00:00+08:00",
+        ended_at: "2026-04-29T11:00:00+08:00",
+        minutes_url: "https://example.feishu.cn/minutes/min_002",
+        transcript_url: "https://example.feishu.cn/minutes/transcript_002",
+        transcript_text: `${readFileSync(join(process.cwd(), "fixtures/meetings/drone_interview_02.txt"), "utf8")}
+后续要把这两次访谈整理成一个无人机操作方案知识库。`
+      }
+    });
+
+    expect(secondResponse.statusCode).toBe(200);
+    const secondBody = secondResponse.json() as {
+      personal_workspace: { mode: string; name: string; recipient: string | null };
+      confirmation_summary: { action: number; calendar: number; create_kb: number };
+      confirmation_cards: Array<{ card_type: string; sections: unknown[] }>;
+    };
+    const combinedSummary = {
+      action: firstBody.confirmation_summary.action + secondBody.confirmation_summary.action,
+      calendar: firstBody.confirmation_summary.calendar + secondBody.confirmation_summary.calendar,
+      create_kb: firstBody.confirmation_summary.create_kb + secondBody.confirmation_summary.create_kb
+    };
+    const combinedCards = [...firstBody.confirmation_cards, ...secondBody.confirmation_cards];
+
+    expect(secondBody.personal_workspace).toEqual({
+      mode: "personal",
+      name: "Henry 个人工作台",
+      recipient: "Henry"
+    });
+    expect(combinedSummary.action).toBeGreaterThan(0);
+    expect(combinedSummary.calendar).toBeGreaterThan(0);
+    expect(combinedSummary.create_kb).toBe(1);
+    expect(combinedCards.map((card) => card.card_type)).toEqual(
+      expect.arrayContaining([
+        "action_confirmation",
+        "calendar_confirmation",
+        "create_kb_confirmation"
+      ])
+    );
+
+    const cardJson = JSON.stringify(combinedCards);
+    expect(cardJson).toContain("https://example.feishu.cn/minutes/min_002");
+    expect(cardJson).not.toContain("mtg_");
+    expect(cardJson).not.toContain("安全说明");
+
+    const createKbRequest = repos
+      .listConfirmationRequests()
+      .find((confirmation) => confirmation.request_type === "create_kb");
+    expect(createKbRequest).toBeTruthy();
+    const createKbPayload = JSON.parse(createKbRequest!.original_payload_json) as {
+      knowledge_base_mode?: string;
+      workspace_name?: string;
+      default_structure?: string[];
+      candidate_meeting_refs?: string[];
+    };
+    expect(createKbPayload).toMatchObject({
+      knowledge_base_mode: "personal",
+      workspace_name: "Henry 个人工作台",
+      default_structure: [
+        "00 Henry 个人工作台 / 总览",
+        "01 会议总结",
+        "02 会议转写记录",
+        "03 待办与日程索引"
+      ]
+    });
+    expect(createKbPayload.candidate_meeting_refs).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("https://example.feishu.cn/minutes/min_001"),
+        expect.stringContaining("https://example.feishu.cn/minutes/min_002")
+      ])
+    );
+  });
 });
