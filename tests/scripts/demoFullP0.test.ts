@@ -391,7 +391,7 @@ describe("demo-full-p0 script", () => {
       const knowledgeUpdates = repos.listKnowledgeUpdates();
       expect(knowledgeBases).toHaveLength(1);
       expect(knowledgeBases[0]).toMatchObject({
-        name: "无人机操作方案",
+        name: "无人机操作流程主题知识库",
         status: "active"
       });
       expect(knowledgeBases[0].wiki_url).toMatch(/^mock:\/\//);

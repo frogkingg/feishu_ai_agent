@@ -272,14 +272,6 @@ function extractCardCallbackPayload(payload: unknown): {
   };
 }
 
-function cardCallbackPreview(parsed: ReturnType<typeof extractCardCallbackPayload>) {
-  return {
-    request_id: parsed.requestId,
-    action_key: parsed.actionKey,
-    has_edited_payload: parsed.editedPayload !== undefined && parsed.editedPayload !== null
-  };
-}
-
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   let timeout: NodeJS.Timeout | null = null;
   try {
@@ -459,124 +451,6 @@ export function buildServer(input: {
 
     request.log.info({ event_type: eventType }, "accepted unsupported feishu event webhook");
     return reply.code(202).send({ accepted: true });
-  });
-
-  app.post("/webhooks/feishu/card", async (request, reply) => {
-    const payload = request.body ?? {};
-    const root = asRecord(payload) ?? {};
-    const challenge = stringValue(root.challenge);
-    if (challenge !== null) {
-      return { challenge };
-    }
-
-    if (!input.config.feishuDryRun) {
-      return reply.code(409).send({
-        ok: false,
-        dry_run: false,
-        error: "Feishu card callback skeleton only runs when FEISHU_DRY_RUN=true"
-      });
-    }
-
-    const parsed = extractCardCallbackPayload(payload);
-    const normalizedPreview = cardCallbackPreview(parsed);
-    request.log.info({ normalized_preview: normalizedPreview }, "received feishu card callback");
-
-    if (parsed.requestId === null || parsed.actionKey === null) {
-      return reply.code(202).send({
-        accepted: true,
-        callback: "feishu.card",
-        dry_run: true,
-        normalized_preview: normalizedPreview,
-        message: "Feishu card callback accepted without actionable request_id/action_key"
-      });
-    }
-
-    const existing = input.repos.getConfirmationRequest(parsed.requestId);
-    if (existing === null) {
-      return reply
-        .code(404)
-        .send({ ok: false, error: `Confirmation request not found: ${parsed.requestId}` });
-    }
-
-    try {
-      if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        const result = await confirmRequest({
-          repos: input.repos,
-          config: input.config,
-          id: parsed.requestId,
-          editedPayload: parsed.editedPayload,
-          runner: input.larkCliRunner
-        });
-
-        return {
-          ok: result.confirmation.status !== "failed",
-          dry_run: true,
-          callback: "feishu.card",
-          action_key: parsed.actionKey,
-          request_id: parsed.requestId,
-          handled_as: "confirm",
-          confirmation: result.confirmation,
-          result: result.result
-        };
-      }
-
-      if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        const confirmation = rejectRequest({
-          repos: input.repos,
-          id: parsed.requestId,
-          reason: parsed.reason ?? parsed.actionKey
-        });
-
-        return {
-          ok: true,
-          dry_run: true,
-          callback: "feishu.card",
-          action_key: parsed.actionKey,
-          request_id: parsed.requestId,
-          handled_as: "reject",
-          confirmation
-        };
-      }
-
-      const previewAction =
-        PREVIEW_STUB_CARD_ACTIONS[parsed.actionKey as keyof typeof PREVIEW_STUB_CARD_ACTIONS];
-      if (previewAction !== undefined) {
-        const preview = cardPreviewStubAction({
-          repos: input.repos,
-          id: parsed.requestId,
-          action: previewAction
-        });
-        if (preview === null) {
-          return reply
-            .code(404)
-            .send({ ok: false, error: `Confirmation request not found: ${parsed.requestId}` });
-        }
-
-        return {
-          callback: "feishu.card",
-          action_key: parsed.actionKey,
-          request_id: parsed.requestId,
-          handled_as: "preview_stub",
-          ...preview
-        };
-      }
-
-      return reply.code(400).send({
-        ok: false,
-        dry_run: true,
-        action_key: parsed.actionKey,
-        request_id: parsed.requestId,
-        error: `Unsupported Feishu card action_key: ${parsed.actionKey}`
-      });
-    } catch (error) {
-      return reply.code(409).send({
-        ok: false,
-        dry_run: true,
-        action_key: parsed.actionKey,
-        request_id: parsed.requestId,
-        error: briefError(error)
-      });
-    }
   });
 
   app.post("/webhooks/feishu/card-action", async (request, reply) => {

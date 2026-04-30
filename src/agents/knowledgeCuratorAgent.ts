@@ -53,35 +53,14 @@ function extractSourceReferences(meetings: MeetingRow[]): string[] {
 
 function extractDecisions(meetings: MeetingRow[]): string[] {
   return unique(
-    meetings.flatMap((meeting) => {
-      const decisions: string[] = [];
-      if (meeting.transcript_text.includes("先调研流程，不急着做技术方案")) {
-        decisions.push("先调研流程，不急着做技术方案。");
-      }
-      if (meeting.transcript_text.includes("统一操作 SOP")) {
-        decisions.push("需要建立统一操作 SOP。");
-      }
-      return decisions;
-    })
+    meetings
+      .map((meeting) => meeting.summary)
+      .filter((summary): summary is string => summary !== null && summary.trim().length > 0)
   );
 }
 
-function extractRisks(meetings: MeetingRow[]): string[] {
-  return unique(
-    meetings.flatMap((meeting) => {
-      const risks: string[] = [];
-      if (meeting.transcript_text.includes("试飞权限")) {
-        risks.push("试飞权限仍需确认并纳入风险控制。");
-      }
-      if (
-        meeting.transcript_text.includes("天气") ||
-        meeting.transcript_text.includes("电池状态")
-      ) {
-        risks.push("天气、电池状态和现场安全员需要进入统一风险清单。");
-      }
-      return risks;
-    })
-  );
+function extractRisks(_meetings: MeetingRow[]): string[] {
+  return [];
 }
 
 function renderActionIndex(actions: ActionItemRow[]): string[] {

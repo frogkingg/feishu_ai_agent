@@ -61,7 +61,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     const updates = repos.listKnowledgeUpdates();
     expect(knowledgeBases).toHaveLength(1);
     expect(knowledgeBases[0]).toMatchObject({
-      name: "无人机操作方案",
+      name: "无人机操作流程主题知识库",
       status: "active",
       wiki_url: `mock://feishu/wiki/${knowledgeBases[0].id}`,
       homepage_url: `mock://feishu/wiki/${knowledgeBases[0].id}/00-home`
