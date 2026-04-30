@@ -5,6 +5,7 @@ import { confirmRequest } from "../../src/services/confirmationService";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkflow";
 
 function readFixture(name: string): string {
@@ -88,26 +89,83 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(repos.getConfirmationRequest(request!.id)?.status).toBe("executed");
   });
 
-  it("fails in real mode while larkWiki/larkDoc are not implemented", async () => {
+  it("creates real wiki records when lark-cli returns wiki and doc JSON", async () => {
     const repos = await processDroneMeetings();
     const request = repos
       .listConfirmationRequests()
       .find((item) => item.request_type === "create_kb");
     expect(request).toBeTruthy();
+    const calls: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      calls.push(args);
+      if (args[0] === "wiki" && args[1] === "spaces") {
+        return {
+          stdout: JSON.stringify({
+            space: {
+              space_id: "spc_real_kb",
+              space_url: "https://example.feishu.cn/wiki/space/spc_real_kb"
+            }
+          }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "wiki" && args[1] === "nodes" && calls.length === 2) {
+        return {
+          stdout: JSON.stringify({
+            node: {
+              node_token: "wik_home_real",
+              url: "https://example.feishu.cn/wiki/wik_home_real"
+            }
+          }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "wiki" && args[1] === "nodes") {
+        return {
+          stdout: JSON.stringify({
+            node: {
+              obj_token: "doc_home_real",
+              url: "https://example.feishu.cn/doc/doc_home_real"
+            }
+          }),
+          stderr: ""
+        };
+      }
+      return {
+        stdout: JSON.stringify({ ok: true }),
+        stderr: ""
+      };
+    };
 
     await confirmRequest({
       repos,
-      config: loadConfig({ feishuDryRun: false, sqlitePath: ":memory:" }),
-      id: request!.id
+      config: loadConfig({
+        feishuDryRun: false,
+        sqlitePath: ":memory:",
+        larkCliBin: "fake-lark-cli"
+      }),
+      id: request!.id,
+      runner
     });
 
     const confirmation = repos.getConfirmationRequest(request!.id);
-    expect(confirmation?.status).toBe("failed");
-    expect(confirmation?.error).toContain("larkWiki/larkDoc");
-    expect(repos.listKnowledgeBases()).toHaveLength(0);
-    expect(repos.listKnowledgeUpdates()).toHaveLength(0);
+    const knowledgeBases = repos.listKnowledgeBases();
+    const updates = repos.listKnowledgeUpdates();
+    expect(confirmation?.status).toBe("executed");
+    expect(knowledgeBases).toHaveLength(1);
+    expect(knowledgeBases[0]).toMatchObject({
+      wiki_url: "https://example.feishu.cn/wiki/space/spc_real_kb",
+      homepage_url: "https://example.feishu.cn/wiki/wik_home_real"
+    });
+    expect(updates).toHaveLength(1);
     expect(
       repos.listMeetings().filter((meeting) => meeting.archive_status === "archived")
-    ).toHaveLength(0);
+    ).toHaveLength(2);
+    expect(calls.map((args) => args.slice(0, 3))).toEqual([
+      ["wiki", "spaces", "create"],
+      ["wiki", "nodes", "create"],
+      ["wiki", "nodes", "create"],
+      ["docs", "+update", "--api-version"]
+    ]);
   });
 });

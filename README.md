@@ -99,7 +99,7 @@ MeetingAtlas 当前使用两个开关分层控制飞书能力：
 
 ## 真实闭环配置检查清单
 
-打通真实飞书闭环需要确认以下四项：
+打通真实飞书闭环需要确认以下五项：
 
 1. **飞书开放平台配置**
    - 事件订阅 → 请求地址：`https://your-domain/webhooks/feishu/event`
@@ -133,6 +133,11 @@ MeetingAtlas 当前使用两个开关分层控制飞书能力：
    ngrok http 3000
    # 把 https://xxx.ngrok.io 填到飞书开放平台
    ```
+
+5. **知识库真实写入**（需要 `FEISHU_DRY_RUN=false`）
+   - 确保应用有知识库写入权限：`wiki:wiki`
+   - 验证：`lark-cli wiki space list`
+   - 验证：`lark-cli wiki node create --help`
 
 真实 LLM 实验时保持 `FEISHU_DRY_RUN=true`，只切换模型提供方：
 

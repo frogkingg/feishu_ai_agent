@@ -140,9 +140,9 @@ export async function runLarkCli(
       maxBuffer: 10 * 1024 * 1024,
       env: process.env
     });
+    const parsed = parseStdout(output.stdout, Boolean(options.expectJson));
     const stdout = redactText(output.stdout);
     const stderr = redactText(output.stderr);
-    const parsed = parseStdout(stdout, Boolean(options.expectJson));
     options.repos.createCliRun({
       id: runId,
       tool,

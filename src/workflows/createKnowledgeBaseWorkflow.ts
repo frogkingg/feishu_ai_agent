@@ -11,6 +11,9 @@ import {
   KnowledgeUpdateRow,
   Repositories
 } from "../services/store/repositories";
+import { createDoc } from "../tools/larkDoc";
+import { type LarkCliRunner } from "../tools/larkCli";
+import { createWikiSpace } from "../tools/larkWiki";
 import { nowIso } from "../utils/dates";
 import { createId } from "../utils/id";
 
@@ -72,6 +75,7 @@ export async function createKnowledgeBaseWorkflow(input: {
   repos: Repositories;
   config?: AppConfig;
   confirmationId: string;
+  runner?: LarkCliRunner;
 }): Promise<CreateKnowledgeBaseWorkflowResult> {
   const request = input.repos.getConfirmationRequest(input.confirmationId);
   if (!request) {
@@ -107,17 +111,6 @@ export async function createKnowledgeBaseWorkflow(input: {
     meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? request.recipient;
   const dryRun = input.config?.feishuDryRun ?? true;
 
-  if (!dryRun) {
-    const error =
-      "Real knowledge-base creation is not implemented until Phase 7 larkWiki/larkDoc integration";
-    input.repos.updateConfirmationRequest({
-      id: request.id,
-      status: "failed",
-      error
-    });
-    throw new Error(error);
-  }
-
   const draft = runKnowledgeCuratorAgent({
     topicName: payload.topic_name,
     owner,
@@ -127,8 +120,37 @@ export async function createKnowledgeBaseWorkflow(input: {
     confidenceOrigin: payload.topic_match.score
   });
   const markdown = renderKnowledgeBaseMarkdown(draft);
-  const wikiUrl = `mock://feishu/wiki/${draft.kb_id}`;
-  const homepageUrl = `mock://feishu/wiki/${draft.kb_id}/00-home`;
+  let wikiUrl = `mock://feishu/wiki/${draft.kb_id}`;
+  let homepageUrl = `mock://feishu/wiki/${draft.kb_id}/00-home`;
+
+  if (!dryRun) {
+    const config = input.config;
+    if (!config) {
+      throw new Error("create_kb real mode requires AppConfig");
+    }
+
+    const wikiResult = await createWikiSpace({
+      repos: input.repos,
+      config,
+      name: payload.topic_name,
+      description: draft.description ?? "",
+      runner: input.runner
+    });
+
+    const homePage = draft.pages.find((page) => page.page_type === "home");
+    await createDoc({
+      repos: input.repos,
+      config,
+      title: "00 首页 / 总览",
+      markdownContent: homePage?.markdown ?? "",
+      spaceId: wikiResult.wiki_space_id,
+      parentNodeToken: wikiResult.homepage_node_token,
+      runner: input.runner
+    });
+
+    wikiUrl = wikiResult.wiki_space_url;
+    homepageUrl = wikiResult.homepage_url;
+  }
 
   const existing = input.repos.getKnowledgeBase(draft.kb_id);
   const knowledgeBase =
