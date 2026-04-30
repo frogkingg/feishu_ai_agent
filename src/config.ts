@@ -11,6 +11,7 @@ export interface AppConfig {
   feishuCardSendDryRun: boolean;
   larkVerificationToken: string | null;
   larkEncryptKey: string | null;
+  devApiKey: string | null;
   larkCliBin: string;
   llmProvider: "mock" | "openai-compatible";
   llmApiKey: string | null;
@@ -78,6 +79,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     feishuCardSendDryRun: parseBoolean(process.env.FEISHU_CARD_SEND_DRY_RUN, true),
     larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN || null,
     larkEncryptKey: process.env.LARK_ENCRYPT_KEY || null,
+    devApiKey: process.env.DEV_API_KEY || null,
     larkCliBin: process.env.LARK_CLI_BIN || "lark-cli",
     llmProvider: parseLlmProvider(process.env.LLM_PROVIDER),
     llmApiKey: process.env.LLM_API_KEY || null,

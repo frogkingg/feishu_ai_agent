@@ -6,6 +6,7 @@ import { createConfirmationRequest } from "../../src/services/confirmationServic
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories, Repositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 
 function sign(input: {
   timestamp: string;
@@ -18,7 +19,10 @@ function sign(input: {
     .digest("hex");
 }
 
-function createApp(configOverrides: Partial<AppConfig> = {}): {
+function createApp(
+  configOverrides: Partial<AppConfig> = {},
+  larkCliRunner?: LarkCliRunner
+): {
   app: ReturnType<typeof buildServer>;
   repos: Repositories;
 } {
@@ -30,7 +34,8 @@ function createApp(configOverrides: Partial<AppConfig> = {}): {
       ...configOverrides
     }),
     repos,
-    llm: new MockLlmClient()
+    llm: new MockLlmClient(),
+    larkCliRunner
   });
 
   return { app, repos };
@@ -288,7 +293,68 @@ describe("POST /webhooks/feishu/event", () => {
             external_meeting_id: "om_test",
             title: "测试会议",
             organizer: "ou_test",
-            transcript_text: "【transcript pending - to be fetched via lark-cli vc transcript get】"
+            transcript_text: "【transcript pending - dry-run mode】"
+          })
+        ])
+      );
+    });
+  });
+
+  it("uses fetched transcript text before triggering the workflow in real mode", async () => {
+    const body = JSON.stringify({
+      header: {
+        event_type: "vc.meeting.transcription_updated"
+      },
+      event: {
+        meeting_id: "om_real_transcript",
+        topic: "真实转写会议",
+        operator_id: { open_id: "ou_real" }
+      }
+    });
+    const signatureInput = {
+      timestamp: "1234567890",
+      nonce: "nonce-test",
+      verificationToken: "verification-token",
+      body
+    };
+    const runner: LarkCliRunner = async (_bin, args) => {
+      expect(args).toEqual(["vc", "transcript", "get", "--meeting-id", "om_real_transcript"]);
+      return {
+        stdout: JSON.stringify({ text: "这是真实拉取到的逐字稿文本。" }),
+        stderr: ""
+      };
+    };
+    const { app, repos } = createApp(
+      {
+        feishuDryRun: false,
+        larkVerificationToken: "verification-token"
+      },
+      runner
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      headers: {
+        "content-type": "application/json",
+        "x-lark-request-timestamp": signatureInput.timestamp,
+        "x-lark-request-nonce": signatureInput.nonce,
+        "x-lark-signature": sign(signatureInput)
+      },
+      payload: body
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ accepted: true });
+
+    await vi.waitFor(() => {
+      expect(repos.listMeetings()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            external_meeting_id: "om_real_transcript",
+            title: "真实转写会议",
+            organizer: "ou_real",
+            transcript_text: "这是真实拉取到的逐字稿文本。"
           })
         ])
       );
