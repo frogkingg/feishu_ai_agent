@@ -443,7 +443,8 @@ describe("confirmation dev APIs", () => {
       }
     });
 
-    const action = repos.listConfirmationRequests().find((item) => item.request_type === "action");
+    const confirmationsAfterManualMeeting = repos.listConfirmationRequests();
+    const action = confirmationsAfterManualMeeting.find((item) => item.request_type === "action");
     expect(action).toBeTruthy();
 
     const response = await app.inject({
@@ -465,8 +466,11 @@ describe("confirmation dev APIs", () => {
       status: "sent",
       card_message_id: null
     });
-    expect(repos.listCliRuns()).toHaveLength(1);
-    expect(repos.listCliRuns()[0]).toMatchObject({
+    const cliRuns = repos.listCliRuns();
+    expect(cliRuns).toHaveLength(confirmationsAfterManualMeeting.length + 1);
+    expect(cliRuns.every((run) => run.tool === "lark.im.send_card")).toBe(true);
+    expect(cliRuns.every((run) => run.dry_run === 0 && run.status === "failed")).toBe(true);
+    expect(cliRuns.at(-1)).toMatchObject({
       tool: "lark.im.send_card",
       dry_run: 0,
       status: "failed"

@@ -599,11 +599,31 @@ export function buildServer(input: {
 
   app.post("/dev/meetings/manual", async (request) => {
     const meeting = ManualMeetingInputSchema.parse(request.body);
-    return processMeetingWorkflow({
+    const result = await processMeetingWorkflow({
       repos: input.repos,
       llm: input.llm,
       meeting
     });
+
+    // 自动发送所有生成的确认卡片
+    if (!input.config.feishuCardSendDryRun && result.confirmation_requests.length > 0) {
+      for (const confirmationId of result.confirmation_requests) {
+        const confirmation = input.repos.getConfirmationRequest(confirmationId);
+        if (confirmation && confirmation.recipient) {
+          const card = buildConfirmationCardFromRequest(confirmation);
+          await sendCard({
+            repos: input.repos,
+            config: input.config,
+            confirmation,
+            card,
+            recipient: confirmation.recipient,
+            runner: input.larkCliRunner
+          });
+        }
+      }
+    }
+
+    return result;
   });
 
   app.get("/dev/confirmations", async () =>
