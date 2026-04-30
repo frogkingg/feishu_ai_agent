@@ -9,6 +9,7 @@ import { LlmClient } from "./services/llm/llmClient";
 import { MeetingRow, Repositories } from "./services/store/repositories";
 import { sendCard } from "./tools/larkIm";
 import { type LarkCliRunner } from "./tools/larkCli";
+import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
 import { verifyLarkWebhookSignature } from "./utils/larkSignature";
 import { processMeetingWorkflow } from "./workflows/processMeetingWorkflow";
@@ -31,6 +32,7 @@ const FeishuTranscriptionUpdatedEventType = "vc.meeting.transcription_updated";
 const TranscriptPendingText =
   "【transcript pending - to be fetched via lark-cli vc transcript get】";
 const CardActionPendingMessage = "此操作暂未实现，将在 PR-2 中完成";
+const TranscriptFetchTimeoutMs = 3000;
 
 const FeishuTranscriptionUpdatedEventSchema = z
   .object({
@@ -42,17 +44,6 @@ const FeishuTranscriptionUpdatedEventSchema = z
       })
       .optional()
       .nullable()
-  })
-  .passthrough();
-
-const FeishuCardActionPayloadSchema = z
-  .object({
-    open_id: z.string().optional(),
-    action: z
-      .object({
-        value: z.record(z.unknown()).default({})
-      })
-      .passthrough()
   })
   .passthrough();
 
@@ -289,6 +280,22 @@ function cardCallbackPreview(parsed: ReturnType<typeof extractCardCallbackPayloa
   };
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timeout: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => resolve(fallback), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout !== null) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest"]>) {
   if (request === null) {
     return null;
@@ -344,6 +351,21 @@ export function buildServer(input: {
   });
   configureJsonBodyParser(app);
 
+  app.addHook("onRequest", async (request, reply) => {
+    if (!request.url.startsWith("/dev")) {
+      return;
+    }
+
+    const devApiKey = input.config.devApiKey;
+    if (!devApiKey) {
+      return;
+    }
+
+    if (request.headers["x-dev-api-key"] !== devApiKey) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+  });
+
   app.get("/health", async () => ({
     ok: true,
     service: "meeting-atlas",
@@ -379,6 +401,22 @@ export function buildServer(input: {
       const event = FeishuTranscriptionUpdatedEventSchema.parse(payload.event ?? {});
       const organizer = event.operator_id?.open_id ?? null;
       const title = event.topic?.trim() || event.meeting_id;
+      const transcript = await withTimeout(
+        fetchTranscript({
+          repos: input.repos,
+          config: input.config,
+          meetingId: event.meeting_id,
+          runner: input.larkCliRunner
+        }).catch((error) => {
+          request.log.warn(
+            { err: error, external_meeting_id: event.meeting_id },
+            "failed to fetch transcript for feishu event; using fallback text"
+          );
+          return TranscriptPendingText;
+        }),
+        TranscriptFetchTimeoutMs,
+        TranscriptPendingText
+      );
 
       void processMeetingWorkflow({
         repos: input.repos,
@@ -390,7 +428,7 @@ export function buildServer(input: {
           organizer,
           started_at: null,
           ended_at: null,
-          transcript_text: TranscriptPendingText
+          transcript_text: transcript
         }
       })
         .then((result) => {
@@ -399,7 +437,8 @@ export function buildServer(input: {
               event_type: eventType,
               external_meeting_id: event.meeting_id,
               meeting_id: result.meeting_id,
-              confirmation_requests: result.confirmation_requests.length
+              confirmation_requests: result.confirmation_requests.length,
+              transcript_preview: transcript.slice(0, 80)
             },
             "triggered meeting workflow from feishu transcription event"
           );

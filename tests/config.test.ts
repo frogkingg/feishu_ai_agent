@@ -66,6 +66,11 @@ describe("loadConfig", () => {
     });
   });
 
+  it("loads optional dev API key", () => {
+    expect(loadConfig({ devApiKey: null }).devApiKey).toBeNull();
+    expect(loadConfig({ devApiKey: "dev-secret" }).devApiKey).toBe("dev-secret");
+  });
+
   it("throws a clear error when OpenAI-compatible config is incomplete", () => {
     expect(() =>
       loadConfig({

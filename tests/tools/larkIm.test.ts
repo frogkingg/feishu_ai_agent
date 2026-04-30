@@ -146,7 +146,17 @@ describe("larkIm.sendCard", () => {
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ bin: "fake-lark-cli" });
-    expect(calls[0].args).toEqual(expect.arrayContaining(["--chat-id", "oc_test_chat"]));
+    expect(calls[0].args).toEqual(
+      expect.arrayContaining([
+        "im",
+        "+messages-send",
+        "--chat-id",
+        "oc_test_chat",
+        "--msg-type",
+        "interactive",
+        "--content"
+      ])
+    );
     expect(repos.listCliRuns()).toHaveLength(1);
     expect(repos.listCliRuns()[0]).toMatchObject({
       tool: "lark.im.send_card",
