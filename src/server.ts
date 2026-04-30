@@ -8,6 +8,7 @@ import { confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
 import { MeetingRow, Repositories } from "./services/store/repositories";
 import { sendCard } from "./tools/larkIm";
+import { type LarkCliRunner } from "./tools/larkCli";
 import { nowIso } from "./utils/dates";
 import { verifyLarkWebhookSignature } from "./utils/larkSignature";
 import { processMeetingWorkflow } from "./workflows/processMeetingWorkflow";
@@ -127,57 +128,6 @@ function getFeishuEventType(payload: FeishuEventWebhookPayload): string | null {
   return typeof payload.header?.event_type === "string" ? payload.header.event_type : null;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function firstString(values: unknown[]): string | null {
-  for (const value of values) {
-    if (typeof value !== "string") {
-      continue;
-    }
-
-    const trimmed = value.trim();
-    if (trimmed.length > 0) {
-      return trimmed;
-    }
-  }
-
-  return null;
-}
-
-function normalizeCardAction(
-  action: string | null
-): "confirm" | "reject" | "remind_later" | "convert_to_task" | "append_current_only" | null {
-  if (action === null) {
-    return null;
-  }
-
-  if (["confirm", "confirm_with_edits", "create_kb", "edit_and_create"].includes(action)) {
-    return "confirm";
-  }
-
-  if (["reject", "not_mine", "never_remind_topic"].includes(action)) {
-    return "reject";
-  }
-
-  if (
-    action === "remind_later" ||
-    action === "convert_to_task" ||
-    action === "append_current_only"
-  ) {
-    return action;
-  }
-
-  return null;
-}
-
-function nonTemplateString(value: string | null): string | null {
-  return value !== null && value.startsWith("$") ? null : value;
-}
-
 function toast(type: "success" | "error", content: string) {
   return {
     toast: {
@@ -186,6 +136,19 @@ function toast(type: "success" | "error", content: string) {
     }
   };
 }
+
+const CONFIRM_CARD_ACTION_KEYS = new Set([
+  "confirm",
+  "confirm_with_edits",
+  "create_kb",
+  "edit_and_create"
+]);
+const REJECT_CARD_ACTION_KEYS = new Set(["reject", "not_mine", "never_remind_topic"]);
+const PREVIEW_STUB_CARD_ACTIONS = {
+  remind_later: "remind_later",
+  convert_to_task: "convert_to_task",
+  append_current_only: "append_current_only"
+} as const;
 
 function briefError(error: unknown): string {
   if (error instanceof ZodError) {
@@ -196,6 +159,134 @@ function briefError(error: unknown): string {
   }
 
   return error instanceof Error ? error.message : String(error);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringValue(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function valueAtPath(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    const record = asRecord(current);
+    if (record === null) {
+      return undefined;
+    }
+    current = record[key];
+  }
+  return current;
+}
+
+function recordAtPath(value: unknown, path: string[]): Record<string, unknown> | null {
+  return asRecord(valueAtPath(value, path));
+}
+
+function firstString(values: unknown[]): string | null {
+  for (const value of values) {
+    const text = stringValue(value);
+    if (text !== null) {
+      return text;
+    }
+  }
+  return null;
+}
+
+function firstRecord(values: Array<Record<string, unknown> | null>): Record<string, unknown> {
+  return values.find((value): value is Record<string, unknown> => value !== null) ?? {};
+}
+
+function isTemplatePlaceholder(value: unknown): boolean {
+  return typeof value === "string" && value.trim().startsWith("$");
+}
+
+function valueFromActionPayload(
+  actionValue: Record<string, unknown>,
+  key: string
+): unknown | undefined {
+  if (Object.prototype.hasOwnProperty.call(actionValue, key)) {
+    const direct = actionValue[key];
+    return isTemplatePlaceholder(direct) ? undefined : direct;
+  }
+
+  const payload = asRecord(actionValue.payload);
+  if (payload && Object.prototype.hasOwnProperty.call(payload, key)) {
+    const direct = payload[key];
+    return isTemplatePlaceholder(direct) ? undefined : direct;
+  }
+
+  const template = asRecord(actionValue.payload_template);
+  if (template && Object.prototype.hasOwnProperty.call(template, key)) {
+    const direct = template[key];
+    return isTemplatePlaceholder(direct) ? undefined : direct;
+  }
+
+  return undefined;
+}
+
+function extractCardCallbackPayload(payload: unknown): {
+  requestId: string | null;
+  actionKey: string | null;
+  editedPayload?: unknown;
+  reason?: string | null;
+} {
+  const root = asRecord(payload) ?? {};
+  const actionValue = firstRecord([
+    recordAtPath(payload, ["event", "action", "value"]),
+    recordAtPath(payload, ["action", "value"]),
+    recordAtPath(payload, ["event", "action"]),
+    recordAtPath(payload, ["action"]),
+    recordAtPath(payload, ["value"]),
+    asRecord(payload)
+  ]);
+  const requestId = firstString([
+    actionValue.confirmation_id,
+    actionValue.request_id,
+    root.confirmation_id,
+    root.request_id,
+    valueAtPath(payload, ["event", "confirmation_id"]),
+    valueAtPath(payload, ["event", "request_id"])
+  ]);
+  const actionKey = firstString([
+    actionValue.action,
+    actionValue.action_key,
+    actionValue.key,
+    root.action,
+    root.action_key,
+    valueAtPath(payload, ["event", "action"]),
+    valueAtPath(payload, ["event", "action_key"])
+  ]);
+  const editedPayload =
+    valueFromActionPayload(actionValue, "edited_payload") ??
+    recordAtPath(payload, ["event", "action", "form_value"]) ??
+    recordAtPath(payload, ["event", "form_value"]);
+  const reasonValue = valueFromActionPayload(actionValue, "reason");
+  const reason = stringValue(reasonValue);
+
+  return {
+    requestId,
+    actionKey,
+    editedPayload,
+    reason
+  };
+}
+
+function cardCallbackPreview(parsed: ReturnType<typeof extractCardCallbackPayload>) {
+  return {
+    request_id: parsed.requestId,
+    action_key: parsed.actionKey,
+    has_edited_payload: parsed.editedPayload !== undefined && parsed.editedPayload !== null
+  };
 }
 
 function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest"]>) {
@@ -242,7 +333,12 @@ function sendCardStatusCode(result: { ok: boolean; error: string | null }): numb
   return result.error?.includes("requires recipient or chat_id") ? 400 : 502;
 }
 
-export function buildServer(input: { config: AppConfig; repos: Repositories; llm: LlmClient }) {
+export function buildServer(input: {
+  config: AppConfig;
+  repos: Repositories;
+  llm: LlmClient;
+  larkCliRunner?: LarkCliRunner;
+}) {
   const app = Fastify({
     logger: true
   });
@@ -326,84 +422,199 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
     return reply.code(202).send({ accepted: true });
   });
 
-  app.post("/webhooks/feishu/card-action", async (request, reply) => {
-    const parsedBody = FeishuCardActionPayloadSchema.safeParse(request.body ?? {});
-    if (!parsedBody.success) {
-      return reply.code(400).send(toast("error", "卡片回调格式不正确"));
+  app.post("/webhooks/feishu/card", async (request, reply) => {
+    const payload = request.body ?? {};
+    const root = asRecord(payload) ?? {};
+    const challenge = stringValue(root.challenge);
+    if (challenge !== null) {
+      return { challenge };
     }
 
-    const body = parsedBody.data;
-    const value = body.action.value;
-    const payloadTemplate = asRecord(value.payload_template);
-    const confirmationId = firstString([value.confirmation_id, value.request_id]);
-    const action = normalizeCardAction(firstString([value.action, value.action_key]));
+    if (!input.config.feishuDryRun) {
+      return reply.code(409).send({
+        ok: false,
+        dry_run: false,
+        error: "Feishu card callback skeleton only runs when FEISHU_DRY_RUN=true"
+      });
+    }
 
-    if (confirmationId === null) {
+    const parsed = extractCardCallbackPayload(payload);
+    const normalizedPreview = cardCallbackPreview(parsed);
+    request.log.info({ normalized_preview: normalizedPreview }, "received feishu card callback");
+
+    if (parsed.requestId === null || parsed.actionKey === null) {
+      return reply.code(202).send({
+        accepted: true,
+        callback: "feishu.card",
+        dry_run: true,
+        normalized_preview: normalizedPreview,
+        message: "Feishu card callback accepted without actionable request_id/action_key"
+      });
+    }
+
+    const existing = input.repos.getConfirmationRequest(parsed.requestId);
+    if (existing === null) {
+      return reply
+        .code(404)
+        .send({ ok: false, error: `Confirmation request not found: ${parsed.requestId}` });
+    }
+
+    try {
+      if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        const result = await confirmRequest({
+          repos: input.repos,
+          config: input.config,
+          id: parsed.requestId,
+          editedPayload: parsed.editedPayload,
+          runner: input.larkCliRunner
+        });
+
+        return {
+          ok: result.confirmation.status !== "failed",
+          dry_run: true,
+          callback: "feishu.card",
+          action_key: parsed.actionKey,
+          request_id: parsed.requestId,
+          handled_as: "confirm",
+          confirmation: result.confirmation,
+          result: result.result
+        };
+      }
+
+      if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        const confirmation = rejectRequest({
+          repos: input.repos,
+          id: parsed.requestId,
+          reason: parsed.reason ?? parsed.actionKey
+        });
+
+        return {
+          ok: true,
+          dry_run: true,
+          callback: "feishu.card",
+          action_key: parsed.actionKey,
+          request_id: parsed.requestId,
+          handled_as: "reject",
+          confirmation
+        };
+      }
+
+      const previewAction =
+        PREVIEW_STUB_CARD_ACTIONS[parsed.actionKey as keyof typeof PREVIEW_STUB_CARD_ACTIONS];
+      if (previewAction !== undefined) {
+        const preview = cardPreviewStubAction({
+          repos: input.repos,
+          id: parsed.requestId,
+          action: previewAction
+        });
+        if (preview === null) {
+          return reply
+            .code(404)
+            .send({ ok: false, error: `Confirmation request not found: ${parsed.requestId}` });
+        }
+
+        return {
+          callback: "feishu.card",
+          action_key: parsed.actionKey,
+          request_id: parsed.requestId,
+          handled_as: "preview_stub",
+          ...preview
+        };
+      }
+
+      return reply.code(400).send({
+        ok: false,
+        dry_run: true,
+        action_key: parsed.actionKey,
+        request_id: parsed.requestId,
+        error: `Unsupported Feishu card action_key: ${parsed.actionKey}`
+      });
+    } catch (error) {
+      return reply.code(409).send({
+        ok: false,
+        dry_run: true,
+        action_key: parsed.actionKey,
+        request_id: parsed.requestId,
+        error: briefError(error)
+      });
+    }
+  });
+
+  app.post("/webhooks/feishu/card-action", async (request, reply) => {
+    const parsed = extractCardCallbackPayload(request.body ?? {});
+
+    if (parsed.requestId === null) {
       return reply.code(404).send(toast("error", "确认请求不存在"));
     }
 
-    const confirmation = input.repos.getConfirmationRequest(confirmationId);
+    const confirmation = input.repos.getConfirmationRequest(parsed.requestId);
     if (confirmation === null) {
       return reply.code(404).send(toast("error", "确认请求不存在"));
     }
 
-    if (action === null) {
+    if (parsed.actionKey === null) {
       return reply.code(400).send(toast("error", "暂不支持此操作"));
     }
 
     try {
-      if (action === "confirm") {
-        const editedPayload = value.edited_payload ?? payloadTemplate.edited_payload;
+      if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
         const result = await confirmRequest({
           repos: input.repos,
           config: input.config,
-          id: confirmationId,
-          editedPayload: editedPayload === "$editable_fields" ? undefined : editedPayload
+          id: parsed.requestId,
+          editedPayload: parsed.editedPayload,
+          runner: input.larkCliRunner
         });
 
         return {
-          ok: true,
-          confirmation_id: confirmationId,
-          action,
+          ok: result.confirmation.status !== "failed",
+          confirmation_id: parsed.requestId,
+          action: parsed.actionKey,
           confirmation: result.confirmation,
+          result: result.result,
           ...toast("success", "已确认")
         };
       }
 
-      if (action === "reject") {
-        const reason = nonTemplateString(firstString([value.reason, payloadTemplate.reason]));
+      if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
         const result = rejectRequest({
           repos: input.repos,
-          id: confirmationId,
-          reason
+          id: parsed.requestId,
+          reason: parsed.reason ?? parsed.actionKey
         });
 
         return {
           ok: true,
-          confirmation_id: confirmationId,
-          action,
+          confirmation_id: parsed.requestId,
+          action: parsed.actionKey,
           confirmation: result,
           ...toast("success", "已拒绝")
         };
       }
 
-      return {
-        ok: true,
-        dry_run: true,
-        confirmation_id: confirmationId,
-        action,
-        message: CardActionPendingMessage,
-        ...toast("success", CardActionPendingMessage)
-      };
+      const previewAction =
+        PREVIEW_STUB_CARD_ACTIONS[parsed.actionKey as keyof typeof PREVIEW_STUB_CARD_ACTIONS];
+      if (previewAction !== undefined) {
+        return {
+          ok: true,
+          dry_run: true,
+          confirmation_id: parsed.requestId,
+          action: previewAction,
+          message: CardActionPendingMessage,
+          ...toast("success", CardActionPendingMessage)
+        };
+      }
+
+      return reply.code(400).send(toast("error", "暂不支持此操作"));
     } catch (error) {
       request.log.error(
-        { err: error, confirmation_id: confirmationId, action },
+        { err: error, confirmation_id: parsed.requestId, action: parsed.actionKey },
         "card action failed"
       );
       return reply.code(500).send({
         ok: false,
-        confirmation_id: confirmationId,
-        action,
+        confirmation_id: parsed.requestId,
+        action: parsed.actionKey,
         ...toast("error", briefError(error))
       });
     }
@@ -505,7 +716,8 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
       card,
       recipient: body.recipient,
       chatId: body.chat_id,
-      identity: body.identity
+      identity: body.identity,
+      runner: input.larkCliRunner
     });
 
     return reply.code(sendCardStatusCode(result)).send({
@@ -534,7 +746,8 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
         card,
         recipient: body.recipient,
         chatId: body.chat_id,
-        identity: body.identity
+        identity: body.identity,
+        runner: input.larkCliRunner
       });
 
       results.push({
@@ -561,7 +774,8 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
       repos: input.repos,
       config: input.config,
       id: params.id,
-      editedPayload: body.edited_payload
+      editedPayload: body.edited_payload,
+      runner: input.larkCliRunner
     });
   });
 
@@ -621,6 +835,22 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
 
     return result;
   });
+
+  app.get("/dev/card-send-runs", async () =>
+    input.repos
+      .listCliRuns()
+      .filter((run) => run.tool === "lark.im.send_card")
+      .slice(-20)
+      .map((run) => ({
+        id: run.id,
+        dry_run: run.dry_run,
+        status: run.status,
+        stdout: run.stdout,
+        stderr: run.stderr,
+        error: run.error,
+        created_at: run.created_at
+      }))
+  );
 
   app.get("/dev/state", async () => input.repos.getStateSummary());
 

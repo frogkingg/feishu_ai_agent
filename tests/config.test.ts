@@ -31,6 +31,7 @@ describe("loadConfig", () => {
   });
 
   it("keeps card sending dry-run by default and lets it be explicitly disabled", () => {
+    expect(loadConfig().feishuCardSendDryRun).toBe(true);
     expect(loadConfig({ feishuDryRun: true }).feishuCardSendDryRun).toBe(true);
     expect(loadConfig({ feishuDryRun: false }).feishuCardSendDryRun).toBe(true);
     expect(loadConfig({ feishuDryRun: true, feishuCardSendDryRun: false })).toMatchObject({

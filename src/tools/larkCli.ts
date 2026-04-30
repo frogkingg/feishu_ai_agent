@@ -22,7 +22,18 @@ export interface LarkCliRunOptions {
   expectJson?: boolean;
   toolName?: string;
   mockMode?: boolean;
+  runner?: LarkCliRunner;
 }
+
+export type LarkCliRunner = (
+  bin: string,
+  args: string[],
+  options: {
+    timeout: number;
+    maxBuffer: number;
+    env: NodeJS.ProcessEnv;
+  }
+) => Promise<{ stdout: string; stderr: string }>;
 
 export interface LarkCliResult {
   id: string;
@@ -121,7 +132,10 @@ export async function runLarkCli(
   }
 
   try {
-    const output = await execFileAsync(config.larkCliBin, args, {
+    const runner: LarkCliRunner =
+      options.runner ??
+      ((bin, commandArgs, runnerOptions) => execFileAsync(bin, commandArgs, runnerOptions));
+    const output = await runner(config.larkCliBin, args, {
       timeout: options.timeoutMs ?? 30000,
       maxBuffer: 10 * 1024 * 1024,
       env: process.env

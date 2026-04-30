@@ -7,6 +7,7 @@ import { LlmClient } from "../../src/services/llm/llmClient";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 
 class QueueLlmClient implements LlmClient {
   constructor(private readonly results: MeetingExtractionResult[]) {}
@@ -367,10 +368,52 @@ describe("confirmation dev APIs", () => {
     expect(repos.listConfirmationRequests().every((request) => request.status === "sent")).toBe(
       true
     );
+
+    repos.createCliRun({
+      id: "cli_non_card",
+      tool: "lark.task.create",
+      args_json: "[]",
+      dry_run: 1,
+      status: "planned",
+      stdout: "{}",
+      stderr: null,
+      error: null
+    });
+
+    const cardSendRunsResponse = await app.inject({
+      method: "GET",
+      url: "/dev/card-send-runs"
+    });
+    const cardSendRuns = cardSendRunsResponse.json() as Array<{
+      id: string;
+      dry_run: 0 | 1;
+      status: string;
+      stdout: string | null;
+      stderr: string | null;
+      error: string | null;
+      created_at: string;
+      args_json?: string;
+      tool?: string;
+    }>;
+    expect(cardSendRunsResponse.statusCode).toBe(200);
+    expect(cardSendRuns).toHaveLength(totalUnfinished + 1);
+    expect(cardSendRuns.every((run) => run.id.startsWith("cli_"))).toBe(true);
+    expect(cardSendRuns.every((run) => run.dry_run === 1 && run.status === "planned")).toBe(true);
+    expect(cardSendRuns[0]).toMatchObject({
+      stdout: expect.any(String),
+      stderr: null,
+      error: null,
+      created_at: expect.any(String)
+    });
+    expect(cardSendRuns[0]).not.toHaveProperty("args_json");
+    expect(cardSendRuns[0]).not.toHaveProperty("tool");
   });
 
   it("fails send-card in real mode when lark CLI cannot execute", async () => {
     const repos = createRepositories(createMemoryDatabase());
+    const failingRunner: LarkCliRunner = async () => {
+      throw new Error("fake lark CLI failure");
+    };
     const app = buildServer({
       config: loadConfig({
         feishuDryRun: false,
@@ -379,7 +422,8 @@ describe("confirmation dev APIs", () => {
         sqlitePath: ":memory:"
       }),
       repos,
-      llm: new MockLlmClient()
+      llm: new MockLlmClient(),
+      larkCliRunner: failingRunner
     });
     const transcript = readFileSync(
       join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),

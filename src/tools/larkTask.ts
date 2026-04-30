@@ -1,6 +1,6 @@
 import { AppConfig } from "../config";
 import { ActionItemRow, Repositories } from "../services/store/repositories";
-import { runLarkCli } from "./larkCli";
+import { runLarkCli, type LarkCliRunner } from "./larkCli";
 
 export interface CreateTaskResult {
   feishu_task_guid: string;
@@ -13,6 +13,7 @@ export async function createTask(input: {
   repos: Repositories;
   config?: AppConfig;
   draft: ActionItemRow;
+  runner?: LarkCliRunner;
 }): Promise<CreateTaskResult> {
   const args = [
     "task",
@@ -32,7 +33,8 @@ export async function createTask(input: {
     config: input.config,
     toolName: "lark.task.create",
     dryRun: input.config?.feishuDryRun,
-    expectJson: true
+    expectJson: true,
+    runner: input.runner
   });
 
   if (result.dryRun || result.status === "planned") {

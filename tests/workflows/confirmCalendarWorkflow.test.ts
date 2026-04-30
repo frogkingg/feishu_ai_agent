@@ -69,6 +69,60 @@ describe("confirm calendar request", () => {
     expect(repos.listCliRuns()).toHaveLength(1);
   });
 
+  it("keeps calendar creation dry-run when only card sending is real-enabled", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
+
+    await processMeetingWorkflow({
+      repos,
+      llm: new MockLlmClient(),
+      meeting: {
+        title: "无人机操作方案初步访谈",
+        participants: ["张三", "李四"],
+        organizer: "张三",
+        started_at: "2026-04-28T10:00:00+08:00",
+        ended_at: "2026-04-28T11:00:00+08:00",
+        transcript_text: transcript
+      }
+    });
+
+    const request = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "calendar");
+    expect(request).toBeTruthy();
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCardSendDryRun: false,
+        larkCliBin: "definitely-not-real-lark"
+      }),
+      id: request!.id
+    });
+
+    const updatedRequest = repos.getConfirmationRequest(request!.id);
+    const calendar = repos.getCalendarDraft(request!.target_id);
+    const cliRuns = repos.listCliRuns();
+
+    expect(updatedRequest?.status).toBe("executed");
+    expect(calendar).toMatchObject({
+      confirmation_status: "created",
+      calendar_event_id: expect.stringContaining("dry_event_"),
+      event_url: expect.stringContaining("mock://feishu/calendar/")
+    });
+    expect(cliRuns).toHaveLength(1);
+    expect(cliRuns[0]).toMatchObject({
+      tool: "lark.calendar.create",
+      dry_run: 1,
+      status: "planned",
+      error: null
+    });
+  });
+
   it("merges edited start time and participants before dry-run calendar creation", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const transcript = readFileSync(
