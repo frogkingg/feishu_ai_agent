@@ -609,14 +609,15 @@ export function buildServer(input: {
     if (!input.config.feishuCardSendDryRun && result.confirmation_requests.length > 0) {
       for (const confirmationId of result.confirmation_requests) {
         const confirmation = input.repos.getConfirmationRequest(confirmationId);
-        if (confirmation && confirmation.recipient) {
+        if (confirmation && (meeting.send_to_chat_id || confirmation.recipient)) {
           const card = buildConfirmationCardFromRequest(confirmation);
           await sendCard({
             repos: input.repos,
             config: input.config,
             confirmation,
             card,
-            recipient: confirmation.recipient,
+            recipient: meeting.send_to_chat_id ? null : confirmation.recipient,
+            chatId: meeting.send_to_chat_id ?? null,
             runner: input.larkCliRunner
           });
         }
