@@ -45,6 +45,8 @@ describe("larkIm.sendCard", () => {
     expect(JSON.stringify(interactive)).toContain(card.summary);
     expect(JSON.stringify(interactive)).toContain("/dev/confirmations/conf_card_send/confirm");
     expect(JSON.stringify(interactive)).toContain('"confirmation_id":"conf_card_send"');
+    expect(JSON.stringify(interactive)).toContain('"name":"owner"');
+    expect(JSON.stringify(interactive)).toContain('"name":"due_date"');
     expect(JSON.stringify(interactive)).toContain("点击确认前不会创建飞书任务、日程、Wiki 或 Doc");
   });
 

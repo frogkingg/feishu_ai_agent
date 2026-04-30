@@ -360,6 +360,52 @@ describe("demo-full-p0 script", () => {
         }
       ]
     };
+    const thirdExtraction: MeetingExtractionResult = {
+      ...secondExtraction,
+      meeting_summary:
+        "本次会议继续围绕无人机操作方案风险评审，明确试飞权限、现场安全员和电池状态检查仍需跟进。",
+      topic_keywords: ["无人机", "操作流程", "试飞权限", "风险控制"],
+      key_decisions: [
+        {
+          decision: "试飞前必须完成场地权限、现场安全员和电池状态三项检查。",
+          evidence: "试飞前必须确认场地权限、现场安全员和电池状态。"
+        }
+      ],
+      risks: [
+        {
+          risk: "试飞权限尚未确认会阻塞试飞排期。",
+          evidence: "会议强调试飞前必须确认场地权限。"
+        }
+      ],
+      action_items: [
+        {
+          title: "确认试飞权限",
+          description: "在试飞前完成场地权限确认。",
+          owner: "李四",
+          collaborators: [],
+          due_date: "2026-05-06",
+          priority: "P1",
+          evidence: "试飞前必须确认场地权限。",
+          confidence: 0.88,
+          suggested_reason: "会议明确提出权限确认要求。",
+          missing_fields: []
+        }
+      ],
+      calendar_drafts: [
+        {
+          title: "无人机试飞前检查会议",
+          start_time: "2026-05-05T10:00:00+08:00",
+          end_time: "2026-05-05T10:30:00+08:00",
+          duration_minutes: 30,
+          participants: ["张三", "李四", "王五"],
+          agenda: "确认试飞权限、现场安全员和电池状态。",
+          location: null,
+          evidence: "试飞前必须确认场地权限、现场安全员和电池状态。",
+          confidence: 0.84,
+          missing_fields: ["location"]
+        }
+      ]
+    };
     const repos = createRepositories(createMemoryDatabase());
     const app = buildServer({
       config: loadConfig({
@@ -368,7 +414,7 @@ describe("demo-full-p0 script", () => {
         larkCliBin: "definitely-not-real-lark"
       }),
       repos,
-      llm: new QueueLlmClient([firstExtraction, secondExtraction])
+      llm: new QueueLlmClient([firstExtraction, secondExtraction, thirdExtraction])
     });
     const outputDir = await mkdtemp(join(tmpdir(), "meeting-atlas-p0-demo-"));
 
@@ -396,8 +442,10 @@ describe("demo-full-p0 script", () => {
       });
       expect(knowledgeBases[0].wiki_url).toMatch(/^mock:\/\//);
       expect(knowledgeBases[0].homepage_url).toMatch(/^mock:\/\//);
-      expect(knowledgeUpdates).toHaveLength(1);
+      expect(knowledgeUpdates).toHaveLength(2);
       expect(knowledgeUpdates[0].update_type).toBe("kb_created");
+      expect(knowledgeUpdates[1].update_type).toBe("meeting_added");
+      expect(knowledgeUpdates[1].after_text).toContain("无人机实施风险评审");
 
       const secondMeetingActionTitles = repos
         .listConfirmationRequests()
@@ -407,34 +455,71 @@ describe("demo-full-p0 script", () => {
         .map((action) => action!.title);
       expect(secondMeetingActionTitles).toEqual(["整理风险清单"]);
       expect(secondMeetingActionTitles).not.toContain("整理无人机操作方案知识库");
+      expect(
+        repos
+          .listConfirmationRequests()
+          .filter((request) => request.request_type === "action")
+          .every((request) => request.status === "executed")
+      ).toBe(true);
+      expect(
+        repos
+          .listConfirmationRequests()
+          .filter((request) => request.request_type === "calendar")
+          .every((request) => request.status === "executed")
+      ).toBe(true);
+      expect(
+        repos.listConfirmationRequests().every((request) => request.status === "executed")
+      ).toBe(true);
 
       const latestJson = JSON.parse(
         await readFile(join(outputDir, "p0-demo-latest.json"), "utf8")
       ) as {
         status: string;
+        action_confirmations_executed: number;
+        calendar_confirmations_executed: number;
         knowledge_base_confirmations_executed: number;
+        append_meeting_confirmations_executed: number;
         card_previews_generated: number;
         action_cards: number;
         calendar_cards: number;
         knowledge_base_cards: number;
+        append_meeting_cards: number;
         knowledge_update: string;
+        knowledge_updates: string[];
+        pending_confirmations: number;
+        pending_confirmation_ids: string[];
       };
       expect(latestJson).toMatchObject({
         status: "passed",
+        action_confirmations_executed: 4,
+        calendar_confirmations_executed: 2,
         knowledge_base_confirmations_executed: 1,
-        card_previews_generated: 4,
-        action_cards: 2,
-        calendar_cards: 1,
+        append_meeting_confirmations_executed: 1,
+        card_previews_generated: 8,
+        action_cards: 4,
+        calendar_cards: 2,
         knowledge_base_cards: 1,
-        knowledge_update: "kb_created"
+        append_meeting_cards: 1,
+        knowledge_update: "meeting_added",
+        knowledge_updates: ["kb_created", "meeting_added"],
+        pending_confirmations: 0,
+        pending_confirmation_ids: []
       });
+      expect(result.summary.action_confirmations_executed).toBe(4);
+      expect(result.summary.calendar_confirmations_executed).toBe(2);
       expect(result.summary.knowledge_base_confirmations_executed).toBe(1);
-      expect(result.summary.card_previews_generated).toBe(4);
-      expect(result.summary.action_cards).toBe(2);
-      expect(result.summary.calendar_cards).toBe(1);
+      expect(result.summary.append_meeting_confirmations_executed).toBe(1);
+      expect(result.summary.card_previews_generated).toBe(8);
+      expect(result.summary.action_cards).toBe(4);
+      expect(result.summary.calendar_cards).toBe(2);
       expect(result.summary.knowledge_base_cards).toBe(1);
+      expect(result.summary.append_meeting_cards).toBe(1);
+      expect(result.summary.knowledge_updates).toEqual(["kb_created", "meeting_added"]);
+      expect(result.summary.pending_confirmations).toBe(0);
+      expect(result.summary.pending_confirmation_ids).toEqual([]);
       expect(result.state.knowledge_bases).toHaveLength(1);
-      expect(result.state.knowledge_updates).toHaveLength(1);
+      expect(result.state.knowledge_updates).toHaveLength(2);
+      expect(result.third?.topic_match.suggested_action).toBe("ask_append");
     } finally {
       await app.close();
     }

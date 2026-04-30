@@ -23,17 +23,18 @@
 计划新增或完善：
 
 ```text
-POST /webhooks/feishu/card
+POST /webhooks/feishu/card-action
 ```
 
 该接口接收飞书卡片按钮回调，并把真实按钮动作映射回 MeetingAtlas 的 confirmation request。
 
-当前 skeleton 的边界：
+当前已实现的边界：
 
 - 支持飞书 challenge 返回。
-- 解析到 `request_id` / `action_key` 时，才进入 dry-run confirmation 处理。
-- 解析不到 `request_id` 或 `action_key` 时，返回 `accepted` 和 `normalized_preview`，不报错、不执行。
-- 当前不做真实验签，验签是 Callback-3 的强制 TODO。
+- 支持从真实飞书 payload 的 `event.action.value` / `action.value` / `form_value` 中解析 `confirmation_id`、`action_key` 和用户编辑字段。
+- 解析不到 `confirmation_id` 时返回 404 toast；解析不到 action 时返回不支持 toast。
+- 当配置了 `LARK_VERIFICATION_TOKEN` 时，对 Card Action callback 做飞书签名校验。
+- `executed` / `rejected` / `failed` 的重复点击返回 `already_processed` toast，不重复执行。
 
 ## 4. 回调 Payload 处理
 
@@ -77,10 +78,11 @@ POST /webhooks/feishu/card
 
 当前阶段即使调用 `confirmRequest`，也必须保持 `FEISHU_DRY_RUN=true`，只做 dry-run 执行。
 
+`remind_later`、`convert_to_task`、`append_current_only` 仍不是完整业务动作；当前保持 preview-only：只校验 confirmation 存在并返回 toast，不修改 confirmation 状态、不写 `cli_runs`，也不影响后续 `confirm` / `reject`。
+
 ## 6. 安全要求
 
-- 必须验签。
-- 当前 skeleton 暂不做真实验签；TODO: Callback-3 补齐验签后才能长期暴露公网回调。
+- 必须验签；本地测试可不配置 `LARK_VERIFICATION_TOKEN`，公网回调必须配置。
 - 必须幂等。
 - 不能绕过 confirmation request。
 - `request_id` 不存在时返回 404 / ignored。

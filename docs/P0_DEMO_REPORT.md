@@ -20,6 +20,8 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 - 在 dry-run 模式下记录 Feishu CLI 执行结果。
 - 识别两场高度相关会议，生成 `create_kb` confirmation。
 - 用户确认后生成 mock 知识库和 `kb_created` 更新记录。
+- 第三场会议命中已有知识库，生成 `append_meeting` confirmation。
+- 用户确认后生成 `meeting_added` 更新记录，把新会议追加到 mock 知识库。
 
 本阶段不验证真实飞书任务、日程、Wiki/Doc 创建或 LLM prompt 改动。
 当前卡片可以进入 `larkIm.sendCard` dry-run wrapper，但 `FEISHU_DRY_RUN=true`
@@ -42,6 +44,16 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 - 显式意图：`把这两次访谈整理成一个无人机操作方案知识库`
 - 预期结果：`topic_match.score >= 0.9`，`suggested_action = ask_create`
 
+第三场会议用于触发追加到已有知识库：
+
+- title: `无人机实施风险评审`
+- 主题内容：
+  继续围绕无人机操作方案评审风险，补充试飞权限、现场安全员、电池状态、
+  天气等风险控制信息
+- 显式意图：`加入已有知识库，不要再新建一个`
+- 预期结果：`suggested_action = ask_append`，生成 1 条 `append_meeting`
+  confirmation 和 1 张 append meeting card
+
 用户确认时的 edited payload：
 
 - action:
@@ -53,39 +65,48 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 
 ## Demo 流程
 
-| Step | 操作                                | 预期输出                                                            |
-| ---- | ----------------------------------- | ------------------------------------------------------------------- |
-| 1    | 启动服务并访问 `GET /health`        | 服务可达，`dry_run=true`，返回当前 LLM provider                     |
-| 2    | 提交第一场会议                      | 至少生成 2 条 action items 和 1 条 calendar draft                   |
-| 3    | 校验第一场主题判断                  | `suggested_action=observe`，不生成 `create_kb`                      |
-| 4    | 查询 `/dev/confirmations`           | 返回待确认的 action/calendar 请求                                   |
-| 5    | 查询 `/dev/cards`                   | 第一场后至少有 2 张 action card 和 1 张 calendar card               |
-| 6    | 确认第一条 action                   | action 进入确认执行状态，并写入 dry-run CLI 记录                    |
-| 7    | 用 edited payload 确认第二条 action | 数据库最终字段使用用户确认值                                        |
-| 8    | 用 edited payload 确认 calendar     | participants/location/duration 使用用户确认值                       |
-| 9    | 提交第二场会议                      | 第二场会议成功处理并返回 topic match                                |
-| 10   | 校验第二场主题判断                  | `score >= 0.9`，`suggested_action=ask_create`，候选会议至少包含两场 |
-| 11   | 查询 `create_kb` confirmation       | `/dev/confirmations` 能看到 `request_type=create_kb`                |
-| 12   | 查询 `/dev/cards`                   | 第二场后能看到 1 张 create_kb card                                  |
-| 13   | 确认 `create_kb`                    | 生成 mock 知识库记录                                                |
-| 14   | 查询 `/dev/state`                   | 有 knowledge base，最新 update 为 `kb_created`                      |
+| Step | 操作                                | 预期输出                                                              |
+| ---- | ----------------------------------- | --------------------------------------------------------------------- |
+| 1    | 启动服务并访问 `GET /health`        | 服务可达，`dry_run=true`，返回当前 LLM provider                       |
+| 2    | 提交第一场会议                      | 至少生成 2 条 action items 和 1 条 calendar draft                     |
+| 3    | 校验第一场主题判断                  | `suggested_action=observe`，不生成 `create_kb`                        |
+| 4    | 查询 `/dev/confirmations`           | 返回待确认的 action/calendar 请求                                     |
+| 5    | 查询 `/dev/cards`                   | 第一场后至少有 2 张 action card 和 1 张 calendar card                 |
+| 6    | 确认第一条 action                   | action 进入确认执行状态，并写入 dry-run CLI 记录                      |
+| 7    | 用 edited payload 确认第二条 action | 数据库最终字段使用用户确认值                                          |
+| 8    | 用 edited payload 确认 calendar     | participants/location/duration 使用用户确认值                         |
+| 9    | 提交第二场会议                      | 第二场会议成功处理并返回 topic match                                  |
+| 10   | 校验第二场主题判断                  | `score >= 0.9`，`suggested_action=ask_create`，候选会议至少包含两场   |
+| 11   | 查询 `create_kb` confirmation       | `/dev/confirmations` 能看到 `request_type=create_kb`                  |
+| 12   | 查询 `/dev/cards`                   | 第二场后能看到 1 张 create_kb card                                    |
+| 13   | 确认第二场 action 和 `create_kb`    | 第二场 action 写入 dry-run CLI 记录，并生成 mock 知识库记录           |
+| 14   | 提交第三场会议                      | 第三场会议成功处理并命中已有知识库                                    |
+| 15   | 校验第三场主题判断                  | `suggested_action=ask_append`，`matched_kb_id` 指向已有 mock 知识库   |
+| 16   | 查询第三场 confirmations            | 能看到 action、calendar、`append_meeting` 三类 confirmation           |
+| 17   | 查询 `/dev/cards`                   | 第三场 action、calendar、append meeting card 都可见                   |
+| 18   | 确认第三场 action/calendar/append   | action/calendar 写入 dry-run CLI 记录，append 生成 `meeting_added`    |
+| 19   | 查询 `/dev/state`                   | 无未处理 confirmation；updates 依次包含 `kb_created`、`meeting_added` |
 
 ## 成功标准
 
 完整 P0 Demo 通过时应满足：
 
-- Meetings processed: `2`
-- Action confirmations executed: `2`
-- Calendar confirmations executed: `1`
+- Meetings processed: `3`
+- Action confirmations executed: `4`
+- Calendar confirmations executed: `2`
 - Knowledge base confirmations executed: `1`
-- Card previews generated: `4`
-- Action cards: `2`
-- Calendar cards: `1`
+- Append meeting confirmations executed: `1`
+- Card previews generated: `8`
+- Action cards: `4`
+- Calendar cards: `2`
 - Knowledge base cards: `1`
+- Append meeting cards: `1`
+- Pending confirmations: `0`
 - Latest knowledge base name 包含 `无人机操作方案`
 - `wiki_url` 以 `mock://` 开头
 - `homepage_url` 以 `mock://` 开头
-- Latest knowledge update: `kb_created`
+- Knowledge updates: `kb_created -> meeting_added`
+- Latest knowledge update: `meeting_added`
 - Feishu Write Mode: `dry-run`
 
 终端应输出类似：
@@ -96,17 +117,20 @@ MeetingAtlas P0 Demo 验证一条完整的会议后执行闭环：
 LLM Provider: openai-compatible
 Feishu Write Mode: dry-run
 Mode note: FEISHU_DRY_RUN=true; this demo did not perform real Feishu writes.
-Meetings processed: 2
-Action confirmations executed: 2
-Calendar confirmations executed: 1
+Meetings processed: 3
+Action confirmations executed: 4
+Calendar confirmations executed: 2
 Knowledge base confirmations executed: 1
-Card previews generated: 4
-Action cards: 2
-Calendar cards: 1
+Append meeting confirmations executed: 1
+Card previews generated: 8
+Action cards: 4
+Calendar cards: 2
 Knowledge base cards: 1
+Append meeting cards: 1
+Pending confirmations: 0
 Knowledge base name: 无人机操作方案
 Knowledge base URL: mock://...
-Knowledge update: kb_created
+Knowledge update: meeting_added
 ```
 
 ## Dry-run 与真实飞书模式差异
@@ -148,7 +172,7 @@ PORT=3000 SQLITE_PATH=/tmp/meeting-atlas-demo.db FEISHU_DRY_RUN=true npm run dev
 ## 卡片确认层
 
 卡片确认层是 MeetingAtlas 对所有高影响动作的统一安全边界。当前 P0 中，
-action、calendar、create_kb confirmation 都会生成 card preview，并写入
+action、calendar、create_kb、append_meeting confirmation 都会生成 card preview，并写入
 `original_payload_json.card_preview`，同时可通过 `/dev/cards` 读取未完成
 confirmation 的卡片队列。
 
@@ -159,3 +183,6 @@ confirmation 的卡片队列。
 
 `remind_later`、`convert_to_task`、`append_current_only` 目前只接入 card dry-run
 preview stub，用于保证 demo 卡片按钮不会 404。stub 不会创建任务、日程或知识库。
+
+cards-only 与 send-cards 模式仍只覆盖前两场会议：它们用于验证卡片生成/发送计划，
+不执行 confirmations，也不会创建或追加知识库。

@@ -50,3 +50,6 @@ demo-output/*.json
 # Generated evaluation reports
 evaluation/output/
 evaluation-output/*.json
+
+# Local meeting transcript downloads
+minutes/

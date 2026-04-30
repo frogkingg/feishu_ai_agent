@@ -87,17 +87,14 @@ export async function fetchTranscript(input: {
   const args = input.minuteToken
     ? ["vc", "+notes", "--minute-tokens", input.minuteToken, "--format", "json"]
     : ["vc", "+notes", "--meeting-ids", input.meetingId, "--format", "json"];
-  const result = await runLarkCli(
-    args,
-    {
-      repos: input.repos,
-      config: input.config,
-      toolName: "lark.vc.notes",
-      dryRun: false,
-      expectJson: true,
-      runner: input.runner
-    }
-  );
+  const result = await runLarkCli(args, {
+    repos: input.repos,
+    config: input.config,
+    toolName: "lark.vc.notes",
+    dryRun: false,
+    expectJson: true,
+    runner: input.runner
+  });
 
   if (result.status === "failed") {
     throw new Error(`lark.vc.notes failed: ${result.error ?? "unknown error"}`);

@@ -46,6 +46,29 @@ type FeishuCardElement =
       text: FeishuText;
     }
   | {
+      tag: "input" | "textarea";
+      name: string;
+      placeholder: FeishuText;
+      default_value?: string;
+    }
+  | {
+      tag: "date_picker" | "picker_datetime";
+      name: string;
+      placeholder: FeishuText;
+      initial_date?: string;
+      initial_datetime?: string;
+    }
+  | {
+      tag: "select_static";
+      name: string;
+      placeholder: FeishuText;
+      options: Array<{
+        text: FeishuText;
+        value: string;
+      }>;
+      initial_option?: string;
+    }
+  | {
       tag: "action";
       actions: Array<{
         tag: "button";
@@ -85,6 +108,76 @@ function stringifyCardValue(value: unknown): string {
 
 function fieldLine(field: DryRunConfirmationCard["sections"][number]["fields"][number]): string {
   return `**${field.label}**: ${field.value_text ?? stringifyCardValue(field.value)}`;
+}
+
+function plainText(content: string): FeishuText {
+  return {
+    tag: "plain_text",
+    content
+  };
+}
+
+function scalarDefaultValue(value: DryRunConfirmationCard["editable_fields"][number]["value"]) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== null).join(", ");
+  }
+
+  return value === null ? undefined : String(value);
+}
+
+function buildEditableElement(
+  field: DryRunConfirmationCard["editable_fields"][number]
+): FeishuCardElement {
+  const placeholder = plainText(field.label);
+  const defaultValue = scalarDefaultValue(field.value);
+
+  if (field.input_type === "textarea" || field.input_type === "multi_text") {
+    return {
+      tag: "textarea",
+      name: field.key,
+      placeholder,
+      default_value: defaultValue
+    };
+  }
+
+  if (field.input_type === "date") {
+    return {
+      tag: "date_picker",
+      name: field.key,
+      placeholder,
+      initial_date: defaultValue
+    };
+  }
+
+  if (field.input_type === "datetime") {
+    return {
+      tag: "picker_datetime",
+      name: field.key,
+      placeholder,
+      initial_datetime: defaultValue
+    };
+  }
+
+  if (field.input_type === "select") {
+    const options = (field.options ?? []).map((option) => ({
+      text: plainText(option),
+      value: option
+    }));
+    return {
+      tag: "select_static",
+      name: field.key,
+      placeholder,
+      options,
+      initial_option: defaultValue
+    };
+  }
+
+  return {
+    tag: "input",
+    name: field.key,
+    placeholder,
+    default_value: defaultValue
+  };
 }
 
 function buttonType(
@@ -141,6 +234,21 @@ export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): Feishu
       }
     }
   ];
+
+  if (card.editable_fields.length > 0) {
+    elements.push(
+      {
+        tag: "hr"
+      },
+      {
+        tag: "markdown",
+        content: "**可修改字段**"
+      },
+      ...card.editable_fields
+        .filter((field) => field.input_type !== "readonly")
+        .map(buildEditableElement)
+    );
+  }
 
   if (card.actions.length > 0) {
     elements.push({

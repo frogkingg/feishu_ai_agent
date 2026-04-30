@@ -501,6 +501,20 @@ export function createRepositories(db: MeetingAtlasDb) {
       );
     },
 
+    updateKnowledgeBaseAfterAppend(input: {
+      id: string;
+      related_keywords_json: string;
+      created_from_meetings_json: string;
+    }): void {
+      db.prepare(
+        `UPDATE knowledge_bases
+        SET related_keywords_json = ?,
+            created_from_meetings_json = ?,
+            updated_at = ?
+        WHERE id = ?`
+      ).run(input.related_keywords_json, input.created_from_meetings_json, nowIso(), input.id);
+    },
+
     createSource(input: NewRow<SourceRow>): SourceRow {
       const row = withTimestamps(input);
       db.prepare(

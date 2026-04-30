@@ -64,7 +64,10 @@ describe("larkVc.fetchTranscript", () => {
 
   it("reads notes content from array or root payloads", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    const outputs = [JSON.stringify([{ content: "数组逐字稿" }]), JSON.stringify({ content: "根逐字稿" })];
+    const outputs = [
+      JSON.stringify([{ content: "数组逐字稿" }]),
+      JSON.stringify({ content: "根逐字稿" })
+    ];
     const runner: LarkCliRunner = async () => ({
       stdout: outputs.shift() ?? "",
       stderr: ""

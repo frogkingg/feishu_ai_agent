@@ -7,6 +7,7 @@ import { createCalendarEvent } from "../tools/larkCalendar";
 import { AppConfig } from "../config";
 import { buildConfirmationCard } from "../agents/cardInteractionAgent";
 import { createKnowledgeBaseWorkflow } from "../workflows/createKnowledgeBaseWorkflow";
+import { appendMeetingToKnowledgeBaseWorkflow } from "../workflows/appendMeetingToKnowledgeBaseWorkflow";
 import { ActionItemDraftSchema, CalendarEventDraftSchema } from "../schemas";
 import { type LarkCliRunner } from "../tools/larkCli";
 
@@ -383,6 +384,26 @@ export async function confirmRequest(input: {
     }
   }
 
+  if (request.request_type === "append_meeting") {
+    try {
+      const result = await appendMeetingToKnowledgeBaseWorkflow({
+        repos: input.repos,
+        config: input.config,
+        confirmationId: request.id
+      });
+
+      return {
+        confirmation: result.confirmation,
+        result
+      };
+    } catch (error) {
+      return {
+        confirmation: failRequest({ repos: input.repos, request, error }),
+        result: { failed: true, error: errorMessage(error) }
+      };
+    }
+  }
+
   throw new Error(`Request type is not executable in current phase: ${request.request_type}`);
 }
 
@@ -403,6 +424,17 @@ export function rejectRequest(input: {
     });
   } else if (request.request_type === "calendar") {
     input.repos.updateCalendarDraftRejection(request.target_id);
+  } else if (request.request_type === "append_meeting") {
+    const original = JSON.parse(request.original_payload_json) as unknown;
+    const payload = asObject(original);
+    const kbId = typeof payload.kb_id === "string" ? payload.kb_id : null;
+    const meeting = input.repos.getMeeting(request.target_id);
+    input.repos.updateMeetingTopic({
+      id: request.target_id,
+      matched_kb_id: kbId,
+      match_score: meeting?.match_score ?? 0,
+      archive_status: "rejected"
+    });
   }
 
   input.repos.updateConfirmationRequest({

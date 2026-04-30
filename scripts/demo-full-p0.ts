@@ -24,6 +24,8 @@ export interface TopicMatchResponse {
   match_reasons: string[];
   suggested_action: "no_action" | "observe" | "ask_append" | "ask_create";
   candidate_meeting_ids: string[];
+  matched_kb_id?: string | null;
+  matched_kb_name?: string | null;
 }
 
 export interface MeetingResponse {
@@ -112,6 +114,8 @@ export interface KnowledgeBaseState {
 
 export interface KnowledgeUpdateState {
   update_type: string;
+  summary?: string;
+  after_text?: string | null;
 }
 
 export interface CliRunState {
@@ -142,14 +146,19 @@ export interface DemoReportSummary {
   action_confirmations_executed: number;
   calendar_confirmations_executed: number;
   knowledge_base_confirmations_executed: number;
+  append_meeting_confirmations_executed: number;
   card_previews_generated: number;
   action_cards: number;
   calendar_cards: number;
   knowledge_base_cards: number;
+  append_meeting_cards: number;
   card_send_cli_records: number;
   knowledge_base_name: string;
   knowledge_base_url: string;
   knowledge_update: string;
+  knowledge_updates: string[];
+  pending_confirmations: number;
+  pending_confirmation_ids: string[];
   dry_run_cli_records: number;
   first_meeting: {
     id: string;
@@ -162,6 +171,13 @@ export interface DemoReportSummary {
     topic_action: string;
     topic_score: number;
     candidate_meeting_ids: string[];
+  };
+  third_meeting?: {
+    id: string;
+    action_items: number;
+    calendar_drafts: number;
+    topic_action: string;
+    matched_kb_id: string | null;
   };
 }
 
@@ -182,6 +198,7 @@ export interface RunFullP0DemoResult {
   state: StateResponse;
   first: MeetingResponse;
   second: MeetingResponse;
+  third?: MeetingResponse;
 }
 
 interface DemoContext {
@@ -233,6 +250,18 @@ Henry：我们需要建立统一无人机操作 SOP，把操作流程、权限�
 Henry：后续要把这两次访谈整理成一个无人机操作方案知识库。
 `.trim();
 
+const THIRD_MEETING_TRANSCRIPT = `
+会议主题：无人机实施风险评审
+会议时间：2026-05-03 10:00 - 11:00
+参会人：张三、李四、王五、Henry
+
+Henry：这次继续围绕无人机操作方案做风险评审，前两次访谈已经沉淀成知识库了。
+张三：操作流程已经有第一版，但试飞权限还没有完全确认。
+李四：试飞前必须确认场地权限、现场安全员和电池状态，我负责在 2026-05-06 前确认试飞权限。
+王五：风险控制这块要追加到已有的无人机操作方案知识库，尤其是天气、电池状态和现场安全员。
+Henry：好，这场会议结束后加入已有知识库，不要再新建一个。
+`.trim();
+
 const EDITED_SECOND_ACTION = {
   title: "确认无人机试飞场地权限并输出审批说明",
   owner: "王五",
@@ -273,7 +302,9 @@ const CREATE_KB_CARD_ACTION_KEYS = [
   "reject",
   "never_remind_topic"
 ];
+const APPEND_MEETING_CARD_ACTION_KEYS = ["confirm", "reject"];
 const DEFAULT_CARD_ACTION_KEYS = ["confirm", "reject"];
+const TERMINAL_CONFIRMATION_STATUSES = new Set(["executed", "rejected", "failed"]);
 
 function getDemoOutputStem(mode: DemoMode): string {
   switch (mode) {
@@ -495,7 +526,9 @@ async function listConfirmations(context: DemoContext): Promise<ConfirmationRequ
             ? CALENDAR_CARD_ACTION_KEYS
             : confirmation.request_type === "create_kb"
               ? CREATE_KB_CARD_ACTION_KEYS
-              : DEFAULT_CARD_ACTION_KEYS;
+              : confirmation.request_type === "append_meeting"
+                ? APPEND_MEETING_CARD_ACTION_KEYS
+                : DEFAULT_CARD_ACTION_KEYS;
       return expectedKeys.every((key) => actionKeys.includes(key));
     }),
     "Dry-run cards should include the expected action buttons"
@@ -620,18 +653,27 @@ function cardsForMeeting(
   return cards.filter((card) => ids.has(card.request_id) && card.card_type === cardType);
 }
 
+function pendingConfirmations(state: StateResponse): ConfirmationRequest[] {
+  return state.confirmation_requests.filter(
+    (confirmation) => !TERMINAL_CONFIRMATION_STATUSES.has(confirmation.status)
+  );
+}
+
 function buildReportSummary(input: {
   context: DemoContext;
   health: HealthResponse;
   first: MeetingResponse;
   second: MeetingResponse;
+  third: MeetingResponse;
   confirmedActionIds: string[];
   confirmedCalendarIds: string[];
   confirmedCreateKbId: string;
+  confirmedAppendMeetingId: string;
   cardStats: {
     actionCards: number;
     calendarCards: number;
     knowledgeBaseCards: number;
+    appendMeetingCards: number;
   };
   state: StateResponse;
 }): DemoReportSummary {
@@ -641,6 +683,7 @@ function buildReportSummary(input: {
   ).length;
   const latestKnowledgeBase = input.state.knowledge_bases.at(-1);
   const latestKnowledgeUpdate = input.state.knowledge_updates.at(-1);
+  const pending = pendingConfirmations(input.state);
 
   return {
     status: "passed",
@@ -650,21 +693,27 @@ function buildReportSummary(input: {
     llm_provider: input.health.llm_provider,
     feishu_write_mode: "dry-run",
     dry_run_note: "FEISHU_DRY_RUN=true; this demo did not perform real Feishu writes.",
-    meetings_processed: 2,
+    meetings_processed: 3,
     action_confirmations_executed: input.confirmedActionIds.length,
     calendar_confirmations_executed: input.confirmedCalendarIds.length,
     knowledge_base_confirmations_executed: 1,
+    append_meeting_confirmations_executed: 1,
     card_previews_generated:
       input.cardStats.actionCards +
       input.cardStats.calendarCards +
-      input.cardStats.knowledgeBaseCards,
+      input.cardStats.knowledgeBaseCards +
+      input.cardStats.appendMeetingCards,
     action_cards: input.cardStats.actionCards,
     calendar_cards: input.cardStats.calendarCards,
     knowledge_base_cards: input.cardStats.knowledgeBaseCards,
+    append_meeting_cards: input.cardStats.appendMeetingCards,
     card_send_cli_records: cardSendCliCount,
     knowledge_base_name: latestKnowledgeBase?.name ?? "n/a",
     knowledge_base_url: latestKnowledgeBase?.wiki_url ?? latestKnowledgeBase?.homepage_url ?? "n/a",
     knowledge_update: latestKnowledgeUpdate?.update_type ?? "n/a",
+    knowledge_updates: input.state.knowledge_updates.map((update) => update.update_type),
+    pending_confirmations: pending.length,
+    pending_confirmation_ids: pending.map((confirmation) => confirmation.id),
     dry_run_cli_records: dryRunCliCount,
     first_meeting: {
       id: input.first.meeting_id,
@@ -677,6 +726,13 @@ function buildReportSummary(input: {
       topic_action: input.second.topic_match.suggested_action,
       topic_score: input.second.topic_match.score,
       candidate_meeting_ids: input.second.topic_match.candidate_meeting_ids
+    },
+    third_meeting: {
+      id: input.third.meeting_id,
+      action_items: input.third.extraction.action_items.length,
+      calendar_drafts: input.third.extraction.calendar_drafts.length,
+      topic_action: input.third.topic_match.suggested_action,
+      matched_kb_id: input.third.topic_match.matched_kb_id ?? null
     }
   };
 }
@@ -693,6 +749,7 @@ function buildCardPhaseReportSummary(input: {
   const cardSendCliCount = input.state.cli_runs.filter(
     (run) => run.tool === "lark.im.send_card"
   ).length;
+  const pending = pendingConfirmations(input.state);
 
   return {
     status: "passed",
@@ -711,15 +768,21 @@ function buildCardPhaseReportSummary(input: {
     action_confirmations_executed: 0,
     calendar_confirmations_executed: 0,
     knowledge_base_confirmations_executed: 0,
+    append_meeting_confirmations_executed: 0,
     card_previews_generated: input.cards.length,
     action_cards: input.cards.filter((card) => card.card_type === "action_confirmation").length,
     calendar_cards: input.cards.filter((card) => card.card_type === "calendar_confirmation").length,
     knowledge_base_cards: input.cards.filter((card) => card.card_type === "create_kb_confirmation")
       .length,
+    append_meeting_cards: input.cards.filter((card) => card.card_type === "generic_confirmation")
+      .length,
     card_send_cli_records: cardSendCliCount,
     knowledge_base_name: "n/a",
     knowledge_base_url: "n/a",
     knowledge_update: "n/a",
+    knowledge_updates: [],
+    pending_confirmations: pending.length,
+    pending_confirmation_ids: pending.map((confirmation) => confirmation.id),
     dry_run_cli_records: dryRunCliCount,
     first_meeting: {
       id: input.first.meeting_id,
@@ -749,14 +812,17 @@ function formatTerminalReport(summary: DemoReportSummary): string {
     `Action confirmations executed: ${summary.action_confirmations_executed}`,
     `Calendar confirmations executed: ${summary.calendar_confirmations_executed}`,
     `Knowledge base confirmations executed: ${summary.knowledge_base_confirmations_executed}`,
+    `Append meeting confirmations executed: ${summary.append_meeting_confirmations_executed}`,
     `Card previews generated: ${summary.card_previews_generated}`,
     `Action cards: ${summary.action_cards}`,
     `Calendar cards: ${summary.calendar_cards}`,
     `Knowledge base cards: ${summary.knowledge_base_cards}`,
+    `Append meeting cards: ${summary.append_meeting_cards}`,
     `Card send CLI records: ${summary.card_send_cli_records}`,
     `Knowledge base name: ${summary.knowledge_base_name}`,
     `Knowledge base URL: ${summary.knowledge_base_url}`,
     `Knowledge update: ${summary.knowledge_update}`,
+    `Pending confirmations: ${summary.pending_confirmations}`,
     `Dry-run CLI records: ${summary.dry_run_cli_records}`
   ].join("\n");
 }
@@ -788,14 +854,19 @@ function formatMarkdownReport(summary: DemoReportSummary): string {
     `- Action confirmations executed: ${summary.action_confirmations_executed}`,
     `- Calendar confirmations executed: ${summary.calendar_confirmations_executed}`,
     `- Knowledge base confirmations executed: ${summary.knowledge_base_confirmations_executed}`,
+    `- Append meeting confirmations executed: ${summary.append_meeting_confirmations_executed}`,
     `- Card previews generated: ${summary.card_previews_generated}`,
     `- Action cards: ${summary.action_cards}`,
     `- Calendar cards: ${summary.calendar_cards}`,
     `- Knowledge base cards: ${summary.knowledge_base_cards}`,
+    `- Append meeting cards: ${summary.append_meeting_cards}`,
     `- Card send CLI records: ${summary.card_send_cli_records}`,
     `- Knowledge base name: ${summary.knowledge_base_name}`,
     `- Knowledge base URL: ${summary.knowledge_base_url}`,
     `- Knowledge update: ${summary.knowledge_update}`,
+    `- Knowledge updates: ${summary.knowledge_updates.join(" -> ") || "n/a"}`,
+    `- Pending confirmations: ${summary.pending_confirmations}`,
+    `- Pending confirmation IDs: ${summary.pending_confirmation_ids.join(", ") || "none"}`,
     `- Dry-run CLI records: ${summary.dry_run_cli_records}`,
     "",
     "## Topic Flow",
@@ -810,6 +881,23 @@ function formatMarkdownReport(summary: DemoReportSummary): string {
     `- Second topic action: ${summary.second_meeting.topic_action}`,
     `- Second topic score: ${summary.second_meeting.topic_score}`,
     `- Candidate meetings: ${summary.second_meeting.candidate_meeting_ids.join(", ")}`,
+    ...(summary.third_meeting
+      ? [
+          `- Third meeting: ${summary.third_meeting.id}`,
+          `- Third topic action: ${summary.third_meeting.topic_action}`,
+          `- Third matched knowledge base: ${summary.third_meeting.matched_kb_id ?? "n/a"}`,
+          [
+            `- Third extraction: actions=${summary.third_meeting.action_items}`,
+            `calendars=${summary.third_meeting.calendar_drafts}`
+          ].join(", ")
+        ]
+      : []),
+    "",
+    "## Product Story",
+    "",
+    "- Meeting 1 creates personal action and calendar confirmation cards.",
+    "- Meeting 2 detects a repeated drone-operation topic and creates the knowledge base after confirmation.",
+    "- Meeting 3 matches the existing knowledge base and appends a meeting update after confirmation.",
     "",
     "## Safety Notes",
     "",
@@ -1013,9 +1101,17 @@ export async function runFullP0Demo(
     `first meeting card previews verified: action=${firstActionCards.length}, calendar=${firstCalendarCards.length}`
   );
 
-  await confirmRequest(context, actionRequests[0].id);
-  await confirmRequest(context, actionRequests[1].id, EDITED_SECOND_ACTION);
-  await confirmRequest(context, calendarRequests[0].id, EDITED_CALENDAR);
+  const confirmedActionIds: string[] = [];
+  const confirmedCalendarIds: string[] = [];
+
+  for (const [index, request] of actionRequests.entries()) {
+    await confirmRequest(context, request.id, index === 1 ? EDITED_SECOND_ACTION : undefined);
+    confirmedActionIds.push(request.id);
+  }
+  for (const [index, request] of calendarRequests.entries()) {
+    await confirmRequest(context, request.id, index === 0 ? EDITED_CALENDAR : undefined);
+    confirmedCalendarIds.push(request.id);
+  }
 
   const second = await submitMeeting(context, {
     title: "无人机操作员访谈",
@@ -1046,7 +1142,11 @@ export async function runFullP0Demo(
 
   const secondConfirmations = await listConfirmations(context);
   const createKbRequests = requestsForMeeting(second, secondConfirmations, "create_kb");
+  const secondActionRequests = requestsForMeeting(second, secondConfirmations, "action");
+  const secondCalendarRequests = requestsForMeeting(second, secondConfirmations, "calendar");
   const secondCards = await listCards(context);
+  const secondActionCards = cardsForMeeting(second, secondCards, "action_confirmation");
+  const secondCalendarCards = cardsForMeeting(second, secondCards, "calendar_confirmation");
   const secondCreateKbCards = cardsForMeeting(second, secondCards, "create_kb_confirmation");
   const duplicateKnowledgeBaseActionRequests = requestsForMeeting(
     second,
@@ -1059,10 +1159,87 @@ export async function runFullP0Demo(
     `Second meeting should expose exactly one create_kb card, got ${secondCreateKbCards.length}`
   );
   assertDemo(
+    secondActionCards.length === secondActionRequests.length,
+    "Second meeting action cards should match action confirmations"
+  );
+  assertDemo(
+    secondCalendarCards.length === secondCalendarRequests.length,
+    "Second meeting calendar cards should match calendar confirmations"
+  );
+  assertDemo(
     duplicateKnowledgeBaseActionRequests.length === 0,
     "Second meeting should not create duplicate action confirmations for knowledge-base creation tasks"
   );
+  for (const request of secondActionRequests) {
+    await confirmRequest(context, request.id);
+    confirmedActionIds.push(request.id);
+  }
+  for (const request of secondCalendarRequests) {
+    await confirmRequest(context, request.id);
+    confirmedCalendarIds.push(request.id);
+  }
   await confirmRequest(context, createKbRequests[0].id);
+
+  const third = await submitMeeting(context, {
+    title: "无人机实施风险评审",
+    participants: ["张三", "李四", "王五"],
+    organizer: "张三",
+    started_at: "2026-05-03T10:00:00+08:00",
+    ended_at: "2026-05-03T11:00:00+08:00",
+    transcript_text: THIRD_MEETING_TRANSCRIPT
+  });
+  assertDemo(
+    third.topic_match.suggested_action === "ask_append",
+    `Third meeting should suggest ask_append, got ${third.topic_match.suggested_action}`
+  );
+  assertDemo(
+    typeof third.topic_match.matched_kb_id === "string" &&
+      third.topic_match.matched_kb_id.length > 0,
+    "Third meeting should match the existing knowledge base"
+  );
+  ok(context, "third meeting matched existing knowledge base and suggested append verified");
+
+  const thirdConfirmations = await listConfirmations(context);
+  const thirdActionRequests = requestsForMeeting(third, thirdConfirmations, "action");
+  const thirdCalendarRequests = requestsForMeeting(third, thirdConfirmations, "calendar");
+  const appendMeetingRequests = requestsForMeeting(third, thirdConfirmations, "append_meeting");
+  const thirdCards = await listCards(context);
+  const thirdActionCards = cardsForMeeting(third, thirdCards, "action_confirmation");
+  const thirdCalendarCards = cardsForMeeting(third, thirdCards, "calendar_confirmation");
+  const appendMeetingCards = cardsForMeeting(third, thirdCards, "generic_confirmation");
+  assertDemo(
+    thirdActionRequests.length === third.extraction.action_items.length,
+    `Third meeting action confirmations should match extracted actions, got ${thirdActionRequests.length}`
+  );
+  assertDemo(
+    thirdCalendarRequests.length === third.extraction.calendar_drafts.length,
+    `Third meeting calendar confirmations should match extracted calendars, got ${thirdCalendarRequests.length}`
+  );
+  assertDemo(
+    thirdActionCards.length === thirdActionRequests.length,
+    "Third meeting action cards should match action confirmations"
+  );
+  assertDemo(
+    thirdCalendarCards.length === thirdCalendarRequests.length,
+    "Third meeting calendar cards should match calendar confirmations"
+  );
+  assertDemo(
+    appendMeetingRequests.length === 1,
+    `Third meeting should create one append_meeting confirmation, got ${appendMeetingRequests.length}`
+  );
+  assertDemo(
+    appendMeetingCards.length === 1,
+    `Third meeting should expose one append meeting card, got ${appendMeetingCards.length}`
+  );
+  for (const request of thirdActionRequests) {
+    await confirmRequest(context, request.id);
+    confirmedActionIds.push(request.id);
+  }
+  for (const request of thirdCalendarRequests) {
+    await confirmRequest(context, request.id);
+    confirmedCalendarIds.push(request.id);
+  }
+  await confirmRequest(context, appendMeetingRequests[0].id);
 
   const state = await getState(context);
   const latestKnowledgeBase = state.knowledge_bases.at(-1);
@@ -1088,8 +1265,16 @@ export async function runFullP0Demo(
     "Latest knowledge base homepage_url should be a mock:// URL"
   );
   assertDemo(
-    latestKnowledgeUpdate?.update_type === "kb_created",
-    "Latest knowledge update should be kb_created"
+    state.knowledge_updates.some((update) => update.update_type === "kb_created"),
+    "Final state should include a kb_created update"
+  );
+  assertDemo(
+    latestKnowledgeUpdate?.update_type === "meeting_added",
+    "Latest knowledge update should be meeting_added"
+  );
+  assertDemo(
+    latestKnowledgeUpdate?.after_text?.includes("无人机实施风险评审"),
+    "Latest append update should include the third meeting title"
   );
   assertDemo(
     state.cli_runs.some((run) => run.tool === "lark.task.create" && run.dry_run === 1),
@@ -1118,19 +1303,27 @@ export async function runFullP0Demo(
     ),
     "Edited calendar payload should be persisted in final state"
   );
+  assertDemo(
+    pendingConfirmations(state).length === 0,
+    "Full P0 demo should not leave unexpected pending confirmations"
+  );
 
   const summary = buildReportSummary({
     context,
     health,
     first,
     second,
-    confirmedActionIds: [actionRequests[0].id, actionRequests[1].id],
-    confirmedCalendarIds: [calendarRequests[0].id],
+    third,
+    confirmedActionIds,
+    confirmedCalendarIds,
     confirmedCreateKbId: createKbRequests[0].id,
+    confirmedAppendMeetingId: appendMeetingRequests[0].id,
     cardStats: {
-      actionCards: 2,
-      calendarCards: 1,
-      knowledgeBaseCards: secondCreateKbCards.length
+      actionCards: firstActionCards.length + secondActionCards.length + thirdActionCards.length,
+      calendarCards:
+        firstCalendarCards.length + secondCalendarCards.length + thirdCalendarCards.length,
+      knowledgeBaseCards: secondCreateKbCards.length,
+      appendMeetingCards: appendMeetingCards.length
     },
     state
   });
@@ -1140,7 +1333,8 @@ export async function runFullP0Demo(
     summary,
     state,
     first,
-    second
+    second,
+    third
   };
 }
 

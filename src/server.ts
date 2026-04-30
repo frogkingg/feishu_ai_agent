@@ -29,8 +29,7 @@ const SendCardBodySchema = z
   });
 
 const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
-const TranscriptPendingText =
-  "【transcript pending - to be fetched via lark-cli vc +notes】";
+const TranscriptPendingText = "【transcript pending - to be fetched via lark-cli vc +notes】";
 const CardActionPendingMessage = "此操作暂未实现，将在 PR-2 中完成";
 const TranscriptFetchTimeoutMs = 3000;
 
@@ -147,6 +146,17 @@ const PREVIEW_STUB_CARD_ACTIONS = {
   convert_to_task: "convert_to_task",
   append_current_only: "append_current_only"
 } as const;
+const PROCESSED_CONFIRMATION_STATUSES = new Set(["executed", "rejected", "failed"]);
+const IN_FLIGHT_CONFIRMATION_STATUSES = new Set(["confirmed"]);
+const INTERNAL_CARD_VALUE_KEYS = new Set([
+  "confirmation_id",
+  "request_id",
+  "action",
+  "action_key",
+  "key",
+  "endpoint",
+  "payload_template"
+]);
 
 function briefError(error: unknown): string {
   if (error instanceof ZodError) {
@@ -232,6 +242,52 @@ function valueFromActionPayload(
   return undefined;
 }
 
+function normalizeFormValue(value: unknown): unknown {
+  if (isTemplatePlaceholder(value)) {
+    return undefined;
+  }
+
+  const record = asRecord(value);
+  if (record !== null) {
+    if (Object.prototype.hasOwnProperty.call(record, "value")) {
+      return normalizeFormValue(record.value);
+    }
+    if (Object.prototype.hasOwnProperty.call(record, "option")) {
+      return normalizeFormValue(record.option);
+    }
+    if (Object.prototype.hasOwnProperty.call(record, "text")) {
+      return normalizeFormValue(record.text);
+    }
+  }
+
+  return value;
+}
+
+function normalizeEditedPayload(value: unknown): unknown | undefined {
+  if (value === undefined || value === null || isTemplatePlaceholder(value)) {
+    return undefined;
+  }
+
+  const record = asRecord(value);
+  if (record === null) {
+    return value;
+  }
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, rawFieldValue] of Object.entries(record)) {
+    if (INTERNAL_CARD_VALUE_KEYS.has(key)) {
+      continue;
+    }
+
+    const fieldValue = normalizeFormValue(rawFieldValue);
+    if (fieldValue !== undefined) {
+      normalized[key] = fieldValue;
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 function extractCardCallbackPayload(payload: unknown): {
   requestId: string | null;
   actionKey: string | null;
@@ -239,9 +295,12 @@ function extractCardCallbackPayload(payload: unknown): {
   reason?: string | null;
 } {
   const root = asRecord(payload) ?? {};
+  const event = recordAtPath(payload, ["event"]) ?? {};
   const actionValue = firstRecord([
     recordAtPath(payload, ["event", "action", "value"]),
     recordAtPath(payload, ["action", "value"]),
+    recordAtPath(payload, ["event", "action", "value", "payload"]),
+    recordAtPath(payload, ["action", "value", "payload"]),
     recordAtPath(payload, ["event", "action"]),
     recordAtPath(payload, ["action"]),
     recordAtPath(payload, ["value"]),
@@ -252,6 +311,8 @@ function extractCardCallbackPayload(payload: unknown): {
     actionValue.request_id,
     root.confirmation_id,
     root.request_id,
+    event.confirmation_id,
+    event.request_id,
     valueAtPath(payload, ["event", "confirmation_id"]),
     valueAtPath(payload, ["event", "request_id"])
   ]);
@@ -264,10 +325,13 @@ function extractCardCallbackPayload(payload: unknown): {
     valueAtPath(payload, ["event", "action"]),
     valueAtPath(payload, ["event", "action_key"])
   ]);
-  const editedPayload =
+  const editedPayload = normalizeEditedPayload(
     valueFromActionPayload(actionValue, "edited_payload") ??
-    recordAtPath(payload, ["event", "action", "form_value"]) ??
-    recordAtPath(payload, ["event", "form_value"]);
+      recordAtPath(payload, ["event", "action", "form_value"]) ??
+      recordAtPath(payload, ["action", "form_value"]) ??
+      recordAtPath(payload, ["event", "form_value"]) ??
+      recordAtPath(payload, ["form_value"])
+  );
   const reasonValue = valueFromActionPayload(actionValue, "reason");
   const reason = stringValue(reasonValue);
 
@@ -327,7 +391,33 @@ function cardPreviewStubAction(input: {
     dry_run: true,
     confirmation_id: input.id,
     action: input.action,
-    message: "This card action is preview-only in the current phase."
+    status: "preview_only",
+    message: CardActionPendingMessage
+  };
+}
+
+function alreadyProcessedToast(input: {
+  confirmationId: string;
+  action: string | null;
+  status: string;
+}) {
+  return {
+    ok: true,
+    already_processed: true,
+    confirmation_id: input.confirmationId,
+    action: input.action,
+    status: input.status,
+    ...toast("success", `该确认请求已处理（${input.status}），不会重复执行`)
+  };
+}
+
+function alreadyProcessingToast(input: { confirmationId: string; action: string | null }) {
+  return {
+    ok: true,
+    already_processing: true,
+    confirmation_id: input.confirmationId,
+    action: input.action,
+    ...toast("success", "该确认请求正在处理中，不会重复执行")
   };
 }
 
@@ -466,6 +556,18 @@ export function buildServer(input: {
   });
 
   app.post("/webhooks/feishu/card-action", async (request, reply) => {
+    const rawBody = getRawBody(request);
+    if (
+      !isLarkSignatureValid({
+        request,
+        body: rawBody,
+        verificationToken: input.config.larkVerificationToken
+      })
+    ) {
+      request.log.warn("rejected feishu card action webhook with invalid signature");
+      return reply.code(401).send({ error: "Invalid Lark webhook signature" });
+    }
+
     const bodyRecord = asRecord(request.body ?? {});
     if (bodyRecord !== null && typeof bodyRecord.challenge === "string") {
       return { challenge: bodyRecord.challenge };
@@ -484,6 +586,21 @@ export function buildServer(input: {
 
     if (parsed.actionKey === null) {
       return reply.code(400).send(toast("error", "暂不支持此操作"));
+    }
+
+    if (PROCESSED_CONFIRMATION_STATUSES.has(confirmation.status)) {
+      return alreadyProcessedToast({
+        confirmationId: parsed.requestId,
+        action: parsed.actionKey,
+        status: confirmation.status
+      });
+    }
+
+    if (IN_FLIGHT_CONFIRMATION_STATUSES.has(confirmation.status)) {
+      return alreadyProcessingToast({
+        confirmationId: parsed.requestId,
+        action: parsed.actionKey
+      });
     }
 
     try {
@@ -527,12 +644,17 @@ export function buildServer(input: {
       const previewAction =
         PREVIEW_STUB_CARD_ACTIONS[parsed.actionKey as keyof typeof PREVIEW_STUB_CARD_ACTIONS];
       if (previewAction !== undefined) {
+        const result = cardPreviewStubAction({
+          repos: input.repos,
+          id: parsed.requestId,
+          action: previewAction
+        });
+        if (result === null) {
+          return reply.code(404).send(toast("error", "确认请求不存在"));
+        }
+
         return {
-          ok: true,
-          dry_run: true,
-          confirmation_id: parsed.requestId,
-          action: previewAction,
-          message: CardActionPendingMessage,
+          ...result,
           ...toast("success", CardActionPendingMessage)
         };
       }

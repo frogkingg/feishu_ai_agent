@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadConfig } from "../../src/config";
 import { MeetingExtractionResult } from "../../src/schemas";
+import { confirmRequest } from "../../src/services/confirmationService";
 import { LlmClient } from "../../src/services/llm/llmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
@@ -47,6 +49,27 @@ function firstDroneExtraction(): MeetingExtractionResult {
 
 function secondDroneExtraction(): MeetingExtractionResult {
   return readExpected("drone_interview_02.extraction.json");
+}
+
+function thirdDroneExtraction(): MeetingExtractionResult {
+  return {
+    ...secondDroneExtraction(),
+    meeting_summary:
+      "本次风险评审继续围绕无人机操作方案，确认试飞权限、现场安全员和电池状态仍是后续推进重点。",
+    topic_keywords: ["无人机", "操作流程", "试飞权限", "风险控制"],
+    key_decisions: [
+      {
+        decision: "后续试飞前必须先确认场地权限和现场安全员。",
+        evidence: "试飞权限和现场安全员仍是推进重点。"
+      }
+    ],
+    risks: [
+      {
+        risk: "试飞权限尚未确认可能影响排期。",
+        evidence: "会议继续强调试飞权限。"
+      }
+    ]
+  };
 }
 
 function firstProductReviewExtraction(): MeetingExtractionResult {
@@ -119,6 +142,28 @@ async function processSecondDroneMeeting(input: {
       started_at: "2026-04-29T10:00:00+08:00",
       ended_at: "2026-04-29T11:00:00+08:00",
       transcript_text: input.transcriptText ?? readFixture("drone_interview_02.txt")
+    }
+  });
+}
+
+async function processThirdDroneMeeting(input: {
+  repos: ReturnType<typeof createRepositories>;
+  llm: LlmClient;
+}) {
+  return processMeetingWorkflow({
+    repos: input.repos,
+    llm: input.llm,
+    meeting: {
+      title: "无人机操作方案风险评审",
+      participants: ["张三", "王五", "李四"],
+      organizer: "张三",
+      started_at: "2026-05-03T10:00:00+08:00",
+      ended_at: "2026-05-03T11:00:00+08:00",
+      transcript_text: [
+        "本次继续讨论无人机操作方案。",
+        "操作流程、试飞权限和风险控制都需要进入已有沉淀。",
+        "试飞前必须确认场地权限、现场安全员和电池状态。"
+      ].join("\n")
     }
   });
 }
@@ -281,6 +326,48 @@ describe("TopicClusteringAgent", () => {
       expect.arrayContaining([first.meeting_id, second.meeting_id])
     );
     expect(second.topic_match.match_reasons).toContain("当前会议显式提出整理成知识库");
+  });
+
+  it("asks to append a third related meeting to the existing active knowledge base", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const llm = new QueueLlmClient([
+      firstDroneExtraction(),
+      secondDroneExtraction(),
+      thirdDroneExtraction()
+    ]);
+
+    await processFirstDroneMeeting(repos, llm);
+    await processSecondDroneMeeting({ repos, llm });
+    const createKbRequest = repos
+      .listConfirmationRequests()
+      .find((request) => request.request_type === "create_kb");
+    expect(createKbRequest).toBeTruthy();
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: true, sqlitePath: ":memory:" }),
+      id: createKbRequest!.id
+    });
+
+    const third = await processThirdDroneMeeting({ repos, llm });
+    const appendRequests = repos
+      .listConfirmationRequests()
+      .filter((request) => request.request_type === "append_meeting");
+    const createKbRequests = repos
+      .listConfirmationRequests()
+      .filter((request) => request.request_type === "create_kb");
+
+    expect(third.topic_match.suggested_action).toBe("ask_append");
+    expect(third.topic_match.matched_kb_id).toBe(repos.listKnowledgeBases()[0].id);
+    expect(appendRequests).toHaveLength(1);
+    expect(createKbRequests).toHaveLength(1);
+    expect(third.confirmation_requests).toContain(appendRequests[0].id);
+    expect(JSON.parse(appendRequests[0].original_payload_json)).toMatchObject({
+      kb_id: repos.listKnowledgeBases()[0].id,
+      meeting_id: third.meeting_id,
+      meeting_summary: expect.stringContaining("风险评审继续围绕无人机操作方案"),
+      reason: expect.stringContaining("建议确认后追加到知识库")
+    });
   });
 
   it("does not treat model-inferred knowledge base actions as explicit first-meeting intent", async () => {

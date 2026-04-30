@@ -132,8 +132,120 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(repos.getConfirmationRequest(calendar.id)?.status).toBe("rejected");
   });
 
-  it("returns dry-run toasts for card actions planned for PR-2", async () => {
-    const { app, action } = await createAppWithConfirmations();
+  it("parses real Feishu action payloads and applies user edited fields", async () => {
+    const { app, repos, action } = await createAppWithConfirmations();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        schema: "2.0",
+        header: {
+          event_type: "card.action.trigger"
+        },
+        event: {
+          operator: {
+            user_id: {
+              open_id: "ou_editor"
+            }
+          },
+          context: {
+            open_message_id: "om_card_message",
+            open_chat_id: "oc_test_chat"
+          },
+          action: {
+            tag: "button",
+            value: {
+              confirmation_id: action.id,
+              action_key: "confirm_with_edits",
+              edited_payload: "$editable_fields"
+            },
+            form_value: {
+              owner: "王五",
+              due_date: "2026-05-02",
+              priority: {
+                value: "P0"
+              }
+            }
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      confirmation_id: action.id,
+      action: "confirm_with_edits"
+    });
+    await flushAsyncWork();
+
+    const updatedAction = repos.getActionItem(action.target_id);
+    expect(updatedAction).toMatchObject({
+      owner: "王五",
+      due_date: "2026-05-02",
+      priority: "P0",
+      confirmation_status: "created"
+    });
+    const updatedConfirmation = repos.getConfirmationRequest(action.id);
+    expect(updatedConfirmation?.status).toBe("executed");
+    expect(JSON.parse(updatedConfirmation?.edited_payload_json ?? "{}")).toMatchObject({
+      owner: "王五",
+      due_date: "2026-05-02",
+      priority: "P0"
+    });
+  });
+
+  it("returns already_processed toast for repeated terminal clicks without re-executing", async () => {
+    const { app, repos, action } = await createAppWithConfirmations();
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        action: {
+          value: {
+            confirmation_id: action.id,
+            action: "confirm"
+          }
+        }
+      }
+    });
+    await flushAsyncWork();
+    const cliRunsAfterFirstClick = repos.listCliRuns().length;
+    expect(repos.getConfirmationRequest(action.id)?.status).toBe("executed");
+
+    const duplicateResponse = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        event: {
+          action: {
+            value: {
+              confirmation_id: action.id,
+              action_key: "confirm"
+            }
+          }
+        }
+      }
+    });
+
+    expect(duplicateResponse.statusCode).toBe(200);
+    expect(duplicateResponse.json()).toMatchObject({
+      ok: true,
+      already_processed: true,
+      confirmation_id: action.id,
+      action: "confirm",
+      status: "executed",
+      toast: {
+        type: "success"
+      }
+    });
+    expect(repos.listCliRuns()).toHaveLength(cliRunsAfterFirstClick);
+  });
+
+  it("keeps preview-only card actions side-effect free before later confirmation", async () => {
+    const { app, repos, action } = await createAppWithConfirmations();
+    expect(repos.getConfirmationRequest(action.id)?.status).toBe("sent");
 
     for (const callbackAction of ["remind_later", "convert_to_task", "append_current_only"]) {
       const response = await app.inject({
@@ -156,6 +268,7 @@ describe("POST /webhooks/feishu/card-action", () => {
         dry_run: true,
         confirmation_id: action.id,
         action: callbackAction,
+        status: "preview_only",
         message: "此操作暂未实现，将在 PR-2 中完成",
         toast: {
           type: "success",
@@ -163,5 +276,31 @@ describe("POST /webhooks/feishu/card-action", () => {
         }
       });
     }
+
+    const unchangedConfirmation = repos.getConfirmationRequest(action.id);
+    expect(unchangedConfirmation?.status).toBe("sent");
+    expect(unchangedConfirmation?.edited_payload_json).toBeNull();
+    expect(
+      repos.listCliRuns().filter((run) => run.tool.startsWith("lark.card_action."))
+    ).toHaveLength(0);
+
+    const confirmResponse = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        action: {
+          value: {
+            confirmation_id: action.id,
+            action: "confirm"
+          }
+        }
+      }
+    });
+
+    expect(confirmResponse.statusCode).toBe(200);
+    await flushAsyncWork();
+    const confirmed = repos.getConfirmationRequest(action.id);
+    expect(confirmed?.status).toBe("executed");
+    expect(confirmed?.edited_payload_json).toBeNull();
   });
 });

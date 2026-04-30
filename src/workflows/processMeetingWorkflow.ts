@@ -58,6 +58,28 @@ function actionConfirmationRecipient(input: {
   return input.recipient?.startsWith("ou_") ? input.recipient : (input.organizer ?? null);
 }
 
+function appendMeetingPayload(input: {
+  meetingId: string;
+  kbId: string;
+  kbName: string | null;
+  extraction: MeetingExtractionResult;
+  topicMatch: TopicMatchResult;
+}): Record<string, unknown> {
+  return {
+    kb_id: input.kbId,
+    kb_name: input.kbName,
+    meeting_id: input.meetingId,
+    meeting_summary: input.extraction.meeting_summary,
+    key_decisions: input.extraction.key_decisions,
+    risks: input.extraction.risks,
+    topic_keywords: input.extraction.topic_keywords,
+    match_reasons: input.topicMatch.match_reasons,
+    score: input.topicMatch.score,
+    topic_match: input.topicMatch,
+    reason: "检测到当前会议与已有知识库高度相关，建议确认后追加到知识库。"
+  };
+}
+
 export async function processMeetingWorkflow(input: {
   repos: Repositories;
   llm: LlmClient;
@@ -106,7 +128,9 @@ export async function processMeetingWorkflow(input: {
     id: meeting.id,
     matched_kb_id: topicMatch.matched_kb_id,
     match_score: topicMatch.score,
-    archive_status: topicMatch.suggested_action === "ask_create" ? "suggested" : "not_archived"
+    archive_status: ["ask_create", "ask_append"].includes(topicMatch.suggested_action)
+      ? "suggested"
+      : "not_archived"
   });
 
   const actionItemsForConfirmation =
@@ -181,6 +205,24 @@ export async function processMeetingWorkflow(input: {
           meeting_ids: topicMatch.candidate_meeting_ids,
           reason: "检测到至少两场强相关会议，建议创建主题知识库。"
         }
+      })
+    );
+  }
+
+  if (topicMatch.suggested_action === "ask_append" && topicMatch.matched_kb_id !== null) {
+    confirmations.push(
+      createConfirmationRequest({
+        repos: input.repos,
+        requestType: "append_meeting",
+        targetId: meeting.id,
+        recipient: input.meeting.organizer,
+        originalPayload: appendMeetingPayload({
+          meetingId: meeting.id,
+          kbId: topicMatch.matched_kb_id,
+          kbName: topicMatch.matched_kb_name,
+          extraction,
+          topicMatch
+        })
       })
     );
   }

@@ -192,9 +192,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     const memberCreateArgs = createdArgs.filter(
       (args) => args[0] === "wiki" && args[1] === "members" && args[2] === "create"
     );
-    const updateArgs = createdArgs.filter(
-      (args) => args[0] === "docs" && args[1] === "+update"
-    );
+    const updateArgs = createdArgs.filter((args) => args[0] === "docs" && args[1] === "+update");
     expect(spaceCreateArgs).toHaveLength(1);
     expect(memberCreateArgs).toHaveLength(3);
     expect(wikiNodeCreateArgs).toHaveLength(10);
@@ -228,9 +226,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(wikiNodeCreateArgs[0]).toEqual(
       expect.arrayContaining(["--space-id", "space_1", "--title", "01 整体目标"])
     );
-    expect(
-      wikiNodeCreateArgs.every((args) => !args.includes("--parent-node-token"))
-    ).toBe(true);
+    expect(wikiNodeCreateArgs.every((args) => !args.includes("--parent-node-token"))).toBe(true);
     expect(updateArgs[0]).toEqual(
       expect.arrayContaining([
         "docs",
