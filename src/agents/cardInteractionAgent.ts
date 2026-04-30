@@ -465,12 +465,10 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   const parsed = CardConfirmationInputSchema.parse(input);
   const { payload } = payloadAndDraft(parsed);
   const draft = normalizeActionDraft(parsed);
-  const missingFields = formatList(draft.missing_fields);
   const summary = [
     draft.owner ? `负责人：${draft.owner}` : "负责人待补充",
     draft.due_date ? `截止：${draft.due_date}` : "截止时间待补充",
-    draft.priority ? `优先级：${draft.priority}` : null,
-    draft.missing_fields.length > 0 ? `缺失：${missingFields}` : null
+    draft.priority ? `优先级：${draft.priority}` : "优先级待补充"
   ]
     .filter((item): item is string => item !== null)
     .join("；");
@@ -485,26 +483,17 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
     summary: summary || "请确认是否创建该待办。",
     sections: [
       section({
-        title: "待办草稿",
+        title: "待办确认",
         fields: [
           displayField("title", "任务标题", draft.title),
-          displayField("recommended_owner", "推荐负责人", draft.owner),
-          displayField("suggested_reason", "推荐原因", draft.suggested_reason),
+          displayField("recommended_owner", "负责人", draft.owner),
           displayField("due_date", "截止时间", draft.due_date),
-          displayField("priority", "优先级", draft.priority),
-          displayField("confidence", "置信度", draft.confidence)
+          displayField("priority", "优先级", draft.priority)
         ]
       }),
       section({
         title: "会议依据",
-        fields: [
-          displayField("evidence", "evidence", draft.evidence),
-          displayField("meeting_id", "来源 meeting_id", payload.meeting_id)
-        ]
-      }),
-      section({
-        title: "待补充字段",
-        fields: [displayField("missing_fields", "missing_fields", draft.missing_fields)]
+        fields: [displayField("evidence", "依据", draft.evidence)]
       })
     ],
     editable_fields: [
@@ -552,8 +541,8 @@ export function buildCalendarConfirmationCard(
     draft.start_time ? `开始：${draft.start_time}` : "开始时间待补充",
     draft.end_time ? `结束：${draft.end_time}` : null,
     draft.duration_minutes ? `时长：${draft.duration_minutes} 分钟` : null,
-    draft.location ? `地点：${draft.location}` : null,
-    draft.missing_fields.length > 0 ? `缺失：${formatList(draft.missing_fields)}` : null
+    draft.participants.length > 0 ? `参会人：${formatList(draft.participants)}` : "参会人待补充",
+    draft.location ? `地点：${draft.location}` : "地点待补充"
   ]
     .filter((item): item is string => item !== null)
     .join("；");
@@ -568,28 +557,20 @@ export function buildCalendarConfirmationCard(
     summary: summary || "请确认是否创建该日程。",
     sections: [
       section({
-        title: "日程草稿",
+        title: "日程确认",
         fields: [
           displayField("title", "日程标题", draft.title),
           displayField("start_time", "开始时间", draft.start_time),
           displayField("end_time", "结束时间", draft.end_time),
           displayField("duration_minutes", "时长", draft.duration_minutes),
-          displayField("participants", "参与人", draft.participants),
+          displayField("participants", "参会人", draft.participants),
           displayField("location", "地点", draft.location),
-          displayField("agenda", "agenda", draft.agenda)
+          displayField("agenda", "议程", draft.agenda)
         ]
       }),
       section({
         title: "会议依据",
-        fields: [
-          displayField("evidence", "evidence", draft.evidence),
-          displayField("confidence", "confidence", draft.confidence),
-          displayField("meeting_id", "会议 ID", payload.meeting_id)
-        ]
-      }),
-      section({
-        title: "待补充字段",
-        fields: [displayField("missing_fields", "missing_fields", draft.missing_fields)]
+        fields: [displayField("evidence", "依据", draft.evidence)]
       })
     ],
     editable_fields: [
@@ -647,19 +628,15 @@ export function buildCreateKbConfirmationCard(
     payload.candidate_meeting_ids ?? payload.meeting_ids
   );
   const candidateMeetingRefs = parseStringArray(payload.candidate_meeting_refs);
-  const matchReasons = parseStringArray(payload.match_reasons);
   const defaultStructure = parseStringArray(payload.default_structure);
-  const score = asNumber(payload.score);
   const reason = firstString([payload.reason], "检测到相关会议，建议创建主题知识库。");
   const candidateMeetings =
     candidateMeetingRefs.length > 0 ? candidateMeetingRefs : candidateMeetingIds;
   const summary = [
     `主题：${topicName}`,
-    score === null ? null : `匹配分：${score}`,
-    candidateMeetings.length > 0 ? `会议数：${candidateMeetings.length}` : null
-  ]
-    .filter((item): item is string => item !== null)
-    .join("；");
+    `关联会议数：${candidateMeetings.length}`,
+    `建议：${reason}`
+  ].join("；");
 
   return buildCard({
     card_type: "create_kb_confirmation",
@@ -671,28 +648,21 @@ export function buildCreateKbConfirmationCard(
     summary,
     sections: [
       section({
-        title: "知识库建议",
+        title: "建库建议",
         fields: [
           displayField("topic_name", "主题名称", topicName),
+          displayField("meeting_count", "关联会议数", candidateMeetings.length),
           displayField("suggested_goal", "建议目标", suggestedGoal),
-          displayField("score", "匹配分", score)
+          displayField("reason", "为什么建议建", reason)
         ]
       }),
       section({
         title: "关联会议",
-        fields: [
-          displayField("match_reasons", "match_reasons", matchReasons),
-          displayField("candidate_meetings", "关联会议", candidateMeetings),
-          displayField("reason", "触发原因", reason)
-        ]
+        fields: [displayField("candidate_meetings", "会议", candidateMeetings)]
       }),
       section({
-        title: "默认结构",
-        fields: [displayField("default_structure", "default_structure", defaultStructure)]
-      }),
-      section({
-        title: "安全说明",
-        fields: [displayField("safety_note", "安全说明", "用户确认前不会创建知识库")]
+        title: "结构预览",
+        fields: [displayField("default_structure", "目录", defaultStructure)]
       })
     ],
     editable_fields: [
@@ -739,19 +709,9 @@ export function buildAppendMeetingConfirmationCard(
     "当前会议"
   );
   const meetingSummary = firstString([payload.meeting_summary], "暂无摘要");
-  const matchReasons = parseStringArray(payload.match_reasons);
-  const topicKeywords = parseStringArray(payload.topic_keywords);
-  const score = asNumber(payload.score);
-  const reason = firstString([payload.reason], "检测到当前会议与已有知识库相关。");
   const keyDecisions = parseTextArray(payload.key_decisions, "decision");
   const risks = parseTextArray(payload.risks, "risk");
-  const summary = [
-    `知识库：${kbName}`,
-    `会议：${meetingReference}`,
-    score === null ? null : `匹配分：${score}`
-  ]
-    .filter((item): item is string => item !== null)
-    .join("；");
+  const summary = [`知识库：${kbName}`, `会议：${meetingReference}`].join("；");
 
   return buildCard({
     card_type: "append_meeting_confirmation",
@@ -763,12 +723,10 @@ export function buildAppendMeetingConfirmationCard(
     summary,
     sections: [
       section({
-        title: "追加建议",
+        title: "追加位置",
         fields: [
-          displayField("kb_name", "知识库", kbName),
-          displayField("meeting_reference", "会议", meetingReference),
-          displayField("score", "匹配分", score),
-          displayField("reason", "触发原因", reason)
+          displayField("kb_name", "加入知识库", kbName),
+          displayField("meeting_reference", "会议链接", meetingReference)
         ]
       }),
       section({
@@ -778,17 +736,6 @@ export function buildAppendMeetingConfirmationCard(
           displayField("key_decisions", "关键结论", keyDecisions),
           displayField("risks", "风险", risks)
         ]
-      }),
-      section({
-        title: "匹配依据",
-        fields: [
-          displayField("match_reasons", "match_reasons", matchReasons),
-          displayField("topic_keywords", "topic_keywords", topicKeywords)
-        ]
-      }),
-      section({
-        title: "安全说明",
-        fields: [displayField("safety_note", "安全说明", "用户确认前不会更新知识库")]
       })
     ],
     editable_fields: [],

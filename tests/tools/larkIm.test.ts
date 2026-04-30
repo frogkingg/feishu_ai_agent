@@ -1,4 +1,8 @@
-import { buildActionConfirmationCard } from "../../src/agents/cardInteractionAgent";
+import {
+  buildActionConfirmationCard,
+  buildCalendarConfirmationCard,
+  buildCreateKbConfirmationCard
+} from "../../src/agents/cardInteractionAgent";
 import { loadConfig } from "../../src/config";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
@@ -40,14 +44,126 @@ describe("larkIm.sendCard", () => {
 
   it("builds an interactive card payload from the dry-run preview", () => {
     const interactive = buildFeishuInteractiveCard(card);
+    const serialized = JSON.stringify(interactive);
 
-    expect(interactive.header.title.content).toBe(card.title);
-    expect(JSON.stringify(interactive)).toContain(card.summary);
-    expect(JSON.stringify(interactive)).toContain("/dev/confirmations/conf_card_send/confirm");
-    expect(JSON.stringify(interactive)).toContain('"confirmation_id":"conf_card_send"');
-    expect(JSON.stringify(interactive)).toContain('"name":"owner"');
-    expect(JSON.stringify(interactive)).toContain('"name":"due_date"');
-    expect(JSON.stringify(interactive)).toContain("点击确认前不会创建飞书任务、日程、Wiki 或 Doc");
+    expect(interactive.header.title.content).toBe(`📌 ${card.title}`);
+    expect(interactive.header.template).toBe("turquoise");
+    expect(serialized).toContain("📌 待办");
+    expect(serialized).toContain(`待办 | ${card.summary}`);
+    expect(serialized).toContain("待办确认");
+    expect(serialized).toContain("详情依据");
+    expect(serialized).toContain("/dev/confirmations/conf_card_send/confirm");
+    expect(serialized).toContain('"action":"confirm_with_edits"');
+    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).not.toContain("mtg_001");
+    expect(serialized).toContain('"confirmation_id":"conf_card_send"');
+    expect(serialized).toContain('"name":"owner"');
+    expect(serialized).toContain('"name":"due_date"');
+    expect(serialized).not.toContain('"tag":"textarea"');
+    expect(serialized).toContain("确认前不会创建/更新飞书内容");
+    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        { text: { content: "确认创建" } },
+        { text: { content: "稍后提醒" } },
+        { text: { content: "拒绝" } }
+      ]
+    });
+  });
+
+  it("renders calendar cards with calendar color and focused actions", () => {
+    const calendarCard = buildCalendarConfirmationCard({
+      id: "conf_calendar_send",
+      target_id: "cal_card_send",
+      recipient: "ou_recipient",
+      status: "sent",
+      original_payload: {
+        draft: {
+          title: "无人机操作员访谈会议",
+          start_time: "2026-05-05T10:00:00+08:00",
+          end_time: null,
+          duration_minutes: 60,
+          participants: ["张三", "王五"],
+          agenda: "确认真实操作步骤和限制。",
+          location: "会议室 A",
+          evidence: "下周二上午 10 点我们再约操作员访谈。",
+          confidence: 0.84,
+          missing_fields: []
+        },
+        meeting_id: "mtg_001"
+      }
+    });
+
+    const interactive = buildFeishuInteractiveCard(calendarCard);
+    const serialized = JSON.stringify(interactive);
+    const visibleText = JSON.stringify(interactive.elements.slice(0, 6));
+
+    expect(interactive.header.template).toBe("orange");
+    expect(interactive.header.title.content).toBe(`📅 ${calendarCard.title}`);
+    expect(serialized).toContain("📅 日程");
+    expect(serialized).toContain("日程 | 开始：5月5日 10:00");
+    expect(visibleText).not.toContain("2026-05-05T10:00:00+08:00");
+    expect(serialized).toContain("日程确认");
+    expect(serialized).toContain("开始时间");
+    expect(serialized).toContain("参会人");
+    expect(serialized).toContain('"name":"agenda"');
+    expect(serialized).not.toContain('"tag":"textarea"');
+    expect(serialized).toContain('"action":"confirm_with_edits"');
+    expect(serialized).toContain('"action":"convert_to_task"');
+    expect(serialized).not.toContain('"action":"remind_later"');
+    expect(serialized).not.toContain("mtg_001");
+    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        { text: { content: "确认日程" } },
+        { text: { content: "转待办" } },
+        { text: { content: "拒绝" } }
+      ]
+    });
+  });
+
+  it("renders knowledge-base cards with knowledge color and fewer actions", () => {
+    const kbCard = buildCreateKbConfirmationCard({
+      id: "conf_kb_send",
+      target_id: "kb_card_send",
+      recipient: "ou_recipient",
+      status: "sent",
+      original_payload: {
+        topic_name: "无人机操作方案",
+        suggested_goal: "沉淀无人机操作方案相关会议结论。",
+        meeting_ids: ["mtg_001", "mtg_002"],
+        match_reasons: ["会议摘要/转写围绕相同主题信号"],
+        score: 0.92,
+        default_structure: ["00 首页 / 总览", "06 单个会议总结"],
+        reason:
+          "检测到至少两场强相关会议，建议创建主题知识库，并将访谈摘要、关键结论、风险和后续行动统一沉淀到一个可持续维护的空间，避免团队后续继续在群聊里翻找零散信息。"
+      }
+    });
+
+    const interactive = buildFeishuInteractiveCard(kbCard);
+    const serialized = JSON.stringify(interactive);
+
+    expect(interactive.header.template).toBe("green");
+    expect(interactive.header.title.content).toBe(`📚 ${kbCard.title}`);
+    expect(serialized).toContain("📚 知识库");
+    expect(serialized).toContain("知识库 | 主题：无人机操作方案");
+    expect(serialized).toContain("...");
+    expect(serialized).not.toContain("避免团队后续继续在群聊里翻找零散信息。");
+    expect(serialized).toContain("知识库确认");
+    expect(serialized).toContain("主题名称");
+    expect(serialized).toContain("关联会议");
+    expect(serialized).toContain('"name":"suggested_goal"');
+    expect(serialized).not.toContain('"tag":"textarea"');
+    expect(serialized).toContain('"action":"edit_and_create"');
+    expect(serialized).toContain('"action":"append_current_only"');
+    expect(serialized).not.toContain('"action":"never_remind_topic"');
+    expect(serialized).not.toContain("匹配分");
+    expect(serialized).not.toContain("match_reasons");
+    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        { text: { content: "确认创建" } },
+        { text: { content: "仅归档本次" } },
+        { text: { content: "拒绝" } }
+      ]
+    });
   });
 
   it("records planned send-card cli_runs when both dry-run switches are true", async () => {

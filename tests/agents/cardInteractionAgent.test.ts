@@ -57,6 +57,7 @@ describe("CardInteractionAgent", () => {
     expect(card).toMatchObject({
       card_type: "action_confirmation",
       title: "确认待办：整理无人机操作流程",
+      summary: "负责人：张三；截止：2026-05-01；优先级：P1",
       dry_run: true
     });
     expect(card.editable_fields.map((field) => field.key)).toEqual([
@@ -66,19 +67,16 @@ describe("CardInteractionAgent", () => {
       "priority",
       "collaborators"
     ]);
-    expect(card.sections.flatMap((section) => section.fields.map((field) => field.key))).toEqual(
-      expect.arrayContaining([
-        "title",
-        "recommended_owner",
-        "suggested_reason",
-        "due_date",
-        "priority",
-        "confidence",
-        "evidence",
-        "missing_fields",
-        "meeting_id"
-      ])
-    );
+    expect(card.sections.flatMap((section) => section.fields.map((field) => field.key))).toEqual([
+      "title",
+      "recommended_owner",
+      "due_date",
+      "priority",
+      "evidence"
+    ]);
+    expect(JSON.stringify(card)).not.toContain("confidence");
+    expect(JSON.stringify(card)).not.toContain("missing_fields");
+    expect(JSON.stringify(card)).not.toContain("meeting_id");
     expect(card.actions.map((action) => action.key)).toEqual([
       "confirm",
       "confirm_with_edits",
@@ -111,20 +109,21 @@ describe("CardInteractionAgent", () => {
     expect(card.card_type).toBe("calendar_confirmation");
     expect(card.title).toBe("确认日程：无人机操作员访谈会议");
     expect(card.summary).toContain("开始：2026-05-05T10:00:00+08:00");
-    expect(card.sections.flatMap((section) => section.fields.map((field) => field.key))).toEqual(
-      expect.arrayContaining([
-        "title",
-        "start_time",
-        "end_time",
-        "duration_minutes",
-        "participants",
-        "location",
-        "agenda",
-        "evidence",
-        "confidence",
-        "missing_fields"
-      ])
-    );
+    expect(card.summary).toContain("参会人：张三, 王五");
+    expect(card.summary).toContain("地点待补充");
+    expect(card.sections.flatMap((section) => section.fields.map((field) => field.key))).toEqual([
+      "title",
+      "start_time",
+      "end_time",
+      "duration_minutes",
+      "participants",
+      "location",
+      "agenda",
+      "evidence"
+    ]);
+    expect(JSON.stringify(card)).not.toContain("confidence");
+    expect(JSON.stringify(card)).not.toContain("missing_fields");
+    expect(JSON.stringify(card)).not.toContain("meeting_id");
     expect(card.editable_fields.map((field) => field.key)).toEqual([
       "title",
       "start_time",
@@ -163,23 +162,18 @@ describe("CardInteractionAgent", () => {
     );
 
     expect(card.card_type).toBe("create_kb_confirmation");
-    expect(card.summary).toContain("会议数：2");
-    expect(card.sections.flatMap((section) => section.fields.map((field) => field.key))).toEqual(
-      expect.arrayContaining([
-        "topic_name",
-        "suggested_goal",
-        "score",
-        "match_reasons",
-        "candidate_meetings",
-        "default_structure",
-        "safety_note"
-      ])
-    );
-    expect(
-      card.sections
-        .flatMap((section) => section.fields)
-        .find((field) => field.key === "safety_note")?.value
-    ).toBe("用户确认前不会创建知识库");
+    expect(card.summary).toContain("关联会议数：2");
+    expect(card.summary).toContain("建议：检测到至少两场强相关会议，建议创建主题知识库。");
+    expect(card.sections.flatMap((section) => section.fields.map((field) => field.key))).toEqual([
+      "topic_name",
+      "meeting_count",
+      "suggested_goal",
+      "reason",
+      "candidate_meetings",
+      "default_structure"
+    ]);
+    expect(JSON.stringify(card)).not.toContain("匹配分");
+    expect(JSON.stringify(card)).not.toContain("match_reasons");
     expect(card.editable_fields.map((field) => field.key)).toEqual([
       "topic_name",
       "suggested_goal",
@@ -246,6 +240,12 @@ describe("CardInteractionAgent", () => {
 
     expect(appendCard.card_type).toBe("append_meeting_confirmation");
     expect(JSON.stringify(appendCard)).toContain("https://example.feishu.cn/minutes/transcript");
+    expect(
+      appendCard.sections.flatMap((section) => section.fields.map((field) => field.key))
+    ).toEqual(["kb_name", "meeting_reference", "meeting_summary", "key_decisions", "risks"]);
+    expect(JSON.stringify(appendCard)).not.toContain("match_reasons");
+    expect(JSON.stringify(appendCard)).not.toContain("topic_keywords");
+    expect(JSON.stringify(appendCard)).not.toContain("匹配分");
     expect(JSON.stringify(appendCard)).not.toContain("ou_recipient_123456");
   });
 

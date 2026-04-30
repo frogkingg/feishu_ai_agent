@@ -62,6 +62,39 @@ describe("larkVc.fetchTranscript", () => {
     });
   });
 
+  it("can fetch real transcript while Feishu writes remain dry-run", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const calls: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      calls.push(args);
+      return {
+        stdout: JSON.stringify({ minutes: [{ content: "只读 canary 逐字稿" }] }),
+        stderr: ""
+      };
+    };
+
+    await expect(
+      fetchTranscript({
+        repos,
+        config: loadConfig({
+          feishuDryRun: true,
+          feishuReadDryRun: false
+        }),
+        meetingId: "om_read_canary",
+        runner
+      })
+    ).resolves.toBe("只读 canary 逐字稿");
+
+    expect(calls).toEqual([
+      ["vc", "+notes", "--meeting-ids", "om_read_canary", "--format", "json"]
+    ]);
+    expect(repos.listCliRuns()[0]).toMatchObject({
+      tool: "lark.vc.notes",
+      dry_run: 0,
+      status: "success"
+    });
+  });
+
   it("reads notes content from array or root payloads", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const outputs = [

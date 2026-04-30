@@ -80,7 +80,7 @@ export async function fetchTranscript(input: {
   minuteToken?: string | null;
   runner?: LarkCliRunner;
 }): Promise<string> {
-  if (input.config.feishuDryRun) {
+  if (input.config.feishuReadDryRun) {
     return TranscriptDryRunText;
   }
 

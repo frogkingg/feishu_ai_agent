@@ -6,6 +6,15 @@ MeetingAtlas 先接真实 LLM，但继续保持 `FEISHU_DRY_RUN=true`。
 
 同时也能避免还没校准好的飞书任务、日历、Wiki、Doc 命令产生真实写入。
 
+如果要验证真实飞书会议纪要/转写读取，可以继续保持写入 dry-run：
+
+```env
+FEISHU_DRY_RUN=true
+FEISHU_READ_DRY_RUN=false
+```
+
+这样只会真实读取飞书妙记，不会真实创建任务、日程、Wiki 或 Doc。
+
 ## 1. 准备环境变量
 
 从示例文件复制一份本地 `.env`：
@@ -22,6 +31,7 @@ cp .env.example .env
 
 ```env
 FEISHU_DRY_RUN=true
+FEISHU_READ_DRY_RUN=true
 
 LLM_PROVIDER=openai-compatible
 LLM_BASE_URL=https://your-provider.example.com/v1

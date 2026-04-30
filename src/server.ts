@@ -471,6 +471,48 @@ function bulkCardDestination(input: {
   };
 }
 
+async function sendGeneratedConfirmationCards(input: {
+  repos: Repositories;
+  config: AppConfig;
+  confirmationIds: string[];
+  sendToChatId?: string | null;
+  runner?: LarkCliRunner;
+}) {
+  if (input.config.feishuCardSendDryRun || input.confirmationIds.length === 0) {
+    return [];
+  }
+
+  const results: Awaited<ReturnType<typeof sendCard>>[] = [];
+  for (const confirmationId of input.confirmationIds) {
+    const confirmation = input.repos.getConfirmationRequest(confirmationId);
+    if (confirmation === null) {
+      continue;
+    }
+
+    const destination = automaticCardDestination({
+      confirmation,
+      sendToChatId: input.sendToChatId
+    });
+    if (destination.chatId === null && destination.recipient === null) {
+      continue;
+    }
+
+    results.push(
+      await sendCard({
+        repos: input.repos,
+        config: input.config,
+        confirmation,
+        card: buildConfirmationCardFromRequest(confirmation),
+        recipient: destination.recipient,
+        chatId: destination.chatId,
+        runner: input.runner
+      })
+    );
+  }
+
+  return results;
+}
+
 export function buildServer(input: {
   config: AppConfig;
   repos: Repositories;
@@ -502,6 +544,7 @@ export function buildServer(input: {
     service: "meeting-atlas",
     phase: "phase-6",
     dry_run: input.config.feishuDryRun,
+    read_dry_run: input.config.feishuReadDryRun,
     card_send_dry_run: input.config.feishuCardSendDryRun,
     llm_provider: input.config.llmProvider,
     sqlite_path: input.config.sqlitePath
@@ -568,6 +611,12 @@ export function buildServer(input: {
             transcript_text: transcript
           }
         });
+        const cardSendResults = await sendGeneratedConfirmationCards({
+          repos: input.repos,
+          config: input.config,
+          confirmationIds: result.confirmation_requests,
+          runner: input.larkCliRunner
+        });
 
         request.log.info(
           {
@@ -575,6 +624,7 @@ export function buildServer(input: {
             external_meeting_id: externalMeetingId,
             meeting_id: result.meeting_id,
             confirmation_requests: result.confirmation_requests.length,
+            card_send_results: cardSendResults.length,
             transcript_preview: transcript.slice(0, 80)
           },
           "triggered meeting workflow from feishu recording_ready event"
@@ -770,33 +820,13 @@ export function buildServer(input: {
       llm: input.llm,
       meeting
     });
-
-    // 自动发送所有生成的确认卡片
-    if (!input.config.feishuCardSendDryRun && result.confirmation_requests.length > 0) {
-      for (const confirmationId of result.confirmation_requests) {
-        const confirmation = input.repos.getConfirmationRequest(confirmationId);
-        if (confirmation) {
-          const destination = automaticCardDestination({
-            confirmation,
-            sendToChatId: meeting.send_to_chat_id
-          });
-          if (destination.chatId === null && destination.recipient === null) {
-            continue;
-          }
-
-          const card = buildConfirmationCardFromRequest(confirmation);
-          await sendCard({
-            repos: input.repos,
-            config: input.config,
-            confirmation,
-            card,
-            recipient: destination.recipient,
-            chatId: destination.chatId,
-            runner: input.larkCliRunner
-          });
-        }
-      }
-    }
+    await sendGeneratedConfirmationCards({
+      repos: input.repos,
+      config: input.config,
+      confirmationIds: result.confirmation_requests,
+      sendToChatId: meeting.send_to_chat_id,
+      runner: input.larkCliRunner
+    });
 
     return result;
   });

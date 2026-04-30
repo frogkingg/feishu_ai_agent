@@ -44,6 +44,21 @@ describe("loadConfig", () => {
     });
   });
 
+  it("keeps Feishu reads dry-run by default but allows read-only canary mode", () => {
+    expect(loadConfig({ feishuDryRun: true })).toMatchObject({
+      feishuDryRun: true,
+      feishuReadDryRun: true
+    });
+    expect(loadConfig({ feishuDryRun: false })).toMatchObject({
+      feishuDryRun: false,
+      feishuReadDryRun: false
+    });
+    expect(loadConfig({ feishuDryRun: true, feishuReadDryRun: false })).toMatchObject({
+      feishuDryRun: true,
+      feishuReadDryRun: false
+    });
+  });
+
   it("loads optional Lark webhook credentials", () => {
     expect(
       loadConfig({

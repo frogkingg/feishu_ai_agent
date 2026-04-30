@@ -33,6 +33,8 @@ interface FeishuText {
   content: string;
 }
 
+type FeishuHeaderTemplate = "blue" | "turquoise" | "green" | "orange" | "red" | "grey";
+
 type FeishuCardElement =
   | {
       tag: "markdown";
@@ -83,11 +85,21 @@ interface FeishuInteractiveCard {
     wide_screen_mode: boolean;
   };
   header: {
-    template: "blue" | "red" | "grey";
+    template: FeishuHeaderTemplate;
     title: FeishuText;
   };
   elements: FeishuCardElement[];
 }
+
+interface CardVisualProfile {
+  icon: string;
+  typeLabel: string;
+  headerTemplate: FeishuHeaderTemplate;
+  primaryFieldKeys: string[];
+  detailFieldKeys: string[];
+}
+
+type CardActionKey = DryRunConfirmationCard["actions"][number]["key"];
 
 function trimToNull(value: string | null | undefined): string | null {
   if (value === undefined || value === null) {
@@ -100,14 +112,16 @@ function trimToNull(value: string | null | undefined): string | null {
 
 function stringifyCardValue(value: unknown): string {
   if (Array.isArray(value)) {
-    return value.map((item) => (item === null ? "未填写" : String(item))).join(", ");
+    return value
+      .map((item) => (item === null ? "未填写" : humanizeDisplayText(String(item))))
+      .join(", ");
   }
 
-  return value === null || value === undefined ? "未填写" : String(value);
+  return value === null || value === undefined ? "未填写" : humanizeDisplayText(String(value));
 }
 
-function fieldLine(field: DryRunConfirmationCard["sections"][number]["fields"][number]): string {
-  return `**${field.label}**: ${field.value_text ?? stringifyCardValue(field.value)}`;
+function displayValue(field: DryRunConfirmationCard["sections"][number]["fields"][number]): string {
+  return humanizeDisplayText(field.value_text ?? stringifyCardValue(field.value));
 }
 
 function plainText(content: string): FeishuText {
@@ -133,7 +147,7 @@ function buildEditableElement(
 
   if (field.input_type === "textarea" || field.input_type === "multi_text") {
     return {
-      tag: "textarea",
+      tag: "input",
       name: field.key,
       placeholder,
       default_value: defaultValue
@@ -192,34 +206,227 @@ function buttonType(
   return "default";
 }
 
-function headerTemplate(card: DryRunConfirmationCard): "blue" | "red" | "grey" {
+function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
+  if (card.card_type === "action_confirmation") {
+    return {
+      icon: "📌",
+      typeLabel: "待办",
+      headerTemplate: "turquoise",
+      primaryFieldKeys: ["recommended_owner", "due_date", "priority"],
+      detailFieldKeys: ["suggested_reason", "evidence"]
+    };
+  }
+
+  if (card.card_type === "calendar_confirmation") {
+    return {
+      icon: "📅",
+      typeLabel: "日程",
+      headerTemplate: "orange",
+      primaryFieldKeys: ["start_time", "duration_minutes", "participants", "location"],
+      detailFieldKeys: ["agenda", "evidence"]
+    };
+  }
+
+  if (
+    card.card_type === "create_kb_confirmation" ||
+    card.card_type === "append_meeting_confirmation"
+  ) {
+    return {
+      icon: "📚",
+      typeLabel: "知识库",
+      headerTemplate: "green",
+      primaryFieldKeys: ["topic_name", "kb_name", "meeting_reference", "candidate_meetings"],
+      detailFieldKeys: [
+        "suggested_goal",
+        "default_structure",
+        "reason",
+        "meeting_summary",
+        "key_decisions",
+        "risks"
+      ]
+    };
+  }
+
+  return {
+    icon: "✓",
+    typeLabel: "确认",
+    headerTemplate: "blue",
+    primaryFieldKeys: ["request_type"],
+    detailFieldKeys: ["payload"]
+  };
+}
+
+function headerTemplate(card: DryRunConfirmationCard): FeishuHeaderTemplate {
   if (card.status === "failed") {
     return "red";
   }
   if (["executed", "rejected"].includes(card.status)) {
     return "grey";
   }
-  return "blue";
+  return visualProfile(card).headerTemplate;
+}
+
+function allFields(card: DryRunConfirmationCard) {
+  return card.sections.flatMap((section) => section.fields);
+}
+
+function fieldsByKeys(card: DryRunConfirmationCard, keys: string[]) {
+  const fields = allFields(card);
+  return keys
+    .map((key) => fields.find((field) => field.key === key))
+    .filter((field): field is DryRunConfirmationCard["sections"][number]["fields"][number] =>
+      Boolean(field)
+    );
+}
+
+function formatIsoDateTime(value: string): string | null {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.exec(
+      value
+    );
+  if (!match) {
+    return null;
+  }
+
+  return `${Number(match[2])}月${Number(match[3])}日 ${match[4]}:${match[5]}`;
+}
+
+function humanizeDisplayText(value: string): string {
+  return value.replace(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g,
+    (candidate) => formatIsoDateTime(candidate) ?? candidate
+  );
+}
+
+function compactText(value: string, maxLength = 72): string {
+  const singleLine = humanizeDisplayText(value).replace(/\s+/g, " ").trim();
+  return singleLine.length > maxLength ? `${singleLine.slice(0, maxLength - 1)}...` : singleLine;
+}
+
+function compactSummary(card: DryRunConfirmationCard): string {
+  return compactText(card.summary, 72);
+}
+
+function fieldBullet(field: DryRunConfirmationCard["sections"][number]["fields"][number]): string {
+  return `- **${field.label}**: ${compactText(displayValue(field))}`;
+}
+
+function buildKeyInfoElement(card: DryRunConfirmationCard, profile: CardVisualProfile) {
+  const keyFields = fieldsByKeys(card, profile.primaryFieldKeys).slice(0, 4);
+  const lines =
+    keyFields.length > 0
+      ? keyFields.map(fieldBullet)
+      : [`- **状态**: ${card.status}`, `- **目标**: ${card.target_id}`];
+
+  return {
+    tag: "div" as const,
+    text: {
+      tag: "lark_md" as const,
+      content: [`**${profile.typeLabel}确认**`, ...lines].join("\n")
+    }
+  };
+}
+
+function buildDetailElement(card: DryRunConfirmationCard, profile: CardVisualProfile) {
+  const detailFields = fieldsByKeys(card, profile.detailFieldKeys)
+    .filter((field) => displayValue(field) !== "无" && displayValue(field) !== "未填写")
+    .slice(0, 6);
+
+  const lines =
+    detailFields.length > 0
+      ? detailFields.map(fieldBullet)
+      : card.sections
+          .flatMap((section) => section.fields)
+          .filter((field) => !profile.primaryFieldKeys.includes(field.key))
+          .slice(0, 4)
+          .map(fieldBullet);
+
+  return {
+    tag: "div" as const,
+    text: {
+      tag: "lark_md" as const,
+      content: [`**详情依据**`, ...lines].join("\n")
+    }
+  };
+}
+
+function editableIntro(card: DryRunConfirmationCard): FeishuCardElement {
+  const fieldNames = card.editable_fields
+    .filter((field) => field.input_type !== "readonly")
+    .map((field) => field.label)
+    .slice(0, 5)
+    .join("、");
+
+  return {
+    tag: "div",
+    text: {
+      tag: "lark_md",
+      content: `**可修改信息**\n${fieldNames || "无可修改字段"}`
+    }
+  };
+}
+
+function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
+  if (card.card_type === "action_confirmation") {
+    return card.editable_fields.length > 0
+      ? ["confirm_with_edits", "remind_later", "reject"]
+      : ["confirm", "remind_later", "reject"];
+  }
+
+  if (card.card_type === "calendar_confirmation") {
+    return card.editable_fields.length > 0
+      ? ["confirm_with_edits", "convert_to_task", "reject"]
+      : ["confirm", "convert_to_task", "reject"];
+  }
+
+  if (card.card_type === "create_kb_confirmation") {
+    return card.editable_fields.length > 0
+      ? ["edit_and_create", "append_current_only", "reject"]
+      : ["create_kb", "append_current_only", "reject"];
+  }
+
+  return ["confirm", "reject"];
+}
+
+function visibleActions(card: DryRunConfirmationCard) {
+  const actionByKey = new Map(card.actions.map((action) => [action.key, action]));
+  return preferredActionKeys(card)
+    .map((key) => actionByKey.get(key))
+    .filter((action): action is DryRunConfirmationCard["actions"][number] => Boolean(action));
+}
+
+function buttonLabel(card: DryRunConfirmationCard, key: string, fallback: string): string {
+  if (key === "confirm_with_edits") {
+    return card.card_type === "calendar_confirmation" ? "确认日程" : "确认创建";
+  }
+  if (key === "edit_and_create" || key === "create_kb") {
+    return "确认创建";
+  }
+  if (key === "append_current_only") {
+    return "仅归档本次";
+  }
+  if (key === "convert_to_task") {
+    return "转待办";
+  }
+  return fallback;
+}
+
+function headerTitle(card: DryRunConfirmationCard, profile: CardVisualProfile): string {
+  return `${profile.icon} ${card.title}`;
 }
 
 export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): FeishuInteractiveCard {
+  const profile = visualProfile(card);
   const elements: FeishuCardElement[] = [
     {
       tag: "markdown",
-      content: `**${card.summary}**`
+      content: `**${profile.icon} ${profile.typeLabel} | ${compactSummary(card)}**`
     },
     {
       tag: "hr"
     },
-    ...card.sections.map((section) => ({
-      tag: "div" as const,
-      text: {
-        tag: "lark_md" as const,
-        content: [`**${section.title}**`, ...section.fields.map(fieldLine)]
-          .filter(Boolean)
-          .join("\n")
-      }
-    })),
+    buildKeyInfoElement(card, profile),
+    buildDetailElement(card, profile),
     {
       tag: "hr"
     },
@@ -227,10 +434,7 @@ export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): Feishu
       tag: "div",
       text: {
         tag: "lark_md",
-        content: [
-          "**安全说明**",
-          "这只是确认卡片发送；点击确认前不会创建飞书任务、日程、Wiki 或 Doc。"
-        ].join("\n")
+        content: "**安全说明**：确认前不会创建/更新飞书内容。"
       }
     }
   ];
@@ -240,24 +444,22 @@ export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): Feishu
       {
         tag: "hr"
       },
-      {
-        tag: "markdown",
-        content: "**可修改字段**"
-      },
+      editableIntro(card),
       ...card.editable_fields
         .filter((field) => field.input_type !== "readonly")
         .map(buildEditableElement)
     );
   }
 
-  if (card.actions.length > 0) {
+  const actions = visibleActions(card);
+  if (actions.length > 0) {
     elements.push({
       tag: "action",
-      actions: card.actions.map((action) => ({
+      actions: actions.map((action) => ({
         tag: "button",
         text: {
           tag: "plain_text",
-          content: action.label
+          content: buttonLabel(card, action.key, action.label)
         },
         type: buttonType(action.style),
         value: {
@@ -281,7 +483,7 @@ export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): Feishu
       template: headerTemplate(card),
       title: {
         tag: "plain_text",
-        content: card.title
+        content: headerTitle(card, profile)
       }
     },
     elements

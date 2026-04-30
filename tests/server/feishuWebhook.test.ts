@@ -143,7 +143,67 @@ describe("POST /webhooks/feishu/event", () => {
     );
   });
 
-  it("uses fetched transcript text before triggering the workflow in real mode", async () => {
+  it("auto-sends generated cards after recording_ready when card sending is enabled", async () => {
+    const body = JSON.stringify({
+      header: {
+        event_type: "vc.meeting.recording_ready_v1"
+      },
+      event: {
+        meeting_id: "om_card_send",
+        topic: "无人机操作方案初步访谈",
+        operator_id: { open_id: "ou_card_owner" }
+      }
+    });
+    const sentCardArgs: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      sentCardArgs.push(args);
+      return {
+        stdout: JSON.stringify({
+          data: {
+            message_id: `om_card_${sentCardArgs.length}`
+          }
+        }),
+        stderr: ""
+      };
+    };
+    const { app, repos } = createApp(
+      {
+        feishuDryRun: true,
+        feishuCardSendDryRun: false
+      },
+      runner
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      headers: {
+        "content-type": "application/json"
+      },
+      payload: body
+    });
+
+    expect(response.statusCode).toBe(202);
+
+    await vi.waitFor(
+      () => {
+        const cardRuns = repos.listCliRuns().filter((run) => run.tool === "lark.im.send_card");
+        expect(cardRuns).toHaveLength(3);
+        expect(
+          cardRuns.every((run) => {
+            const args = JSON.parse(run.args_json) as string[];
+            return args.includes("--user-id") && args.includes("ou_card_owner");
+          })
+        ).toBe(true);
+        expect(
+          repos.listConfirmationRequests().every((request) => request.card_message_id !== null)
+        ).toBe(true);
+      },
+      { timeout: 7000 }
+    );
+  });
+
+  it("uses fetched transcript text before triggering the workflow in read-only canary mode", async () => {
     const body = JSON.stringify({
       header: {
         event_type: "vc.meeting.recording_ready_v1"
@@ -176,7 +236,8 @@ describe("POST /webhooks/feishu/event", () => {
     };
     const { app, repos } = createApp(
       {
-        feishuDryRun: false,
+        feishuDryRun: true,
+        feishuReadDryRun: false,
         larkVerificationToken: "verification-token"
       },
       runner

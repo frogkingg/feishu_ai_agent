@@ -8,6 +8,7 @@ export interface AppConfig {
   port: number;
   sqlitePath: string;
   feishuDryRun: boolean;
+  feishuReadDryRun: boolean;
   feishuCardSendDryRun: boolean;
   larkVerificationToken: string | null;
   larkEncryptKey: string | null;
@@ -70,12 +71,14 @@ function validateConfig(config: AppConfig): AppConfig {
 
 export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const sqlitePath = process.env.SQLITE_PATH ?? "./data/meeting-atlas.db";
+  const feishuDryRun = parseBoolean(process.env.FEISHU_DRY_RUN, true);
 
   const config: AppConfig = {
     nodeEnv: process.env.NODE_ENV ?? "development",
     port: Number(process.env.PORT ?? 3000),
     sqlitePath: path.isAbsolute(sqlitePath) ? sqlitePath : path.join(process.cwd(), sqlitePath),
-    feishuDryRun: parseBoolean(process.env.FEISHU_DRY_RUN, true),
+    feishuDryRun,
+    feishuReadDryRun: parseBoolean(process.env.FEISHU_READ_DRY_RUN, feishuDryRun),
     feishuCardSendDryRun: parseBoolean(process.env.FEISHU_CARD_SEND_DRY_RUN, true),
     larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN || null,
     larkEncryptKey: process.env.LARK_ENCRYPT_KEY || null,
@@ -91,6 +94,9 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     llmDebugRaw: parseBoolean(process.env.LLM_DEBUG_RAW, false),
     ...overrides
   };
+  if (overrides.feishuDryRun !== undefined && overrides.feishuReadDryRun === undefined) {
+    config.feishuReadDryRun = overrides.feishuDryRun;
+  }
 
   return validateConfig(config);
 }
