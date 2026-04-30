@@ -515,7 +515,22 @@ async function listCards(context: DemoContext): Promise<DryRunCardPreview[]> {
   return cards;
 }
 
-async function sendAllCards(context: DemoContext): Promise<SendCardsResponse> {
+function formatCardSendFailure(result: SendCardsResponse): string {
+  const firstFailed = result.results.find((item) => item.status === "failed" || item.error);
+  return [
+    "Card send reported failed sends.",
+    "Check /dev/state cli_runs for lark.im.send_card stderr/error.",
+    `Failed count: ${result.failed}`,
+    `First failed confirmation_id: ${firstFailed?.confirmation_id ?? "unknown"}`,
+    `First failed card_type: ${firstFailed?.card_type ?? "unknown"}`,
+    `First failed card send error: ${firstFailed?.error ?? "unknown error"}`
+  ].join("\n");
+}
+
+async function sendAllCards(
+  context: DemoContext,
+  health: HealthResponse
+): Promise<SendCardsResponse> {
   const body =
     context.chatId !== undefined
       ? { chat_id: context.chatId }
@@ -524,13 +539,27 @@ async function sendAllCards(context: DemoContext): Promise<SendCardsResponse> {
         : undefined;
   step(context, "POST /dev/cards/send-all");
   const result = await requestJson<SendCardsResponse>(context, "POST", "/dev/cards/send-all", body);
-  assertDemo(result.ok === true, "Dry-run send-card should not report failed sends");
-  assertDemo(result.total === result.planned, "All card sends should be planned in dry-run mode");
-  assertDemo(
-    result.results.every((item) => item.dry_run === true && item.cli_run_id !== null),
-    "Every dry-run card send should record a cli_run"
-  );
-  ok(context, `dry-run card sends planned=${result.planned}, failed=${result.failed}`);
+  assertDemo(result.ok === true, formatCardSendFailure(result));
+
+  if (health.card_send_dry_run) {
+    assertDemo(result.total === result.planned, "All card sends should be planned in dry-run mode");
+    assertDemo(
+      result.results.every((item) => item.dry_run === true && item.cli_run_id !== null),
+      "Every dry-run card send should record a cli_run"
+    );
+    ok(context, `dry-run card sends planned=${result.planned}, failed=${result.failed}`);
+  } else {
+    assertDemo(
+      result.total === result.sent,
+      "All card sends should be sent when FEISHU_CARD_SEND_DRY_RUN=false"
+    );
+    assertDemo(
+      result.results.every((item) => item.dry_run === false && item.cli_run_id !== null),
+      "Every real card send should record a cli_run"
+    );
+    ok(context, `real card sends sent=${result.sent}, failed=${result.failed}`);
+  }
+
   return result;
 }
 
@@ -674,7 +703,9 @@ function buildCardPhaseReportSummary(input: {
     feishu_write_mode: "dry-run",
     dry_run_note:
       input.context.mode === "send-cards"
-        ? "FEISHU_DRY_RUN=true; this demo dry-run sends confirmation cards only and does not execute confirmations."
+        ? input.health.card_send_dry_run
+          ? "FEISHU_DRY_RUN=true; this demo dry-run sends confirmation cards only and does not execute confirmations."
+          : "FEISHU_DRY_RUN=true; this demo sends real Feishu confirmation cards only and does not execute confirmations."
         : "FEISHU_DRY_RUN=true; this demo generates confirmation cards only and does not execute confirmations.",
     meetings_processed: 2,
     action_confirmations_executed: 0,
@@ -877,7 +908,7 @@ async function runCardPhaseDemo(options: RunFullP0DemoOptions): Promise<RunFullP
   );
 
   if (context.mode === "send-cards") {
-    await sendAllCards(context);
+    await sendAllCards(context, health);
   }
 
   const state = await getState(context);

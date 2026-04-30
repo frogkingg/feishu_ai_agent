@@ -8,6 +8,7 @@ import { confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
 import { MeetingRow, Repositories } from "./services/store/repositories";
 import { sendCard } from "./tools/larkIm";
+import { type LarkCliRunner } from "./tools/larkCli";
 import { nowIso } from "./utils/dates";
 import { processMeetingWorkflow } from "./workflows/processMeetingWorkflow";
 
@@ -25,6 +26,19 @@ const SendCardBodySchema = z
     message: "Provide either recipient or chat_id, not both"
   });
 
+const CONFIRM_CARD_ACTION_KEYS = new Set([
+  "confirm",
+  "confirm_with_edits",
+  "create_kb",
+  "edit_and_create"
+]);
+const REJECT_CARD_ACTION_KEYS = new Set(["reject", "not_mine", "never_remind_topic"]);
+const PREVIEW_STUB_CARD_ACTIONS = {
+  remind_later: "remind_later",
+  convert_to_task: "convert_to_task",
+  append_current_only: "append_current_only"
+} as const;
+
 function briefError(error: unknown): string {
   if (error instanceof ZodError) {
     return `schema validation failed: ${error.issues
@@ -34,6 +48,129 @@ function briefError(error: unknown): string {
   }
 
   return error instanceof Error ? error.message : String(error);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringValue(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function valueAtPath(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    const record = asRecord(current);
+    if (record === null) {
+      return undefined;
+    }
+    current = record[key];
+  }
+  return current;
+}
+
+function recordAtPath(value: unknown, path: string[]): Record<string, unknown> | null {
+  return asRecord(valueAtPath(value, path));
+}
+
+function firstString(values: unknown[]): string | null {
+  for (const value of values) {
+    const text = stringValue(value);
+    if (text !== null) {
+      return text;
+    }
+  }
+  return null;
+}
+
+function firstRecord(values: Array<Record<string, unknown> | null>): Record<string, unknown> {
+  return values.find((value): value is Record<string, unknown> => value !== null) ?? {};
+}
+
+function isTemplatePlaceholder(value: unknown): boolean {
+  return typeof value === "string" && value.trim().startsWith("$");
+}
+
+function valueFromActionPayload(
+  actionValue: Record<string, unknown>,
+  key: string
+): unknown | undefined {
+  if (Object.prototype.hasOwnProperty.call(actionValue, key)) {
+    const direct = actionValue[key];
+    return isTemplatePlaceholder(direct) ? undefined : direct;
+  }
+
+  const payload = asRecord(actionValue.payload);
+  if (payload && Object.prototype.hasOwnProperty.call(payload, key)) {
+    const direct = payload[key];
+    return isTemplatePlaceholder(direct) ? undefined : direct;
+  }
+
+  const template = asRecord(actionValue.payload_template);
+  if (template && Object.prototype.hasOwnProperty.call(template, key)) {
+    const direct = template[key];
+    return isTemplatePlaceholder(direct) ? undefined : direct;
+  }
+
+  return undefined;
+}
+
+function extractCardCallbackPayload(payload: unknown): {
+  requestId: string | null;
+  actionKey: string | null;
+  editedPayload?: unknown;
+  reason?: string | null;
+} {
+  const root = asRecord(payload) ?? {};
+  const actionValue = firstRecord([
+    recordAtPath(payload, ["event", "action", "value"]),
+    recordAtPath(payload, ["action", "value"]),
+    recordAtPath(payload, ["event", "action"]),
+    recordAtPath(payload, ["action"]),
+    recordAtPath(payload, ["value"]),
+    asRecord(payload)
+  ]);
+  const requestId = firstString([
+    actionValue.request_id,
+    root.request_id,
+    valueAtPath(payload, ["event", "request_id"])
+  ]);
+  const actionKey = firstString([
+    actionValue.action_key,
+    actionValue.key,
+    actionValue.action,
+    root.action_key,
+    valueAtPath(payload, ["event", "action_key"])
+  ]);
+  const editedPayload =
+    valueFromActionPayload(actionValue, "edited_payload") ??
+    recordAtPath(payload, ["event", "action", "form_value"]) ??
+    recordAtPath(payload, ["event", "form_value"]);
+  const reasonValue = valueFromActionPayload(actionValue, "reason");
+  const reason = stringValue(reasonValue);
+
+  return {
+    requestId,
+    actionKey,
+    editedPayload,
+    reason
+  };
+}
+
+function cardCallbackPreview(parsed: ReturnType<typeof extractCardCallbackPayload>) {
+  return {
+    request_id: parsed.requestId,
+    action_key: parsed.actionKey,
+    has_edited_payload: parsed.editedPayload !== undefined && parsed.editedPayload !== null
+  };
 }
 
 function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest"]>) {
@@ -80,7 +217,12 @@ function sendCardStatusCode(result: { ok: boolean; error: string | null }): numb
   return result.error?.includes("requires recipient or chat_id") ? 400 : 502;
 }
 
-export function buildServer(input: { config: AppConfig; repos: Repositories; llm: LlmClient }) {
+export function buildServer(input: {
+  config: AppConfig;
+  repos: Repositories;
+  llm: LlmClient;
+  larkCliRunner?: LarkCliRunner;
+}) {
   const app = Fastify({
     logger: true
   });
@@ -104,6 +246,124 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
     }
 
     return reply.code(202).send({ accepted: true });
+  });
+
+  app.post("/webhooks/feishu/card", async (request, reply) => {
+    const payload = request.body ?? {};
+    const root = asRecord(payload) ?? {};
+    const challenge = stringValue(root.challenge);
+    if (challenge !== null) {
+      return { challenge };
+    }
+
+    if (!input.config.feishuDryRun) {
+      return reply.code(409).send({
+        ok: false,
+        dry_run: false,
+        error: "Feishu card callback skeleton only runs when FEISHU_DRY_RUN=true"
+      });
+    }
+
+    const parsed = extractCardCallbackPayload(payload);
+    const normalizedPreview = cardCallbackPreview(parsed);
+    request.log.info({ normalized_preview: normalizedPreview }, "received feishu card callback");
+
+    if (parsed.requestId === null || parsed.actionKey === null) {
+      return reply.code(202).send({
+        accepted: true,
+        callback: "feishu.card",
+        dry_run: true,
+        normalized_preview: normalizedPreview,
+        message: "Feishu card callback accepted without actionable request_id/action_key"
+      });
+    }
+
+    const existing = input.repos.getConfirmationRequest(parsed.requestId);
+    if (existing === null) {
+      return reply
+        .code(404)
+        .send({ ok: false, error: `Confirmation request not found: ${parsed.requestId}` });
+    }
+
+    try {
+      if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        const result = await confirmRequest({
+          repos: input.repos,
+          config: input.config,
+          id: parsed.requestId,
+          editedPayload: parsed.editedPayload,
+          runner: input.larkCliRunner
+        });
+
+        return {
+          ok: result.confirmation.status !== "failed",
+          dry_run: true,
+          callback: "feishu.card",
+          action_key: parsed.actionKey,
+          request_id: parsed.requestId,
+          handled_as: "confirm",
+          confirmation: result.confirmation,
+          result: result.result
+        };
+      }
+
+      if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        const confirmation = rejectRequest({
+          repos: input.repos,
+          id: parsed.requestId,
+          reason: parsed.reason ?? parsed.actionKey
+        });
+
+        return {
+          ok: true,
+          dry_run: true,
+          callback: "feishu.card",
+          action_key: parsed.actionKey,
+          request_id: parsed.requestId,
+          handled_as: "reject",
+          confirmation
+        };
+      }
+
+      const previewAction =
+        PREVIEW_STUB_CARD_ACTIONS[parsed.actionKey as keyof typeof PREVIEW_STUB_CARD_ACTIONS];
+      if (previewAction !== undefined) {
+        const preview = cardPreviewStubAction({
+          repos: input.repos,
+          id: parsed.requestId,
+          action: previewAction
+        });
+        if (preview === null) {
+          return reply
+            .code(404)
+            .send({ ok: false, error: `Confirmation request not found: ${parsed.requestId}` });
+        }
+
+        return {
+          callback: "feishu.card",
+          action_key: parsed.actionKey,
+          request_id: parsed.requestId,
+          handled_as: "preview_stub",
+          ...preview
+        };
+      }
+
+      return reply.code(400).send({
+        ok: false,
+        dry_run: true,
+        action_key: parsed.actionKey,
+        request_id: parsed.requestId,
+        error: `Unsupported Feishu card action_key: ${parsed.actionKey}`
+      });
+    } catch (error) {
+      return reply.code(409).send({
+        ok: false,
+        dry_run: true,
+        action_key: parsed.actionKey,
+        request_id: parsed.requestId,
+        error: briefError(error)
+      });
+    }
   });
 
   app.post("/dev/llm/smoke-test", async (request, reply) => {
@@ -202,7 +462,8 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
       card,
       recipient: body.recipient,
       chatId: body.chat_id,
-      identity: body.identity
+      identity: body.identity,
+      runner: input.larkCliRunner
     });
 
     return reply.code(sendCardStatusCode(result)).send({
@@ -231,7 +492,8 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
         card,
         recipient: body.recipient,
         chatId: body.chat_id,
-        identity: body.identity
+        identity: body.identity,
+        runner: input.larkCliRunner
       });
 
       results.push({
@@ -258,7 +520,8 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
       repos: input.repos,
       config: input.config,
       id: params.id,
-      editedPayload: body.edited_payload
+      editedPayload: body.edited_payload,
+      runner: input.larkCliRunner
     });
   });
 
@@ -318,6 +581,22 @@ export function buildServer(input: { config: AppConfig; repos: Repositories; llm
 
     return result;
   });
+
+  app.get("/dev/card-send-runs", async () =>
+    input.repos
+      .listCliRuns()
+      .filter((run) => run.tool === "lark.im.send_card")
+      .slice(-20)
+      .map((run) => ({
+        id: run.id,
+        dry_run: run.dry_run,
+        status: run.status,
+        stdout: run.stdout,
+        stderr: run.stderr,
+        error: run.error,
+        created_at: run.created_at
+      }))
+  );
 
   app.get("/dev/state", async () => input.repos.getStateSummary());
 

@@ -1,7 +1,7 @@
 import { AppConfig, loadConfig } from "../config";
 import { DryRunConfirmationCard } from "../schemas";
 import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
-import { runLarkCli } from "./larkCli";
+import { runLarkCli, type LarkCliRunner } from "./larkCli";
 
 export type LarkImIdentity = "bot" | "user";
 
@@ -25,6 +25,7 @@ export interface SendCardInput {
   recipient?: string | null;
   chatId?: string | null;
   identity?: LarkImIdentity;
+  runner?: LarkCliRunner;
 }
 
 interface FeishuText {
@@ -271,7 +272,8 @@ export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
     config,
     toolName: "lark.im.send_card",
     dryRun: cardSendDryRun,
-    expectJson: true
+    expectJson: true,
+    runner: input.runner
   });
 
   if (result.dryRun || result.status === "planned") {

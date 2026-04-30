@@ -8,6 +8,7 @@ import { AppConfig } from "../config";
 import { buildConfirmationCard } from "../agents/cardInteractionAgent";
 import { createKnowledgeBaseWorkflow } from "../workflows/createKnowledgeBaseWorkflow";
 import { ActionItemDraftSchema, CalendarEventDraftSchema } from "../schemas";
+import { type LarkCliRunner } from "../tools/larkCli";
 
 function asObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -197,6 +198,7 @@ export async function confirmRequest(input: {
   config?: AppConfig;
   id: string;
   editedPayload?: unknown;
+  runner?: LarkCliRunner;
 }): Promise<{
   confirmation: ConfirmationRequestRow;
   result: unknown;
@@ -267,7 +269,8 @@ export async function confirmRequest(input: {
       const result = await createTask({
         repos: input.repos,
         config: input.config,
-        draft: updatedAction
+        draft: updatedAction,
+        runner: input.runner
       });
       input.repos.updateActionItemAfterCreate({
         id: action.id,
@@ -331,7 +334,8 @@ export async function confirmRequest(input: {
       const result = await createCalendarEvent({
         repos: input.repos,
         config: input.config,
-        draft: updatedDraft
+        draft: updatedDraft,
+        runner: input.runner
       });
       input.repos.updateCalendarDraftAfterCreate({
         id: calendarDraft.id,

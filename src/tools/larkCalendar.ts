@@ -1,6 +1,6 @@
 import { AppConfig } from "../config";
 import { CalendarDraftRow, Repositories } from "../services/store/repositories";
-import { runLarkCli } from "./larkCli";
+import { runLarkCli, type LarkCliRunner } from "./larkCli";
 
 export interface CreateCalendarEventResult {
   calendar_event_id: string;
@@ -13,6 +13,7 @@ export async function createCalendarEvent(input: {
   repos: Repositories;
   config?: AppConfig;
   draft: CalendarDraftRow;
+  runner?: LarkCliRunner;
 }): Promise<CreateCalendarEventResult> {
   const args = [
     "calendar",
@@ -35,7 +36,8 @@ export async function createCalendarEvent(input: {
     config: input.config,
     toolName: "lark.calendar.create",
     dryRun: input.config?.feishuDryRun,
-    expectJson: true
+    expectJson: true,
+    runner: input.runner
   });
 
   if (result.dryRun || result.status === "planned") {
