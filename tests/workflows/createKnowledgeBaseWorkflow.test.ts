@@ -12,16 +12,24 @@ function readFixture(name: string): string {
   return readFileSync(join(process.cwd(), "fixtures/meetings", name), "utf8");
 }
 
-async function processDroneMeetings(repos = createRepositories(createMemoryDatabase())) {
+async function processDroneMeetings(
+  repos = createRepositories(createMemoryDatabase()),
+  options: {
+    organizer?: string;
+    firstParticipants?: string[];
+    secondParticipants?: string[];
+  } = {}
+) {
   const llm = new MockLlmClient();
+  const organizer = options.organizer ?? "张三";
 
   await processMeetingWorkflow({
     repos,
     llm,
     meeting: {
       title: "无人机操作方案初步访谈",
-      participants: ["张三", "李四"],
-      organizer: "张三",
+      participants: options.firstParticipants ?? ["张三", "李四"],
+      organizer,
       started_at: "2026-04-28T10:00:00+08:00",
       ended_at: "2026-04-28T11:00:00+08:00",
       transcript_text: readFixture("drone_interview_01.txt")
@@ -33,8 +41,8 @@ async function processDroneMeetings(repos = createRepositories(createMemoryDatab
     llm,
     meeting: {
       title: "无人机操作员访谈",
-      participants: ["张三", "王五"],
-      organizer: "张三",
+      participants: options.secondParticipants ?? ["张三", "王五"],
+      organizer,
       started_at: "2026-04-29T10:00:00+08:00",
       ended_at: "2026-04-29T11:00:00+08:00",
       transcript_text: readFixture("drone_interview_02.txt")
@@ -90,7 +98,11 @@ describe("createKnowledgeBaseWorkflow", () => {
   });
 
   it("creates a wiki space and writes child doc pages in real mode", async () => {
-    const repos = await processDroneMeetings();
+    const repos = await processDroneMeetings(undefined, {
+      organizer: "ou_owner",
+      firstParticipants: ["ou_owner", "ou_member_a", "not_open_id"],
+      secondParticipants: ["ou_member_a", "ou_member_b"]
+    });
     const request = repos
       .listConfirmationRequests()
       .find((item) => item.request_type === "create_kb");
@@ -105,6 +117,19 @@ describe("createKnowledgeBaseWorkflow", () => {
             data: {
               space: {
                 space_id: "space_1"
+              }
+            }
+          }),
+          stderr: ""
+        };
+      }
+
+      if (args[0] === "wiki" && args[1] === "members" && args[2] === "create") {
+        return {
+          stdout: JSON.stringify({
+            data: {
+              member: {
+                member_id: args[args.indexOf("--data") + 1]
               }
             }
           }),
@@ -164,10 +189,14 @@ describe("createKnowledgeBaseWorkflow", () => {
     const wikiNodeCreateArgs = createdArgs.filter(
       (args) => args[0] === "wiki" && args[1] === "+node-create"
     );
+    const memberCreateArgs = createdArgs.filter(
+      (args) => args[0] === "wiki" && args[1] === "members" && args[2] === "create"
+    );
     const updateArgs = createdArgs.filter(
       (args) => args[0] === "docs" && args[1] === "+update"
     );
     expect(spaceCreateArgs).toHaveLength(1);
+    expect(memberCreateArgs).toHaveLength(3);
     expect(wikiNodeCreateArgs).toHaveLength(10);
     expect(updateArgs).toHaveLength(10);
     expect(spaceCreateArgs[0]).toEqual([
@@ -186,6 +215,16 @@ describe("createKnowledgeBaseWorkflow", () => {
       name: "无人机操作流程主题知识库",
       description: "由 2 场相关会议 dry-run 创建的主题知识库。"
     });
+    expect(
+      memberCreateArgs.map((args) => JSON.parse(args[args.indexOf("--data") + 1]).member_id)
+    ).toEqual(["ou_owner", "ou_member_a", "ou_member_b"]);
+    expect(
+      memberCreateArgs.every(
+        (args) =>
+          args.includes("--params") &&
+          JSON.parse(args[args.indexOf("--params") + 1]).space_id === "space_1"
+      )
+    ).toBe(true);
     expect(wikiNodeCreateArgs[0]).toEqual(
       expect.arrayContaining(["--space-id", "space_1", "--title", "01 整体目标"])
     );
@@ -210,6 +249,6 @@ describe("createKnowledgeBaseWorkflow", () => {
     );
     const firstUpdateContent = updateArgs[0][updateArgs[0].indexOf("--content") + 1];
     expect(firstUpdateContent).toContain("# 01 整体目标");
-    expect(repos.listCliRuns().map((run) => run.status)).toEqual(Array(21).fill("success"));
+    expect(repos.listCliRuns().map((run) => run.status)).toEqual(Array(24).fill("success"));
   });
 });

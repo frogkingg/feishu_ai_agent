@@ -3,7 +3,7 @@ import {
   renderKnowledgeBaseMarkdown,
   runKnowledgeCuratorAgent
 } from "../agents/knowledgeCuratorAgent";
-import { AppConfig } from "../config";
+import { AppConfig, loadConfig } from "../config";
 import { KnowledgeBaseDraft, KnowledgeUpdateSchema, TopicMatchResultSchema } from "../schemas";
 import {
   ConfirmationRequestRow,
@@ -58,6 +58,13 @@ function asObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function parseOpenIds(value: string): string[] {
+  const parsed = JSON.parse(value) as unknown;
+  return Array.isArray(parsed)
+    ? parsed.filter((id): id is string => typeof id === "string" && id.startsWith("ou_"))
+    : [];
 }
 
 function parsePayload(request: ConfirmationRequestRow): CreateKnowledgeBasePayload {
@@ -124,11 +131,15 @@ export async function createKnowledgeBaseWorkflow(input: {
   let homepageUrl = `mock://feishu/wiki/${draft.kb_id}/00-home`;
 
   if (!dryRun) {
+    const memberIds = meetings.flatMap((meeting) => parseOpenIds(meeting.participants_json));
+    const uniqueMembers = [...new Set([owner, ...memberIds].filter(Boolean))] as string[];
+    const config = input.config ?? loadConfig();
     const wikiSpace = await createWikiSpace({
       repos: input.repos,
-      config: input.config,
-      name: draft.name,
-      description: draft.description,
+      config,
+      name: payload.topic_name,
+      description: draft.description ?? "",
+      members: uniqueMembers,
       runner: input.runner
     });
     wikiUrl = wikiSpace.wiki_space_url;
@@ -137,7 +148,7 @@ export async function createKnowledgeBaseWorkflow(input: {
     for (const page of draft.pages.slice(1)) {
       await createDoc({
         repos: input.repos,
-        config: input.config,
+        config,
         title: page.title,
         content: page.markdown,
         spaceId: wikiSpace.wiki_space_id,

@@ -2,7 +2,7 @@ import { AppConfig } from "../config";
 import { Repositories } from "../services/store/repositories";
 import { runLarkCli, type LarkCliRunner } from "./larkCli";
 
-export interface CreateWikiSpaceResult {
+export interface CreateWikiResult {
   wiki_space_id: string;
   wiki_space_url: string;
   homepage_node_token: string;
@@ -10,6 +10,8 @@ export interface CreateWikiSpaceResult {
   dry_run: boolean;
   cli_run_id: string;
 }
+
+export type CreateWikiSpaceResult = CreateWikiResult;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -29,11 +31,12 @@ function firstString(values: unknown[]): string | null {
 
 export async function createWikiSpace(input: {
   repos: Repositories;
-  config?: AppConfig;
+  config: AppConfig;
   name: string;
-  description?: string | null;
+  description: string;
+  members?: string[];
   runner?: LarkCliRunner;
-}): Promise<CreateWikiSpaceResult> {
+}): Promise<CreateWikiResult> {
   const result = await runLarkCli(
     [
       "wiki",
@@ -70,6 +73,43 @@ export async function createWikiSpace(input: {
   }
 
   const wikiUrl = `https://www.feishu.cn/wiki/${spaceId}`;
+
+  for (const memberId of input.members ?? []) {
+    if (!memberId.startsWith("ou_")) {
+      continue;
+    }
+
+    const memberResult = await runLarkCli(
+      [
+        "wiki",
+        "members",
+        "create",
+        "--params",
+        JSON.stringify({ space_id: spaceId }),
+        "--data",
+        JSON.stringify({
+          member_id: memberId,
+          member_type: "openid",
+          member_role: "member"
+        }),
+        "--yes",
+        "--as",
+        "user"
+      ],
+      {
+        repos: input.repos,
+        config: input.config,
+        toolName: "lark.wiki.members.create",
+        dryRun: false,
+        expectJson: true,
+        runner: input.runner
+      }
+    );
+
+    if (memberResult.status === "failed") {
+      throw new Error(`lark.wiki.members.create failed: ${memberResult.error ?? "unknown error"}`);
+    }
+  }
 
   return {
     wiki_space_id: spaceId,
