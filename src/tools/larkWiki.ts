@@ -31,61 +31,51 @@ export async function createWikiSpace(input: {
   repos: Repositories;
   config?: AppConfig;
   name: string;
+  description?: string | null;
   runner?: LarkCliRunner;
 }): Promise<CreateWikiSpaceResult> {
   const result = await runLarkCli(
     [
       "wiki",
-      "+node-create",
-      "--space-id",
-      "my_library",
-      "--title",
-      input.name,
-      "--obj-type",
-      "docx",
+      "spaces",
+      "create",
+      "--data",
+      JSON.stringify({ name: input.name, description: input.description }),
+      "--format",
+      "json",
+      "--yes",
       "--as",
       "user"
     ],
     {
       repos: input.repos,
       config: input.config,
-      toolName: "lark.wiki.node_create",
-      dryRun: input.config?.feishuDryRun,
+      toolName: "lark.wiki.spaces.create",
+      dryRun: false,
       expectJson: true,
       runner: input.runner
     }
   );
 
-  if (result.dryRun || result.status === "planned") {
-    const nodeToken = `dry_node_${input.name.slice(0, 16)}`;
-    return {
-      wiki_space_id: `wiki_${input.name.slice(0, 16)}`,
-      wiki_space_url: `mock://feishu/wiki/${nodeToken}`,
-      homepage_node_token: nodeToken,
-      homepage_url: `mock://feishu/wiki/${nodeToken}`,
-      dry_run: true,
-      cli_run_id: result.id
-    };
-  }
-
   if (result.status === "failed") {
-    throw new Error(`lark.wiki.node_create failed: ${result.error ?? "unknown error"}`);
+    throw new Error(`lark.wiki.spaces.create failed: ${result.error ?? "unknown error"}`);
   }
 
-  const data = asRecord(asRecord(result.parsed)?.data);
-  const nodeToken = firstString([data?.node_token]);
-  const url = firstString([data?.url]);
-  const spaceId = firstString([data?.space_id, data?.resolved_space_id]);
+  const space = asRecord(asRecord(result.parsed)?.data)?.space;
+  const spaceRecord = asRecord(space);
+  const spaceId = firstString([spaceRecord?.space_id]);
 
-  if (nodeToken === null) {
-    throw new Error("lark.wiki.node_create succeeded without node_token");
+  if (!spaceId) {
+    throw new Error("wiki spaces create succeeded without space_id");
   }
+
+  const wikiUrl = `https://www.feishu.cn/wiki/${spaceId}`;
 
   return {
-    wiki_space_id: spaceId ?? `wiki_${input.name.slice(0, 16)}`,
-    wiki_space_url: url ?? `mock://feishu/wiki/${nodeToken}`,
-    homepage_node_token: nodeToken,
-    homepage_url: url ?? `mock://feishu/wiki/${nodeToken}`,
+    wiki_space_id: spaceId,
+    wiki_space_url: wikiUrl,
+    homepage_node_token: spaceId,
+    homepage_url: wikiUrl,
     dry_run: false,
     cli_run_id: result.id
   };

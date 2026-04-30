@@ -89,7 +89,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(repos.getConfirmationRequest(request!.id)?.status).toBe("executed");
   });
 
-  it("creates wiki nodes in real mode with wiki +node-create", async () => {
+  it("creates a wiki space and writes child doc pages in real mode", async () => {
     const repos = await processDroneMeetings();
     const request = repos
       .listConfirmationRequests()
@@ -99,6 +99,19 @@ describe("createKnowledgeBaseWorkflow", () => {
     let createdNodeCount = 0;
     const runner: LarkCliRunner = async (_bin, args) => {
       createdArgs.push(args);
+      if (args[0] === "wiki" && args[1] === "spaces" && args[2] === "create") {
+        return {
+          stdout: JSON.stringify({
+            data: {
+              space: {
+                space_id: "space_1"
+              }
+            }
+          }),
+          stderr: ""
+        };
+      }
+
       if (args[0] === "docs" && args[1] === "+update") {
         return {
           stdout: JSON.stringify({
@@ -138,35 +151,46 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(confirmation?.error).toBeNull();
     expect(repos.listKnowledgeBases()).toHaveLength(1);
     expect(repos.listKnowledgeBases()[0]).toMatchObject({
-      wiki_url: "https://example.feishu.cn/wiki/node_1",
-      homepage_url: "https://example.feishu.cn/wiki/node_1"
+      wiki_url: "https://www.feishu.cn/wiki/space_1",
+      homepage_url: "https://www.feishu.cn/wiki/space_1"
     });
     expect(repos.listKnowledgeUpdates()).toHaveLength(1);
     expect(
       repos.listMeetings().filter((meeting) => meeting.archive_status === "archived")
     ).toHaveLength(2);
-    const wikiCreateArgs = createdArgs.filter(
+    const spaceCreateArgs = createdArgs.filter(
+      (args) => args[0] === "wiki" && args[1] === "spaces" && args[2] === "create"
+    );
+    const wikiNodeCreateArgs = createdArgs.filter(
       (args) => args[0] === "wiki" && args[1] === "+node-create"
     );
     const updateArgs = createdArgs.filter(
       (args) => args[0] === "docs" && args[1] === "+update"
     );
-    expect(wikiCreateArgs).toHaveLength(11);
+    expect(spaceCreateArgs).toHaveLength(1);
+    expect(wikiNodeCreateArgs).toHaveLength(10);
     expect(updateArgs).toHaveLength(10);
-    expect(wikiCreateArgs[0]).toEqual([
+    expect(spaceCreateArgs[0]).toEqual([
       "wiki",
-      "+node-create",
-      "--space-id",
-      "my_library",
-      "--title",
-      "无人机操作流程主题知识库",
-      "--obj-type",
-      "docx",
+      "spaces",
+      "create",
+      "--data",
+      expect.any(String),
+      "--format",
+      "json",
+      "--yes",
       "--as",
       "user"
     ]);
+    expect(JSON.parse(spaceCreateArgs[0][spaceCreateArgs[0].indexOf("--data") + 1])).toEqual({
+      name: "无人机操作流程主题知识库",
+      description: "由 2 场相关会议 dry-run 创建的主题知识库。"
+    });
+    expect(wikiNodeCreateArgs[0]).toEqual(
+      expect.arrayContaining(["--space-id", "space_1", "--title", "01 整体目标"])
+    );
     expect(
-      wikiCreateArgs.slice(1).every((args) => args.includes("--parent-node-token"))
+      wikiNodeCreateArgs.every((args) => !args.includes("--parent-node-token"))
     ).toBe(true);
     expect(updateArgs[0]).toEqual(
       expect.arrayContaining([
@@ -175,7 +199,7 @@ describe("createKnowledgeBaseWorkflow", () => {
         "--api-version",
         "v2",
         "--doc",
-        "doc_2",
+        "doc_1",
         "--command",
         "append",
         "--doc-format",

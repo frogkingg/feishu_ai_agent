@@ -128,6 +128,7 @@ export async function createKnowledgeBaseWorkflow(input: {
       repos: input.repos,
       config: input.config,
       name: draft.name,
+      description: draft.description,
       runner: input.runner
     });
     wikiUrl = wikiSpace.wiki_space_url;
@@ -140,7 +141,6 @@ export async function createKnowledgeBaseWorkflow(input: {
         title: page.title,
         content: page.markdown,
         spaceId: wikiSpace.wiki_space_id,
-        parentNodeToken: wikiSpace.homepage_node_token,
         runner: input.runner
       });
     }
