@@ -10,6 +10,9 @@ export interface AppConfig {
   feishuDryRun: boolean;
   feishuReadDryRun: boolean;
   feishuCardSendDryRun: boolean;
+  feishuTaskCreateDryRun: boolean;
+  feishuCalendarCreateDryRun: boolean;
+  feishuKnowledgeWriteDryRun: boolean;
   larkVerificationToken: string | null;
   larkEncryptKey: string | null;
   devApiKey: string | null;
@@ -80,6 +83,15 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     feishuDryRun,
     feishuReadDryRun: parseBoolean(process.env.FEISHU_READ_DRY_RUN, feishuDryRun),
     feishuCardSendDryRun: parseBoolean(process.env.FEISHU_CARD_SEND_DRY_RUN, true),
+    feishuTaskCreateDryRun: parseBoolean(process.env.FEISHU_TASK_CREATE_DRY_RUN, feishuDryRun),
+    feishuCalendarCreateDryRun: parseBoolean(
+      process.env.FEISHU_CALENDAR_CREATE_DRY_RUN,
+      feishuDryRun
+    ),
+    feishuKnowledgeWriteDryRun: parseBoolean(
+      process.env.FEISHU_KNOWLEDGE_WRITE_DRY_RUN,
+      feishuDryRun
+    ),
     larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN || null,
     larkEncryptKey: process.env.LARK_ENCRYPT_KEY || null,
     devApiKey: process.env.DEV_API_KEY || null,
@@ -96,6 +108,15 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   };
   if (overrides.feishuDryRun !== undefined && overrides.feishuReadDryRun === undefined) {
     config.feishuReadDryRun = overrides.feishuDryRun;
+  }
+  if (overrides.feishuDryRun !== undefined && overrides.feishuTaskCreateDryRun === undefined) {
+    config.feishuTaskCreateDryRun = overrides.feishuDryRun;
+  }
+  if (overrides.feishuDryRun !== undefined && overrides.feishuCalendarCreateDryRun === undefined) {
+    config.feishuCalendarCreateDryRun = overrides.feishuDryRun;
+  }
+  if (overrides.feishuDryRun !== undefined && overrides.feishuKnowledgeWriteDryRun === undefined) {
+    config.feishuKnowledgeWriteDryRun = overrides.feishuDryRun;
   }
 
   return validateConfig(config);

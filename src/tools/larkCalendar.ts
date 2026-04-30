@@ -40,12 +40,7 @@ export async function createCalendarEvent(input: {
   runner?: LarkCliRunner;
 }): Promise<CreateCalendarEventResult> {
   if (!input.draft.start_time) {
-    return {
-      calendar_event_id: `pending_event_${input.draft.id}`,
-      event_url: `mock://feishu/calendar/${input.draft.id}`,
-      dry_run: true,
-      cli_run_id: "skipped_no_start_time"
-    };
+    throw new Error("calendar start_time is required before creating a Feishu event");
   }
 
   const participantIds = parseParticipantIds(input.draft.participants_json);
@@ -69,7 +64,7 @@ export async function createCalendarEvent(input: {
     repos: input.repos,
     config: input.config,
     toolName: "lark.calendar.create",
-    dryRun: input.config?.feishuDryRun,
+    dryRun: input.config?.feishuCalendarCreateDryRun,
     expectJson: true,
     runner: input.runner
   });

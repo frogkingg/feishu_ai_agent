@@ -54,11 +54,23 @@ export async function createWikiSpace(input: {
       repos: input.repos,
       config: input.config,
       toolName: "lark.wiki.spaces.create",
-      dryRun: false,
+      dryRun: input.config.feishuKnowledgeWriteDryRun,
       expectJson: true,
       runner: input.runner
     }
   );
+
+  if (result.dryRun || result.status === "planned") {
+    const spaceId = `dry_wiki_${input.name.slice(0, 16)}`;
+    return {
+      wiki_space_id: spaceId,
+      wiki_space_url: `mock://feishu/wiki/${spaceId}`,
+      homepage_node_token: spaceId,
+      homepage_url: `mock://feishu/wiki/${spaceId}/00-home`,
+      dry_run: true,
+      cli_run_id: result.id
+    };
+  }
 
   if (result.status === "failed") {
     throw new Error(`lark.wiki.spaces.create failed: ${result.error ?? "unknown error"}`);
@@ -100,7 +112,7 @@ export async function createWikiSpace(input: {
         repos: input.repos,
         config: input.config,
         toolName: "lark.wiki.members.create",
-        dryRun: false,
+        dryRun: input.config.feishuKnowledgeWriteDryRun,
         expectJson: true,
         runner: input.runner
       }

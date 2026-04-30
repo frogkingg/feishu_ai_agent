@@ -173,7 +173,7 @@ describe("confirm calendar request", () => {
     expect(args).not.toContain(JSON.stringify(["王五", "赵六"]));
   });
 
-  it("creates real Feishu events with calendar +create and filters attendees to open_ids", async () => {
+  it("creates real Feishu events with the calendar canary and filters attendees to open_ids", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const meeting = createCalendarTestMeeting(repos);
     const calendar = repos.createCalendarDraft({
@@ -219,7 +219,11 @@ describe("confirm calendar request", () => {
 
     await confirmRequest({
       repos,
-      config: loadConfig({ feishuDryRun: false, larkCliBin: "fake-lark-cli" }),
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCalendarCreateDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
       id: request.id,
       runner
     });
@@ -248,6 +252,57 @@ describe("confirm calendar request", () => {
       calendar_event_id: "event_real",
       event_url: "https://applink.feishu.cn/client/calendar/event_real"
     });
+  });
+
+  it("fails confirmation when calendar start time is missing instead of faking success", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createCalendarTestMeeting(repos);
+    const calendar = repos.createCalendarDraft({
+      id: "cal_missing_start_time",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "无人机操作员访谈",
+      start_time: null,
+      end_time: null,
+      duration_minutes: null,
+      participants_json: JSON.stringify(["ou_alpha"]),
+      agenda: "确认真实操作步骤和限制",
+      location: null,
+      evidence: "下周二上午 10 点再约操作员访谈。",
+      confidence: 0.82,
+      missing_fields_json: JSON.stringify(["start_time"]),
+      confirmation_status: "sent",
+      calendar_event_id: null,
+      event_url: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "calendar",
+      targetId: calendar.id,
+      recipient: meeting.organizer,
+      originalPayload: { draft: calendar }
+    });
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCalendarCreateDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
+      id: request.id
+    });
+
+    expect(repos.getConfirmationRequest(request.id)).toMatchObject({
+      status: "failed",
+      error: "calendar start_time is required before creating a Feishu event"
+    });
+    expect(repos.getCalendarDraft(calendar.id)).toMatchObject({
+      confirmation_status: "sent",
+      calendar_event_id: null,
+      event_url: null
+    });
+    expect(repos.listCliRuns()).toHaveLength(0);
   });
 
   it("removes filled participants and location while keeping still-missing end time", async () => {

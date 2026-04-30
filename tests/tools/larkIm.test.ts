@@ -27,7 +27,7 @@ const card = buildActionConfirmationCard({
       suggested_reason: "会议中明确了负责人。",
       missing_fields: []
     },
-    meeting_id: "mtg_001"
+    meeting_reference: "无人机操作方案初访（会议纪要：https://example.feishu.cn/minutes/min_001）"
   }
 });
 
@@ -52,22 +52,31 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain(`待办 | ${card.summary}`);
     expect(serialized).toContain("待办确认");
     expect(serialized).toContain("详情依据");
+    expect(serialized).toContain("[会议纪要](https://example.feishu.cn/minutes/min_001)");
     expect(serialized).toContain("/dev/confirmations/conf_card_send/confirm");
-    expect(serialized).toContain('"action":"confirm_with_edits"');
+    expect(serialized).toContain('"action":"confirm"');
+    expect(serialized).not.toContain('"action":"confirm_with_edits"');
     expect(serialized).not.toContain('"action":"not_mine"');
     expect(serialized).not.toContain("mtg_001");
     expect(serialized).toContain('"confirmation_id":"conf_card_send"');
-    expect(serialized).toContain('"name":"owner"');
-    expect(serialized).toContain('"name":"due_date"');
+    expect(serialized).not.toContain("安全说明");
+    expect(serialized).not.toContain("可修改信息");
+    expect(serialized).not.toContain('"name":"owner"');
+    expect(serialized).not.toContain('"name":"due_date"');
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).toContain("确认前不会创建/更新飞书内容");
+    expect(serialized).toContain("添加待办");
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
-        { text: { content: "确认创建" } },
-        { text: { content: "稍后提醒" } },
-        { text: { content: "拒绝" } }
+        { text: { content: "添加待办" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
       ]
     });
+    const actionElement = interactive.elements.find((element) => element.tag === "action");
+    expect(actionElement).toMatchObject({ actions: expect.any(Array) });
+    expect(actionElement?.tag === "action" ? actionElement.actions.length : 0).toBeLessThanOrEqual(
+      3
+    );
   });
 
   it("renders calendar cards with calendar color and focused actions", () => {
@@ -89,7 +98,8 @@ describe("larkIm.sendCard", () => {
           confidence: 0.84,
           missing_fields: []
         },
-        meeting_id: "mtg_001"
+        meeting_reference:
+          "无人机操作员访谈（转写记录：https://example.feishu.cn/minutes/transcript_001）"
       }
     });
 
@@ -103,21 +113,58 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain("日程 | 开始：5月5日 10:00");
     expect(visibleText).not.toContain("2026-05-05T10:00:00+08:00");
     expect(serialized).toContain("日程确认");
+    expect(serialized).toContain("[转写记录](https://example.feishu.cn/minutes/transcript_001)");
     expect(serialized).toContain("开始时间");
     expect(serialized).toContain("参会人");
-    expect(serialized).toContain('"name":"agenda"');
+    expect(serialized).not.toContain('"name":"agenda"');
+    expect(serialized).not.toContain("安全说明");
+    expect(serialized).not.toContain("可修改信息");
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).toContain('"action":"confirm_with_edits"');
+    expect(serialized).toContain('"action":"confirm"');
+    expect(serialized).not.toContain('"action":"confirm_with_edits"');
     expect(serialized).toContain('"action":"convert_to_task"');
     expect(serialized).not.toContain('"action":"remind_later"');
     expect(serialized).not.toContain("mtg_001");
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
-        { text: { content: "确认日程" } },
+        { text: { content: "添加日程" } },
         { text: { content: "转待办" } },
-        { text: { content: "拒绝" } }
+        { text: { content: "不添加" } }
       ]
     });
+  });
+
+  it("keeps only missing key inputs on cards", () => {
+    const calendarCard = buildCalendarConfirmationCard({
+      id: "conf_calendar_missing",
+      target_id: "cal_card_missing",
+      recipient: "ou_recipient",
+      status: "sent",
+      original_payload: {
+        draft: {
+          title: "无人机操作员访谈会议",
+          start_time: null,
+          end_time: null,
+          duration_minutes: null,
+          participants: ["张三"],
+          agenda: "确认真实操作步骤和限制。",
+          location: null,
+          evidence: "下次再约操作员访谈。",
+          confidence: 0.7,
+          missing_fields: ["start_time", "duration_minutes", "location"]
+        }
+      }
+    });
+
+    const interactive = buildFeishuInteractiveCard(calendarCard);
+    const serialized = JSON.stringify(interactive);
+
+    expect(serialized).toContain("需补充");
+    expect(serialized).toContain('"name":"start_time"');
+    expect(serialized).toContain('"name":"duration_minutes"');
+    expect(serialized).toContain('"name":"location"');
+    expect(serialized).not.toContain('"name":"agenda"');
+    expect(serialized).not.toContain("可修改信息");
   });
 
   it("renders knowledge-base cards with knowledge color and fewer actions", () => {
@@ -131,6 +178,10 @@ describe("larkIm.sendCard", () => {
         suggested_goal: "沉淀无人机操作方案相关会议结论。",
         meeting_ids: ["mtg_001", "mtg_002"],
         match_reasons: ["会议摘要/转写围绕相同主题信号"],
+        candidate_meeting_refs: [
+          "无人机操作方案初访（会议纪要：https://example.feishu.cn/minutes/min_001）",
+          "无人机操作员访谈（转写记录：https://example.feishu.cn/minutes/transcript_002）"
+        ],
         score: 0.92,
         default_structure: ["00 首页 / 总览", "06 单个会议总结"],
         reason:
@@ -150,18 +201,35 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain("知识库确认");
     expect(serialized).toContain("主题名称");
     expect(serialized).toContain("关联会议");
-    expect(serialized).toContain('"name":"suggested_goal"');
+    expect(serialized).toContain("[会议纪要](https://example.feishu.cn/minutes/min_001)");
+    expect(serialized).toContain("[转写记录](https://example.feishu.cn/minutes/transcript_002)");
+    expect(serialized).not.toContain('"name":"suggested_goal"');
+    expect(serialized).not.toContain("安全说明");
+    expect(serialized).not.toContain("可修改信息");
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).toContain('"action":"edit_and_create"');
+    expect(serialized).toContain('"action":"create_kb"');
+    expect(serialized).not.toContain('"action":"edit_and_create"');
     expect(serialized).toContain('"action":"append_current_only"');
     expect(serialized).not.toContain('"action":"never_remind_topic"');
     expect(serialized).not.toContain("匹配分");
     expect(serialized).not.toContain("match_reasons");
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
-        { text: { content: "确认创建" } },
+        { text: { content: "创建知识库" } },
         { text: { content: "仅归档本次" } },
-        { text: { content: "拒绝" } }
+        { text: { content: "不创建" } }
+      ]
+    });
+  });
+
+  it("renders dry-run button labels with preview wording", () => {
+    const interactive = buildFeishuInteractiveCard(card, { mode: "dry_run" });
+
+    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        { text: { content: "预览添加待办" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
       ]
     });
   });
@@ -205,6 +273,7 @@ describe("larkIm.sendCard", () => {
       ])
     );
     expect(contentArg(args)).toContain("整理无人机操作流程");
+    expect(contentArg(args)).toContain("预览添加待办");
     expect(contentArg(args)).not.toMatch(/^@/);
     expect(args).not.toContain("--dry-run");
   });

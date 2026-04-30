@@ -108,7 +108,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(repos.getConfirmationRequest(request!.id)?.status).toBe("executed");
   });
 
-  it("creates a wiki space for the owner and writes child doc pages in real mode", async () => {
+  it("creates a wiki space for the owner and writes child doc pages with the knowledge canary", async () => {
     const repos = await processDroneMeetings(undefined, {
       organizer: "ou_owner",
       firstParticipants: ["ou_owner", "ou_member_a", "not_open_id"],
@@ -177,7 +177,11 @@ describe("createKnowledgeBaseWorkflow", () => {
 
     await confirmRequest({
       repos,
-      config: loadConfig({ feishuDryRun: false, sqlitePath: ":memory:" }),
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuKnowledgeWriteDryRun: false,
+        sqlitePath: ":memory:"
+      }),
       id: request!.id,
       runner
     });

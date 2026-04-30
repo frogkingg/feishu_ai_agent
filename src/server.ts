@@ -546,6 +546,9 @@ export function buildServer(input: {
     dry_run: input.config.feishuDryRun,
     read_dry_run: input.config.feishuReadDryRun,
     card_send_dry_run: input.config.feishuCardSendDryRun,
+    task_create_dry_run: input.config.feishuTaskCreateDryRun,
+    calendar_create_dry_run: input.config.feishuCalendarCreateDryRun,
+    knowledge_write_dry_run: input.config.feishuKnowledgeWriteDryRun,
     llm_provider: input.config.llmProvider,
     sqlite_path: input.config.sqlitePath
   }));

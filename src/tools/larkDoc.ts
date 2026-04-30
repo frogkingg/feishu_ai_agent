@@ -92,7 +92,7 @@ export async function createDoc(input: {
     repos: input.repos,
     config: input.config,
     toolName: "lark.doc.create",
-    dryRun: input.config?.feishuDryRun,
+    dryRun: input.config?.feishuKnowledgeWriteDryRun,
     expectJson: true,
     runner: input.runner
   });
@@ -145,7 +145,7 @@ export async function createDoc(input: {
           repos: input.repos,
           config: input.config,
           toolName: "lark.docs.update",
-          dryRun: false,
+          dryRun: input.config?.feishuKnowledgeWriteDryRun,
           expectJson: true,
           runner: input.runner
         }

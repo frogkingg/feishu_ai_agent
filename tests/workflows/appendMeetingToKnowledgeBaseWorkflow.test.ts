@@ -2,10 +2,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config";
 import { MeetingExtractionResult } from "../../src/schemas";
-import { confirmRequest, rejectRequest } from "../../src/services/confirmationService";
+import {
+  confirmRequest,
+  createConfirmationRequest,
+  rejectRequest
+} from "../../src/services/confirmationService";
 import { LlmClient } from "../../src/services/llm/llmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkflow";
 
 class QueueLlmClient implements LlmClient {
@@ -269,6 +274,112 @@ describe("appendMeetingToKnowledgeBaseWorkflow", () => {
     expect(repos.getConfirmationRequest(appendRequest!.id)).toMatchObject({
       status: "rejected",
       error: "这场会先不归档"
+    });
+  });
+
+  it("writes a real child doc when the knowledge canary is enabled for append_meeting", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = repos.createMeeting({
+      id: "mtg_real_append",
+      external_meeting_id: null,
+      title: "真实追加会议",
+      started_at: "2026-05-03T10:00:00+08:00",
+      ended_at: "2026-05-03T11:00:00+08:00",
+      organizer: "ou_owner",
+      participants_json: JSON.stringify(["ou_owner"]),
+      minutes_url: "https://example.feishu.cn/minutes/min_003",
+      transcript_url: "https://example.feishu.cn/minutes/transcript_003",
+      transcript_text: "本次会议需要追加到已有知识库。",
+      summary: "本次会议需要追加到已有知识库。",
+      keywords_json: JSON.stringify(["canary", "append"]),
+      matched_kb_id: null,
+      match_score: null,
+      archive_status: "suggested",
+      action_count: 0,
+      calendar_count: 0
+    });
+    const knowledgeBase = repos.createKnowledgeBase({
+      id: "kb_real_append",
+      name: "真实追加测试知识库",
+      goal: "验证真实追加子文档",
+      description: null,
+      owner: "ou_owner",
+      status: "active",
+      confidence_origin: 0.9,
+      wiki_url: "https://www.feishu.cn/wiki/space_real_append",
+      homepage_url: "https://www.feishu.cn/wiki/space_real_append",
+      related_keywords_json: JSON.stringify(["canary"]),
+      created_from_meetings_json: JSON.stringify([]),
+      auto_append_policy: "ask_every_time"
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "append_meeting",
+      targetId: meeting.id,
+      recipient: "ou_owner",
+      originalPayload: {
+        kb_id: knowledgeBase.id,
+        kb_name: knowledgeBase.name,
+        meeting_id: meeting.id,
+        meeting_summary: meeting.summary,
+        topic_keywords: ["append"],
+        match_reasons: ["发现当前会议可能属于已有知识库"],
+        score: 0.9
+      }
+    });
+    const calls: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      calls.push(args);
+      if (args[0] === "docs" && args[1] === "+update") {
+        return {
+          stdout: JSON.stringify({ data: { result: "success" } }),
+          stderr: ""
+        };
+      }
+      return {
+        stdout: JSON.stringify({
+          data: {
+            node_token: "node_real_append",
+            obj_token: "doc_real_append",
+            url: "https://example.feishu.cn/wiki/node_real_append"
+          }
+        }),
+        stderr: ""
+      };
+    };
+
+    const result = await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuKnowledgeWriteDryRun: false,
+        sqlitePath: ":memory:"
+      }),
+      id: request.id,
+      runner
+    });
+
+    expect(result.confirmation.status).toBe("executed");
+    expect(result.result).toMatchObject({
+      dry_run: false,
+      real_doc_url: "https://example.feishu.cn/wiki/node_real_append"
+    });
+    expect(calls[0]).toEqual(
+      expect.arrayContaining([
+        "wiki",
+        "+node-create",
+        "--space-id",
+        "space_real_append",
+        "--title",
+        "会议追加：真实追加会议"
+      ])
+    );
+    expect(calls[1]).toEqual(
+      expect.arrayContaining(["docs", "+update", "--doc", "doc_real_append", "--as", "user"])
+    );
+    expect(repos.getMeeting(meeting.id)).toMatchObject({
+      matched_kb_id: knowledgeBase.id,
+      archive_status: "archived"
     });
   });
 });

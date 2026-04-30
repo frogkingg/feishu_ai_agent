@@ -59,6 +59,32 @@ describe("loadConfig", () => {
     });
   });
 
+  it("keeps workflow writes dry-run by default but allows per-type canaries", () => {
+    expect(loadConfig({ feishuDryRun: true })).toMatchObject({
+      feishuTaskCreateDryRun: true,
+      feishuCalendarCreateDryRun: true,
+      feishuKnowledgeWriteDryRun: true
+    });
+    expect(loadConfig({ feishuDryRun: false })).toMatchObject({
+      feishuTaskCreateDryRun: false,
+      feishuCalendarCreateDryRun: false,
+      feishuKnowledgeWriteDryRun: false
+    });
+    expect(
+      loadConfig({
+        feishuDryRun: true,
+        feishuTaskCreateDryRun: false,
+        feishuCalendarCreateDryRun: false,
+        feishuKnowledgeWriteDryRun: false
+      })
+    ).toMatchObject({
+      feishuDryRun: true,
+      feishuTaskCreateDryRun: false,
+      feishuCalendarCreateDryRun: false,
+      feishuKnowledgeWriteDryRun: false
+    });
+  });
+
   it("loads optional Lark webhook credentials", () => {
     expect(
       loadConfig({

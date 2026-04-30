@@ -389,7 +389,8 @@ export async function confirmRequest(input: {
       const result = await appendMeetingToKnowledgeBaseWorkflow({
         repos: input.repos,
         config: input.config,
-        confirmationId: request.id
+        confirmationId: request.id,
+        runner: input.runner
       });
 
       return {

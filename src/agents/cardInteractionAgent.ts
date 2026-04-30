@@ -156,6 +156,21 @@ function formatList(values: string[]): string {
   return values.length > 0 ? values.join(", ") : "无";
 }
 
+function meetingReferenceFromPayload(payload: Record<string, unknown>): string | null {
+  const meetingReference = firstString(
+    [
+      payload.meeting_reference,
+      payload.minutes_url,
+      payload.transcript_url,
+      payload.meeting_url,
+      payload.external_meeting_id
+    ],
+    ""
+  );
+
+  return meetingReference.length > 0 ? meetingReference : null;
+}
+
 function formatNullable(value: string | number | boolean | null): string {
   return value === null ? "未填写" : String(value);
 }
@@ -465,6 +480,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   const parsed = CardConfirmationInputSchema.parse(input);
   const { payload } = payloadAndDraft(parsed);
   const draft = normalizeActionDraft(parsed);
+  const meetingReference = meetingReferenceFromPayload(payload);
   const summary = [
     draft.owner ? `负责人：${draft.owner}` : "负责人待补充",
     draft.due_date ? `截止：${draft.due_date}` : "截止时间待补充",
@@ -493,7 +509,12 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
       }),
       section({
         title: "会议依据",
-        fields: [displayField("evidence", "依据", draft.evidence)]
+        fields: [
+          ...(meetingReference !== null
+            ? [displayField("meeting_reference", "会议", meetingReference)]
+            : []),
+          displayField("evidence", "依据", draft.evidence)
+        ]
       })
     ],
     editable_fields: [
@@ -537,6 +558,7 @@ export function buildCalendarConfirmationCard(
   const parsed = CardConfirmationInputSchema.parse(input);
   const { payload } = payloadAndDraft(parsed);
   const draft = normalizeCalendarDraft(parsed);
+  const meetingReference = meetingReferenceFromPayload(payload);
   const summary = [
     draft.start_time ? `开始：${draft.start_time}` : "开始时间待补充",
     draft.end_time ? `结束：${draft.end_time}` : null,
@@ -570,7 +592,12 @@ export function buildCalendarConfirmationCard(
       }),
       section({
         title: "会议依据",
-        fields: [displayField("evidence", "依据", draft.evidence)]
+        fields: [
+          ...(meetingReference !== null
+            ? [displayField("meeting_reference", "会议", meetingReference)]
+            : []),
+          displayField("evidence", "依据", draft.evidence)
+        ]
       })
     ],
     editable_fields: [
@@ -630,13 +657,12 @@ export function buildCreateKbConfirmationCard(
   const candidateMeetingRefs = parseStringArray(payload.candidate_meeting_refs);
   const defaultStructure = parseStringArray(payload.default_structure);
   const reason = firstString([payload.reason], "检测到相关会议，建议创建主题知识库。");
-  const candidateMeetings =
-    candidateMeetingRefs.length > 0 ? candidateMeetingRefs : candidateMeetingIds;
-  const summary = [
-    `主题：${topicName}`,
-    `关联会议数：${candidateMeetings.length}`,
-    `建议：${reason}`
-  ].join("；");
+  const meetingCount =
+    candidateMeetingRefs.length > 0 ? candidateMeetingRefs.length : candidateMeetingIds.length;
+  const candidateMeetings = candidateMeetingRefs;
+  const summary = [`主题：${topicName}`, `关联会议数：${meetingCount}`, `建议：${reason}`].join(
+    "；"
+  );
 
   return buildCard({
     card_type: "create_kb_confirmation",
@@ -651,15 +677,19 @@ export function buildCreateKbConfirmationCard(
         title: "建库建议",
         fields: [
           displayField("topic_name", "主题名称", topicName),
-          displayField("meeting_count", "关联会议数", candidateMeetings.length),
+          displayField("meeting_count", "关联会议数", meetingCount),
           displayField("suggested_goal", "建议目标", suggestedGoal),
           displayField("reason", "为什么建议建", reason)
         ]
       }),
-      section({
-        title: "关联会议",
-        fields: [displayField("candidate_meetings", "会议", candidateMeetings)]
-      }),
+      ...(candidateMeetings.length > 0
+        ? [
+            section({
+              title: "关联会议",
+              fields: [displayField("candidate_meetings", "会议", candidateMeetings)]
+            })
+          ]
+        : []),
       section({
         title: "结构预览",
         fields: [displayField("default_structure", "目录", defaultStructure)]

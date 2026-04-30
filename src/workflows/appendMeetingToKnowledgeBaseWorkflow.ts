@@ -17,6 +17,8 @@ import {
   formatUserListForDisplay
 } from "../utils/display";
 import { createId } from "../utils/id";
+import { createDoc } from "../tools/larkDoc";
+import { type LarkCliRunner } from "../tools/larkCli";
 
 const KeyDecisionSchema = z.object({
   decision: z.string().min(1),
@@ -49,6 +51,7 @@ export interface AppendMeetingToKnowledgeBaseWorkflowResult {
   knowledge_update: KnowledgeUpdateRow;
   markdown: string;
   dry_run: boolean;
+  real_doc_url: string | null;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -166,10 +169,20 @@ function renderAppendMarkdown(input: {
   ].join("\n");
 }
 
+function wikiSpaceIdFromUrl(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/\/wiki\/([^/?#]+)/);
+  return match?.[1] ?? null;
+}
+
 export async function appendMeetingToKnowledgeBaseWorkflow(input: {
   repos: Repositories;
   config?: AppConfig;
   confirmationId: string;
+  runner?: LarkCliRunner;
 }): Promise<AppendMeetingToKnowledgeBaseWorkflowResult> {
   const request = input.repos.getConfirmationRequest(input.confirmationId);
   if (!request) {
@@ -205,6 +218,30 @@ export async function appendMeetingToKnowledgeBaseWorkflow(input: {
     actions,
     calendars
   });
+  const dryRun = input.config?.feishuKnowledgeWriteDryRun ?? input.config?.feishuDryRun ?? true;
+  let realDocUrl: string | null = null;
+
+  if (!dryRun) {
+    const spaceId = wikiSpaceIdFromUrl(knowledgeBase.wiki_url);
+    if (spaceId === null || /^mock:\/\//.test(knowledgeBase.wiki_url ?? "")) {
+      throw new Error("append_meeting requires an existing real Feishu wiki space");
+    }
+
+    const config = input.config;
+    if (!config) {
+      throw new Error("append_meeting real write requires AppConfig");
+    }
+
+    const doc = await createDoc({
+      repos: input.repos,
+      config,
+      title: `会议追加：${meeting.title}`,
+      content: markdown,
+      spaceId,
+      runner: input.runner
+    });
+    realDocUrl = doc.doc_url;
+  }
 
   const existingMeetingIds = parseStringArray(knowledgeBase.created_from_meetings_json);
   const nextMeetingIds = unique([...existingMeetingIds, meeting.id]);
@@ -265,6 +302,7 @@ export async function appendMeetingToKnowledgeBaseWorkflow(input: {
     knowledge_base: input.repos.getKnowledgeBase(knowledgeBase.id) ?? knowledgeBase,
     knowledge_update: knowledgeUpdate,
     markdown,
-    dry_run: input.config?.feishuDryRun ?? true
+    dry_run: dryRun,
+    real_doc_url: realDocUrl
   };
 }

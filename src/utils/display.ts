@@ -96,3 +96,12 @@ export function formatMeetingReference(
 
   return `会议 ${meeting.id}：${meeting.title}`;
 }
+
+export function linkifyMeetingReference(value: string): string {
+  const linkedLabeledUrls = value.replace(
+    /(会议纪要|转写记录|会议链接)：(https?:\/\/[^\s）)]+)/g,
+    (_match, label: string, url: string) => `[${label}](${url})`
+  );
+
+  return linkedLabeledUrls.replace(/(?<!\]\()https?:\/\/[^\s）)]+/g, (url) => `[会议链接](${url})`);
+}

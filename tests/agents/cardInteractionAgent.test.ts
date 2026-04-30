@@ -153,6 +153,10 @@ describe("CardInteractionAgent", () => {
           topic_name: "无人机操作方案",
           suggested_goal: "沉淀无人机操作方案相关会议结论。",
           meeting_ids: ["mtg_001", "mtg_002"],
+          candidate_meeting_refs: [
+            "无人机操作方案初访（会议纪要：https://example.feishu.cn/minutes/min_001）",
+            "无人机操作员访谈（转写记录：https://example.feishu.cn/minutes/transcript_002）"
+          ],
           match_reasons: ["会议摘要/转写围绕相同主题信号"],
           score: 0.92,
           default_structure: ["00 首页 / 总览", "06 单个会议总结"],
@@ -164,6 +168,7 @@ describe("CardInteractionAgent", () => {
     expect(card.card_type).toBe("create_kb_confirmation");
     expect(card.summary).toContain("关联会议数：2");
     expect(card.summary).toContain("建议：检测到至少两场强相关会议，建议创建主题知识库。");
+    expect(JSON.stringify(card)).toContain("https://example.feishu.cn/minutes/min_001");
     expect(card.sections.flatMap((section) => section.fields.map((field) => field.key))).toEqual([
       "topic_name",
       "meeting_count",

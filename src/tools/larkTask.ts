@@ -46,7 +46,7 @@ export async function createTask(input: {
     repos: input.repos,
     config: input.config,
     toolName: "lark.task.create",
-    dryRun: input.config?.feishuDryRun,
+    dryRun: input.config?.feishuTaskCreateDryRun,
     expectJson: true,
     runner: input.runner
   });

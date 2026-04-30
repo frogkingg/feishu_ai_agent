@@ -1,6 +1,7 @@
 import { AppConfig, loadConfig } from "../config";
 import { DryRunConfirmationCard } from "../schemas";
 import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
+import { linkifyMeetingReference } from "../utils/display";
 import { runLarkCli, type LarkCliRunner } from "./larkCli";
 
 export type LarkImIdentity = "bot" | "user";
@@ -100,6 +101,11 @@ interface CardVisualProfile {
 }
 
 type CardActionKey = DryRunConfirmationCard["actions"][number]["key"];
+type CardRenderMode = "real" | "dry_run";
+
+interface BuildFeishuInteractiveCardOptions {
+  mode?: CardRenderMode;
+}
 
 function trimToNull(value: string | null | undefined): string | null {
   if (value === undefined || value === null) {
@@ -213,7 +219,7 @@ function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
       typeLabel: "待办",
       headerTemplate: "turquoise",
       primaryFieldKeys: ["recommended_owner", "due_date", "priority"],
-      detailFieldKeys: ["suggested_reason", "evidence"]
+      detailFieldKeys: ["meeting_reference", "suggested_reason", "evidence"]
     };
   }
 
@@ -223,7 +229,7 @@ function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
       typeLabel: "日程",
       headerTemplate: "orange",
       primaryFieldKeys: ["start_time", "duration_minutes", "participants", "location"],
-      detailFieldKeys: ["agenda", "evidence"]
+      detailFieldKeys: ["meeting_reference", "agenda", "evidence"]
     };
   }
 
@@ -299,7 +305,13 @@ function humanizeDisplayText(value: string): string {
 }
 
 function compactText(value: string, maxLength = 72): string {
-  const singleLine = humanizeDisplayText(value).replace(/\s+/g, " ").trim();
+  const singleLine = linkifyMeetingReference(humanizeDisplayText(value))
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/\]\(https?:\/\//i.test(singleLine)) {
+    return singleLine;
+  }
+
   return singleLine.length > maxLength ? `${singleLine.slice(0, maxLength - 1)}...` : singleLine;
 }
 
@@ -309,6 +321,20 @@ function compactSummary(card: DryRunConfirmationCard): string {
 
 function fieldBullet(field: DryRunConfirmationCard["sections"][number]["fields"][number]): string {
   return `- **${field.label}**: ${compactText(displayValue(field))}`;
+}
+
+function hasMissingValue(field: DryRunConfirmationCard["editable_fields"][number]): boolean {
+  const value = field.value;
+  if (value === null) {
+    return true;
+  }
+  if (typeof value === "string") {
+    return value.trim().length === 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length === 0 || value.every((item) => item === null || String(item).trim() === "");
+  }
+  return false;
 }
 
 function buildKeyInfoElement(card: DryRunConfirmationCard, profile: CardVisualProfile) {
@@ -361,26 +387,52 @@ function editableIntro(card: DryRunConfirmationCard): FeishuCardElement {
     tag: "div",
     text: {
       tag: "lark_md",
-      content: `**可修改信息**\n${fieldNames || "无可修改字段"}`
+      content: `**需补充**\n${fieldNames || "无可补充字段"}`
     }
   };
 }
 
-function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
+function requiredEditableKeys(card: DryRunConfirmationCard): string[] {
   if (card.card_type === "action_confirmation") {
-    return card.editable_fields.length > 0
+    return ["owner", "due_date", "priority"];
+  }
+
+  if (card.card_type === "calendar_confirmation") {
+    return ["start_time", "duration_minutes", "participants", "location"];
+  }
+
+  if (card.card_type === "create_kb_confirmation") {
+    return ["topic_name"];
+  }
+
+  return [];
+}
+
+function requiredEditableFields(card: DryRunConfirmationCard) {
+  const requiredKeys = new Set(requiredEditableKeys(card));
+  return card.editable_fields
+    .filter((field) => requiredKeys.has(field.key))
+    .filter(hasMissingValue)
+    .slice(0, 3);
+}
+
+function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
+  const hasRequiredEdits = requiredEditableFields(card).length > 0;
+
+  if (card.card_type === "action_confirmation") {
+    return hasRequiredEdits
       ? ["confirm_with_edits", "remind_later", "reject"]
       : ["confirm", "remind_later", "reject"];
   }
 
   if (card.card_type === "calendar_confirmation") {
-    return card.editable_fields.length > 0
+    return hasRequiredEdits
       ? ["confirm_with_edits", "convert_to_task", "reject"]
       : ["confirm", "convert_to_task", "reject"];
   }
 
   if (card.card_type === "create_kb_confirmation") {
-    return card.editable_fields.length > 0
+    return hasRequiredEdits
       ? ["edit_and_create", "append_current_only", "reject"]
       : ["create_kb", "append_current_only", "reject"];
   }
@@ -395,18 +447,40 @@ function visibleActions(card: DryRunConfirmationCard) {
     .filter((action): action is DryRunConfirmationCard["actions"][number] => Boolean(action));
 }
 
-function buttonLabel(card: DryRunConfirmationCard, key: string, fallback: string): string {
-  if (key === "confirm_with_edits") {
-    return card.card_type === "calendar_confirmation" ? "确认日程" : "确认创建";
+function buttonLabel(
+  card: DryRunConfirmationCard,
+  key: string,
+  fallback: string,
+  mode: CardRenderMode
+): string {
+  const prefix = mode === "dry_run" ? "预览" : "";
+
+  if (key === "confirm" || key === "confirm_with_edits") {
+    if (card.card_type === "action_confirmation") {
+      return `${prefix}添加待办`;
+    }
+    if (card.card_type === "calendar_confirmation") {
+      return `${prefix}添加日程`;
+    }
+    if (card.card_type === "append_meeting_confirmation") {
+      return `${prefix}追加到知识库`;
+    }
+    return `${prefix}确认`;
   }
   if (key === "edit_and_create" || key === "create_kb") {
-    return "确认创建";
+    return `${prefix}创建知识库`;
   }
   if (key === "append_current_only") {
     return "仅归档本次";
   }
   if (key === "convert_to_task") {
     return "转待办";
+  }
+  if (key === "remind_later") {
+    return "稍后处理";
+  }
+  if (key === "reject" || key === "not_mine") {
+    return card.card_type === "create_kb_confirmation" ? "不创建" : "不添加";
   }
   return fallback;
 }
@@ -415,7 +489,11 @@ function headerTitle(card: DryRunConfirmationCard, profile: CardVisualProfile): 
   return `${profile.icon} ${card.title}`;
 }
 
-export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): FeishuInteractiveCard {
+export function buildFeishuInteractiveCard(
+  card: DryRunConfirmationCard,
+  options: BuildFeishuInteractiveCardOptions = {}
+): FeishuInteractiveCard {
+  const mode = options.mode ?? "real";
   const profile = visualProfile(card);
   const elements: FeishuCardElement[] = [
     {
@@ -426,28 +504,17 @@ export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): Feishu
       tag: "hr"
     },
     buildKeyInfoElement(card, profile),
-    buildDetailElement(card, profile),
-    {
-      tag: "hr"
-    },
-    {
-      tag: "div",
-      text: {
-        tag: "lark_md",
-        content: "**安全说明**：确认前不会创建/更新飞书内容。"
-      }
-    }
+    buildDetailElement(card, profile)
   ];
 
-  if (card.editable_fields.length > 0) {
+  const editableFields = requiredEditableFields(card);
+  if (editableFields.length > 0) {
     elements.push(
       {
         tag: "hr"
       },
-      editableIntro(card),
-      ...card.editable_fields
-        .filter((field) => field.input_type !== "readonly")
-        .map(buildEditableElement)
+      editableIntro({ ...card, editable_fields: editableFields }),
+      ...editableFields.filter((field) => field.input_type !== "readonly").map(buildEditableElement)
     );
   }
 
@@ -459,7 +526,7 @@ export function buildFeishuInteractiveCard(card: DryRunConfirmationCard): Feishu
         tag: "button",
         text: {
           tag: "plain_text",
-          content: buttonLabel(card, action.key, action.label)
+          content: buttonLabel(card, action.key, action.label, mode)
         },
         type: buttonType(action.style),
         value: {
@@ -565,7 +632,9 @@ export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
     });
   }
 
-  const cardContent = buildFeishuInteractiveCard(input.card);
+  const cardContent = buildFeishuInteractiveCard(input.card, {
+    mode: cardSendDryRun ? "dry_run" : "real"
+  });
   const cardJson = JSON.stringify(cardContent);
   const args = [
     "im",

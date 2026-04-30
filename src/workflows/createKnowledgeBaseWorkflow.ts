@@ -109,7 +109,7 @@ export async function createKnowledgeBaseWorkflow(input: {
     .filter((calendar) => meetingIds.has(calendar.meeting_id));
   const owner =
     request.recipient ?? meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? null;
-  const dryRun = input.config?.feishuDryRun ?? true;
+  const dryRun = input.config?.feishuKnowledgeWriteDryRun ?? input.config?.feishuDryRun ?? true;
 
   const draft = runKnowledgeCuratorAgent({
     topicName: payload.topic_name,

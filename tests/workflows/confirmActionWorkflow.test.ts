@@ -182,7 +182,7 @@ describe("confirm action request", () => {
     );
   });
 
-  it("creates real Feishu tasks with task +create and nested task response parsing", async () => {
+  it("creates real Feishu tasks with the task canary while global writes stay dry-run", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const meeting = createActionTestMeeting(repos);
     const action = repos.createActionItem({
@@ -229,7 +229,11 @@ describe("confirm action request", () => {
 
     await confirmRequest({
       repos,
-      config: loadConfig({ feishuDryRun: false, larkCliBin: "fake-lark-cli" }),
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuTaskCreateDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
       id: request.id,
       runner
     });

@@ -26,6 +26,9 @@ describe("GET /health", () => {
       dry_run: true,
       read_dry_run: true,
       card_send_dry_run: true,
+      task_create_dry_run: true,
+      calendar_create_dry_run: true,
+      knowledge_write_dry_run: true,
       llm_provider: "mock"
     });
   });
