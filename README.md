@@ -82,6 +82,16 @@ LLM_DEBUG_RAW=false
 SQLITE_PATH=./data/meeting-atlas.db
 ```
 
+### 飞书安全模式
+
+MeetingAtlas 当前使用两个开关分层控制飞书能力：
+
+| 模式                             | 配置                                                      | 结果                                                                                                           |
+| -------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 模式 A：全 dry-run，默认安全模式 | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=true`  | 不真实发送卡片；不真实创建任务；不真实创建日程；不真实创建 Wiki / Doc；所有 CLI 都只记录 `planned` / dry-run。 |
+| 模式 B：只真实发送确认卡片       | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=false` | 真实发送飞书确认卡片；任务、日程、Wiki / Doc 仍然 dry-run；这是当前推荐的第一层真实飞书测试模式。              |
+| 模式 C：完整 real mode，暂不推荐 | `FEISHU_DRY_RUN=false`                                    | 未来用于真实任务、日程、Wiki / Doc 写入；当前不推荐直接使用；CLI 失败不得伪造成功。                            |
+
 `FEISHU_DRY_RUN=true` 是默认安全模式。确认 action/calendar/create_kb 后只写本地记录和 dry-run 输出，不真实创建飞书任务、日程、Wiki 或 Doc。
 `FEISHU_CARD_SEND_DRY_RUN` 只控制确认卡片是否真实发送，默认值必须保持为 `true`。因此可以保持 `FEISHU_DRY_RUN=true`，只在校准好 `LARK_CLI_BIN` 和飞书 bot 权限后设置 `FEISHU_CARD_SEND_DRY_RUN=false`，用于真实发送确认卡片；任务、日程和知识库写入仍保持 dry-run。
 
@@ -162,7 +172,8 @@ curl http://127.0.0.1:3000/dev/confirmations/<id>/card
 curl http://127.0.0.1:3000/dev/cards
 ```
 
-dry-run 发送单张确认卡片，支持指定群聊 `chat_id` 或私聊接收人 `recipient`：
+发送单张确认卡片，支持指定群聊 `chat_id` 或私聊接收人 `recipient`。在模式 A 下只记录
+`planned` / dry-run；在模式 B 下会真实发送确认卡片：
 
 ```bash
 curl -X POST http://127.0.0.1:3000/dev/confirmations/<id>/send-card \
@@ -170,7 +181,7 @@ curl -X POST http://127.0.0.1:3000/dev/confirmations/<id>/send-card \
   -d '{"chat_id":"oc_xxx"}'
 ```
 
-dry-run 发送当前所有未完成 confirmation 的确认卡片：
+发送当前所有未完成 confirmation 的确认卡片。同样遵循模式 A / B 的卡片发送开关：
 
 ```bash
 curl -X POST http://127.0.0.1:3000/dev/cards/send-all \
@@ -178,7 +189,9 @@ curl -X POST http://127.0.0.1:3000/dev/cards/send-all \
   -d '{"recipient":"ou_xxx"}'
 ```
 
-在真实发送模式下，`FEISHU_CARD_SEND_DRY_RUN=false` 且 `recipient` 必须是飞书 open_id；如果 CLI 未安装、命令形状不匹配或返回结果缺少 `message_id`，`send-card` 会失败，不会伪造成功的 `card_message_id`。
+在模式 B 下，`FEISHU_CARD_SEND_DRY_RUN=false` 且 `recipient` 必须是飞书 open_id 或
+`chat_id` 必须是飞书群 ID；如果 CLI 未安装、命令形状不匹配或返回结果缺少
+`message_id`，`send-card` 会失败，不会伪造成功的 `card_message_id`。
 
 确认请求：
 
@@ -250,9 +263,9 @@ npm run demo:full-p0 -- --cards-only
 npm run demo:full-p0 -- --send-cards --chat-id oc_xxx
 ```
 
-`--send-cards` 默认只验证卡片发送 dry-run，会记录 `lark.im.send_card` 的 dry-run
-`cli_runs`，不执行 confirmations，也不创建任务、日程或知识库。只有服务启动时显式设置
-`FEISHU_CARD_SEND_DRY_RUN=false` 才会尝试真实发送卡片。开发调试可以加 `--allow-dirty`
+`--send-cards` 在模式 A 下只验证卡片发送 dry-run，会记录 `lark.im.send_card` 的
+`planned` / dry-run `cli_runs`，不执行 confirmations，也不创建任务、日程或知识库。
+只有服务启动时显式进入模式 B，设置 `FEISHU_CARD_SEND_DRY_RUN=false`，才会尝试真实发送确认卡片。开发调试可以加 `--allow-dirty`
 绕过干净库检查，但不推荐录 Demo 使用。
 
 ## 效果验证评测

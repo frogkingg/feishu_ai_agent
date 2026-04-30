@@ -1,7 +1,12 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runFullP0Demo, type StateResponse } from "../../scripts/demo-full-p0";
+import {
+  runFullP0Demo,
+  type ConfirmationRequest,
+  type DryRunCardPreview,
+  type StateResponse
+} from "../../scripts/demo-full-p0";
 import { loadConfig } from "../../src/config";
 import { buildServer } from "../../src/server";
 import { MeetingExtractionResult } from "../../src/schemas";
@@ -117,6 +122,208 @@ describe("demo-full-p0 script", () => {
     expect(message).toContain("knowledge_bases=1");
     expect(message).toContain("confirmation_requests=5");
     expect(message).toContain("SQLITE_PATH=/tmp/meeting-atlas-demo-$(date +%s).db");
+  });
+
+  it("reports the first failed send-card error with cli_runs guidance", async () => {
+    const actionKeys = ["confirm", "confirm_with_edits", "reject", "not_mine", "remind_later"];
+    const calendarKeys = [
+      "confirm",
+      "confirm_with_edits",
+      "reject",
+      "convert_to_task",
+      "remind_later"
+    ];
+    const createKbKeys = [
+      "create_kb",
+      "edit_and_create",
+      "append_current_only",
+      "reject",
+      "never_remind_topic"
+    ];
+    const makeConfirmation = (
+      id: string,
+      requestType: ConfirmationRequest["request_type"],
+      cardType: string,
+      actionKeysForCard: string[]
+    ): ConfirmationRequest => ({
+      id,
+      request_type: requestType,
+      target_id: `target_${id}`,
+      status: "sent",
+      original_payload_json: JSON.stringify({
+        draft: {
+          title: requestType === "create_kb" ? "创建无人机操作方案知识库" : `任务 ${id}`,
+          description: "demo"
+        }
+      }),
+      dry_run_card: {
+        card_type: cardType,
+        title: `Card ${id}`,
+        summary: "summary",
+        sections: [],
+        editable_fields: [],
+        actions: actionKeysForCard.map((key) => ({ key })),
+        dry_run: true
+      }
+    });
+    const makeCard = (confirmation: ConfirmationRequest): DryRunCardPreview => ({
+      request_id: confirmation.id,
+      card_type: confirmation.dry_run_card!.card_type,
+      title: confirmation.dry_run_card!.title,
+      summary: confirmation.dry_run_card!.summary,
+      sections: [],
+      editable_fields: [],
+      actions: confirmation.dry_run_card!.actions,
+      dry_run: true
+    });
+    const firstConfirmations = [
+      makeConfirmation("confirm_action_1", "action", "action_confirmation", actionKeys),
+      makeConfirmation("confirm_action_2", "action", "action_confirmation", actionKeys),
+      makeConfirmation("confirm_calendar_1", "calendar", "calendar_confirmation", calendarKeys)
+    ];
+    const allConfirmations = [
+      ...firstConfirmations,
+      makeConfirmation("confirm_action_3", "action", "action_confirmation", actionKeys),
+      makeConfirmation("confirm_create_kb_1", "create_kb", "create_kb_confirmation", createKbKeys)
+    ];
+    const firstCards = firstConfirmations.map(makeCard);
+    const allCards = allConfirmations.map(makeCard);
+    let meetingPosts = 0;
+    let confirmationLists = 0;
+    let cardLists = 0;
+
+    const fetchFn: typeof fetch = async (input, init) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const url = new URL(rawUrl);
+      const method = init?.method ?? "GET";
+
+      if (method === "GET" && url.pathname === "/health") {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            service: "MeetingAtlas",
+            dry_run: true,
+            card_send_dry_run: false,
+            llm_provider: "mock",
+            sqlite_path: "/tmp/card-send-failure.db"
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (method === "GET" && url.pathname === "/dev/state") {
+        return new Response(
+          JSON.stringify({
+            meetings: [],
+            action_items: [],
+            calendar_drafts: [],
+            knowledge_bases: [],
+            knowledge_updates: [],
+            confirmation_requests: [],
+            cli_runs: []
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (method === "POST" && url.pathname === "/dev/meetings/manual") {
+        meetingPosts += 1;
+        return new Response(
+          JSON.stringify(
+            meetingPosts === 1
+              ? {
+                  meeting_id: "mtg_first",
+                  extraction: { action_items: [{}, {}], calendar_drafts: [{}] },
+                  confirmation_requests: firstConfirmations.map((item) => item.id),
+                  topic_match: {
+                    score: 0,
+                    match_reasons: [],
+                    suggested_action: "observe",
+                    candidate_meeting_ids: []
+                  }
+                }
+              : {
+                  meeting_id: "mtg_second",
+                  extraction: { action_items: [{}], calendar_drafts: [] },
+                  confirmation_requests: ["confirm_action_3", "confirm_create_kb_1"],
+                  topic_match: {
+                    score: 0.95,
+                    match_reasons: ["same drone topic"],
+                    suggested_action: "ask_create",
+                    candidate_meeting_ids: ["mtg_first", "mtg_second"]
+                  }
+                }
+          ),
+          { status: 200 }
+        );
+      }
+
+      if (method === "GET" && url.pathname === "/dev/confirmations") {
+        confirmationLists += 1;
+        return new Response(
+          JSON.stringify(confirmationLists === 1 ? firstConfirmations : allConfirmations),
+          { status: 200 }
+        );
+      }
+
+      if (method === "GET" && url.pathname === "/dev/cards") {
+        cardLists += 1;
+        return new Response(JSON.stringify(cardLists === 1 ? firstCards : allCards), {
+          status: 200
+        });
+      }
+
+      if (method === "POST" && url.pathname === "/dev/cards/send-all") {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            total: 5,
+            planned: 0,
+            sent: 4,
+            failed: 1,
+            results: [
+              {
+                confirmation_id: "confirm_action_1",
+                card_type: "action_confirmation",
+                status: "failed",
+                dry_run: false,
+                cli_run_id: "cli_failed_1",
+                chat_id: "oc_demo_chat",
+                recipient: null,
+                error: "spawn lark ENOENT"
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+
+      return new Response(JSON.stringify({ error: "unexpected request" }), { status: 500 });
+    };
+
+    const error = await runFullP0Demo({
+      baseUrl: "http://meeting-atlas.test",
+      fetchFn,
+      log: () => undefined,
+      writeOutputs: false,
+      mode: "send-cards",
+      chatId: "oc_demo_chat"
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("Card send reported failed sends.");
+    expect(message).toContain("Check /dev/state cli_runs for lark.im.send_card stderr/error.");
+    expect(message).toContain("Failed count: 1");
+    expect(message).toContain("First failed confirmation_id: confirm_action_1");
+    expect(message).toContain("First failed card_type: action_confirmation");
+    expect(message).toContain("First failed card send error: spawn lark ENOENT");
+    expect(message).not.toContain("Card send should not report failed sends");
+    expect(message).not.toContain("Dry-run send-card should not report failed sends");
   });
 
   it("auto-confirms create_kb, writes knowledge state, and avoids duplicate knowledge-base action confirmations", async () => {

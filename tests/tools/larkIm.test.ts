@@ -2,6 +2,7 @@ import { buildActionConfirmationCard } from "../../src/agents/cardInteractionAge
 import { loadConfig } from "../../src/config";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 import { buildFeishuInteractiveCard, sendCard } from "../../src/tools/larkIm";
 
 const card = buildActionConfirmationCard({
@@ -27,6 +28,10 @@ const card = buildActionConfirmationCard({
 });
 
 describe("larkIm.sendCard", () => {
+  const failingRunner: LarkCliRunner = async () => {
+    throw new Error("fake lark CLI failure");
+  };
+
   it("builds an interactive card payload from the dry-run preview", () => {
     const interactive = buildFeishuInteractiveCard(card);
 
@@ -36,12 +41,13 @@ describe("larkIm.sendCard", () => {
     expect(JSON.stringify(interactive)).toContain("点击确认前不会创建飞书任务、日程、Wiki 或 Doc");
   });
 
-  it("records dry-run send-card cli_runs without executing the lark binary", async () => {
+  it("records planned send-card cli_runs when both dry-run switches are true", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const result = await sendCard({
       repos,
       config: loadConfig({
         feishuDryRun: true,
+        feishuCardSendDryRun: true,
         larkCliBin: "definitely-not-real-lark"
       }),
       card,
@@ -76,7 +82,7 @@ describe("larkIm.sendCard", () => {
     expect(args).not.toContain("--dry-run");
   });
 
-  it("fails in real mode when the CLI is unavailable", async () => {
+  it("fails in real mode when the fake CLI runner fails", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const result = await sendCard({
       repos,
@@ -86,7 +92,8 @@ describe("larkIm.sendCard", () => {
         larkCliBin: "definitely-not-real-lark"
       }),
       card,
-      chatId: "oc_test_chat"
+      chatId: "oc_test_chat",
+      runner: failingRunner
     });
 
     expect(result).toMatchObject({
@@ -106,31 +113,44 @@ describe("larkIm.sendCard", () => {
     });
   });
 
-  it("can attempt real card sending while other Feishu writes stay dry-run", async () => {
+  it("uses the real send path when only card send dry-run is disabled", async () => {
     const repos = createRepositories(createMemoryDatabase());
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const runner: LarkCliRunner = async (bin, args) => {
+      calls.push({ bin, args });
+      return {
+        stdout: JSON.stringify({ message_id: "om_fake_card_message" }),
+        stderr: ""
+      };
+    };
+
     const result = await sendCard({
       repos,
       config: loadConfig({
         feishuDryRun: true,
         feishuCardSendDryRun: false,
-        larkCliBin: "definitely-not-real-lark"
+        larkCliBin: "fake-lark-cli"
       }),
       card,
-      chatId: "oc_test_chat"
+      chatId: "oc_test_chat",
+      runner
     });
 
     expect(result).toMatchObject({
-      ok: false,
-      status: "failed",
+      ok: true,
+      status: "sent",
       dry_run: false,
-      card_message_id: null,
+      card_message_id: "om_fake_card_message",
       chat_id: "oc_test_chat"
     });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ bin: "fake-lark-cli" });
+    expect(calls[0].args).toEqual(expect.arrayContaining(["--chat-id", "oc_test_chat"]));
     expect(repos.listCliRuns()).toHaveLength(1);
     expect(repos.listCliRuns()[0]).toMatchObject({
       tool: "lark.im.send_card",
       dry_run: 0,
-      status: "failed"
+      status: "success"
     });
   });
 

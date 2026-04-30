@@ -5,6 +5,7 @@ import { confirmRequest, createConfirmationRequest } from "../../src/services/co
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkflow";
 
 function createActionTestMeeting(repos: ReturnType<typeof createRepositories>) {
@@ -65,6 +66,58 @@ describe("confirm action request", () => {
     expect(action?.confirmation_status).toBe("created");
     expect(action?.feishu_task_guid).toContain("dry_task_");
     expect(repos.listCliRuns()).toHaveLength(1);
+  });
+
+  it("keeps task creation dry-run when only card sending is real-enabled", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const transcript = readFileSync(
+      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
+      "utf8"
+    );
+
+    await processMeetingWorkflow({
+      repos,
+      llm: new MockLlmClient(),
+      meeting: {
+        title: "无人机操作方案初步访谈",
+        participants: ["张三", "李四"],
+        organizer: "张三",
+        started_at: "2026-04-28T10:00:00+08:00",
+        ended_at: "2026-04-28T11:00:00+08:00",
+        transcript_text: transcript
+      }
+    });
+
+    const request = repos.listConfirmationRequests().find((item) => item.request_type === "action");
+    expect(request).toBeTruthy();
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCardSendDryRun: false,
+        larkCliBin: "definitely-not-real-lark"
+      }),
+      id: request!.id
+    });
+
+    const updatedRequest = repos.getConfirmationRequest(request!.id);
+    const action = repos.getActionItem(request!.target_id);
+    const cliRuns = repos.listCliRuns();
+
+    expect(updatedRequest?.status).toBe("executed");
+    expect(action).toMatchObject({
+      confirmation_status: "created",
+      feishu_task_guid: expect.stringContaining("dry_task_"),
+      task_url: expect.stringContaining("mock://feishu/task/")
+    });
+    expect(cliRuns).toHaveLength(1);
+    expect(cliRuns[0]).toMatchObject({
+      tool: "lark.task.create",
+      dry_run: 1,
+      status: "planned",
+      error: null
+    });
   });
 
   it("merges edited title, owner, and due date before dry-run task creation", async () => {
@@ -208,8 +261,11 @@ describe("confirm action request", () => {
     expect(updatedAction?.suggested_reason).toContain("以用户确认结果为准");
   });
 
-  it("marks confirmation failed in real mode when lark CLI is missing", async () => {
+  it("marks confirmation failed in real mode when the fake lark CLI runner fails", async () => {
     const repos = createRepositories(createMemoryDatabase());
+    const failingRunner: LarkCliRunner = async () => {
+      throw new Error("fake lark CLI failure");
+    };
     const transcript = readFileSync(
       join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
       "utf8"
@@ -233,8 +289,9 @@ describe("confirm action request", () => {
 
     await confirmRequest({
       repos,
-      config: loadConfig({ feishuDryRun: false, larkCliBin: "definitely-not-real-lark" }),
-      id: request!.id
+      config: loadConfig({ feishuDryRun: false, larkCliBin: "fake-lark-cli" }),
+      id: request!.id,
+      runner: failingRunner
     });
 
     const updatedRequest = repos.getConfirmationRequest(request!.id);
@@ -251,6 +308,6 @@ describe("confirm action request", () => {
       dry_run: 0,
       status: "failed"
     });
-    expect(cliRuns[0].error).toContain("definitely-not-real-lark");
+    expect(cliRuns[0].error).toContain("fake lark CLI failure");
   });
 });
