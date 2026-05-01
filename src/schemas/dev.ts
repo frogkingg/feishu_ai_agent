@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { IsoDateTimeSchema } from "./calendarDraft";
+import { personalWorkspaceName } from "../utils/personalWorkspace";
 
 export const ManualMeetingInputSchema = z.object({
   external_meeting_id: z.string().trim().min(1).nullable().optional(),
@@ -26,7 +27,7 @@ export const ProcessMeetingTextInputSchema = z
     minutes_url: z.string().trim().min(1).nullable().optional(),
     transcript_url: z.string().trim().min(1).nullable().optional(),
     transcript_text: z.string().trim().min(1),
-    personal_workspace_name: z.string().trim().min(1).default("Henry 个人工作台")
+    personal_workspace_name: z.string().trim().min(1).default(personalWorkspaceName())
   })
   .transform((payload) => ({
     meeting: {

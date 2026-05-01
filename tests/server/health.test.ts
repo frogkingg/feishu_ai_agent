@@ -6,7 +6,14 @@ import { createRepositories } from "../../src/services/store/repositories";
 
 describe("GET /health", () => {
   it("returns service status without binding a port", async () => {
-    const config = loadConfig({ sqlitePath: ":memory:" });
+    const config = loadConfig({
+      sqlitePath: ":memory:",
+      feishuDryRun: true,
+      feishuTaskCreateDryRun: true,
+      feishuCalendarCreateDryRun: true,
+      feishuKnowledgeWriteDryRun: true,
+      feishuCardSendDryRun: true
+    });
     const app = buildServer({
       config,
       repos: createRepositories(createMemoryDatabase()),

@@ -78,7 +78,7 @@ function calendar(overrides: Partial<CalendarDraftRow> = {}): CalendarDraftRow {
 }
 
 describe("knowledgeCuratorAgent", () => {
-  it("keeps only home and meeting summary when no optional content signals exist", () => {
+  it("creates a GitHub-style knowledge base structure even with sparse signals", () => {
     const draft = runKnowledgeCuratorAgent({
       topicName: "项目背景主题知识库",
       owner: null,
@@ -90,20 +90,32 @@ describe("knowledgeCuratorAgent", () => {
 
     expect(draft.pages.map((page) => page.page_type)).toEqual([
       "home",
-      "meeting_summary",
-      "transcript"
+      "board",
+      "timeline",
+      "meetings",
+      "resources",
+      "decisions",
+      "calendar"
     ]);
     expect(draft.pages.map((page) => page.title)).toEqual([
-      "00 Henry 个人工作台 / 总览",
-      "01 会议总结",
-      "02 会议转写记录"
+      "00 README / 项目总览",
+      "01 Project Board / 进度与待办",
+      "02 Timeline / 里程碑与甘特",
+      "03 Meetings / 会议记录",
+      "04 Docs & Resources / 文档与资料",
+      "05 Decisions & Risks / 决策与风险",
+      "06 Calendar / 日程索引"
     ]);
-    expect(draft.pages.every((page) => page.source_signals.includes("always"))).toBe(true);
+    expect(draft.pages[0].markdown).toContain("## 项目简介");
+    expect(draft.pages[0].markdown).toContain("## 当前状态");
+    expect(draft.pages[0].markdown).toContain("## 下一步");
+    expect(draft.pages[0].markdown).toContain("## 关键链接 / 来源");
+    expect(draft.pages[0].markdown).toContain("## 会议范围");
     expect(draft.pages[0].markdown).toContain("风险/待验证：0 条");
     expect(draft.pages[0].markdown).toContain("关联资料：0 条");
   });
 
-  it("adds deterministic pages only for present actions, calendars, decisions, risks, and sources", () => {
+  it("fills board, timeline, meetings, resources, decisions, risks, and calendar pages", () => {
     const draft = runKnowledgeCuratorAgent({
       topicName: "无人机 SOP 主题知识库",
       owner: "张三",
@@ -112,7 +124,7 @@ describe("knowledgeCuratorAgent", () => {
           title: "无人机 SOP 评审",
           summary: "本次会议明确需要建立统一 SOP，并指出试飞权限未确认会影响排期。",
           transcript_text: [
-            "Henry：结论是需要建立统一 SOP。",
+            "李四：结论是需要建立统一 SOP。",
             "李四：试飞权限未确认会阻塞排期。",
             "张三：资料上可以先参考“无人机安全规范”。"
           ].join("\n"),
@@ -126,31 +138,37 @@ describe("knowledgeCuratorAgent", () => {
 
     expect(draft.pages.map((page) => page.page_type)).toEqual([
       "home",
-      "meeting_summary",
-      "transcript",
+      "board",
+      "timeline",
+      "meetings",
+      "resources",
       "decisions",
-      "index",
-      "risks",
-      "sources"
+      "calendar"
     ]);
     expect(draft.pages.map((page) => page.title)).toEqual([
-      "00 Henry 个人工作台 / 总览",
-      "01 会议总结",
-      "02 会议转写记录",
-      "03 关键结论与决策",
-      "04 待办与日程索引",
-      "05 风险、问题与待验证假设",
-      "06 关联资料"
+      "00 README / 项目总览",
+      "01 Project Board / 进度与待办",
+      "02 Timeline / 里程碑与甘特",
+      "03 Meetings / 会议记录",
+      "04 Docs & Resources / 文档与资料",
+      "05 Decisions & Risks / 决策与风险",
+      "06 Calendar / 日程索引"
     ]);
-    expect(draft.pages.find((page) => page.page_type === "index")?.source_signals).toEqual([
+    expect(draft.pages.find((page) => page.page_type === "board")?.source_signals).toEqual([
       "actions",
-      "calendars"
+      "risks"
     ]);
-    expect(draft.pages.find((page) => page.page_type === "risks")?.markdown).toContain(
+    expect(draft.pages.find((page) => page.page_type === "decisions")?.markdown).toContain(
       "试飞权限未确认会阻塞排期"
     );
-    expect(draft.pages.find((page) => page.page_type === "sources")?.markdown).toContain(
+    expect(draft.pages.find((page) => page.page_type === "resources")?.markdown).toContain(
       "无人机安全规范"
+    );
+    expect(draft.pages.find((page) => page.page_type === "timeline")?.markdown).toContain(
+      "SOP 评审会"
+    );
+    expect(draft.pages.find((page) => page.page_type === "calendar")?.markdown).toContain(
+      "SOP 评审会"
     );
   });
 });

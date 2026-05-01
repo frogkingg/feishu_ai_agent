@@ -29,6 +29,31 @@ export interface SendCardInput {
   runner?: LarkCliRunner;
 }
 
+export interface SyncCardStatusResult {
+  ok: boolean;
+  method: "update" | "fallback" | "skipped";
+  status: "planned" | "updated" | "sent" | "failed" | "skipped";
+  dry_run: boolean;
+  update_cli_run_id: string | null;
+  fallback_cli_run_id: string | null;
+  card_message_id: string | null;
+  recipient: string | null;
+  chat_id: string | null;
+  error: string | null;
+}
+
+export interface SyncCardStatusInput {
+  repos: Repositories;
+  config?: AppConfig;
+  confirmation: ConfirmationRequestRow;
+  card: DryRunConfirmationCard;
+  messageId?: string | null;
+  chatId?: string | null;
+  recipient?: string | null;
+  identity?: LarkImIdentity;
+  runner?: LarkCliRunner;
+}
+
 interface FeishuText {
   tag: "plain_text" | "lark_md";
   content: string;
@@ -271,8 +296,14 @@ function headerTemplate(card: DryRunConfirmationCard): FeishuHeaderTemplate {
   if (card.status === "failed") {
     return "red";
   }
-  if (["executed", "rejected"].includes(card.status)) {
+  if (card.status === "executed") {
+    return "green";
+  }
+  if (card.status === "rejected") {
     return "grey";
+  }
+  if (card.status === "confirmed") {
+    return "blue";
   }
   return visualProfile(card).headerTemplate;
 }
@@ -381,6 +412,41 @@ function buildDetailElement(card: DryRunConfirmationCard, profile: CardVisualPro
   };
 }
 
+function statusIcon(status: DryRunConfirmationCard["status"]): string {
+  if (status === "confirmed") {
+    return "⏳";
+  }
+  if (status === "executed") {
+    return "✅";
+  }
+  if (status === "rejected") {
+    return "🚫";
+  }
+  if (status === "failed") {
+    return "⚠️";
+  }
+  return "ℹ️";
+}
+
+function buildStatusElement(card: DryRunConfirmationCard): FeishuCardElement | null {
+  if (!card.status_text) {
+    return null;
+  }
+
+  const lines = [`${statusIcon(card.status)} **${card.status_text}**`];
+  if (card.status === "failed" && card.error_summary) {
+    lines.push(`错误摘要：${compactText(card.error_summary, 120)}`);
+  }
+
+  return {
+    tag: "div",
+    text: {
+      tag: "lark_md",
+      content: [`**处理状态**`, ...lines].join("\n")
+    }
+  };
+}
+
 function editableIntro(card: DryRunConfirmationCard): FeishuCardElement {
   const fieldNames = card.editable_fields
     .filter((field) => field.input_type !== "readonly")
@@ -446,6 +512,10 @@ function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
 }
 
 function visibleActions(card: DryRunConfirmationCard) {
+  if (["confirmed", "executed", "rejected"].includes(card.status)) {
+    return [];
+  }
+
   const actionByKey = new Map(card.actions.map((action) => [action.key, action]));
   return preferredActionKeys(card)
     .map((key) => actionByKey.get(key))
@@ -459,34 +529,35 @@ function buttonLabel(
   mode: CardRenderMode
 ): string {
   const prefix = mode === "dry_run" ? "预览" : "";
+  const retryPrefix = card.status === "failed" ? "重试" : "";
 
   if (key === "confirm_with_edits") {
     if (card.card_type === "action_confirmation") {
-      return `${prefix}补全后添加待办`;
+      return `${prefix}${retryPrefix}补全后添加待办`;
     }
     if (card.card_type === "calendar_confirmation") {
-      return `${prefix}补全后添加日程`;
+      return `${prefix}${retryPrefix}补全后添加日程`;
     }
     if (card.card_type === "append_meeting_confirmation") {
-      return `${prefix}补全后追加到知识库`;
+      return `${prefix}${retryPrefix}补全后追加到知识库`;
     }
-    return `${prefix}补全后确认`;
+    return `${prefix}${retryPrefix}补全后确认`;
   }
 
   if (key === "confirm") {
     if (card.card_type === "action_confirmation") {
-      return `${prefix}添加待办`;
+      return `${prefix}${retryPrefix}添加待办`;
     }
     if (card.card_type === "calendar_confirmation") {
-      return `${prefix}添加日程`;
+      return `${prefix}${retryPrefix}添加日程`;
     }
     if (card.card_type === "append_meeting_confirmation") {
-      return `${prefix}追加到知识库`;
+      return `${prefix}${retryPrefix}追加到知识库`;
     }
-    return `${prefix}确认`;
+    return `${prefix}${retryPrefix}确认`;
   }
   if (key === "edit_and_create" || key === "create_kb") {
-    return `${prefix}创建知识库`;
+    return `${prefix}${retryPrefix}创建知识库`;
   }
   if (key === "append_current_only") {
     return "仅归档本次";
@@ -537,6 +608,16 @@ export function buildFeishuInteractiveCard(
     buildKeyInfoElement(card, profile),
     buildDetailElement(card, profile)
   ];
+
+  const statusElement = buildStatusElement(card);
+  if (statusElement !== null) {
+    elements.push(
+      {
+        tag: "hr"
+      },
+      statusElement
+    );
+  }
 
   const editableFields = requiredEditableFields(card);
   if (editableFields.length > 0) {
@@ -645,6 +726,229 @@ function failedResult(input: {
     identity: input.identity,
     error: input.error
   };
+}
+
+function statusFallbackTitle(card: DryRunConfirmationCard): string {
+  if (card.status_text) {
+    return card.status_text;
+  }
+
+  if (card.status === "sent") {
+    return "待处理";
+  }
+
+  return card.status;
+}
+
+function buildStatusFallbackCard(card: DryRunConfirmationCard): FeishuInteractiveCard {
+  const template = headerTemplate(card);
+  const lines = [`**${statusFallbackTitle(card)}**`, compactSummary(card)];
+  if (card.status === "failed" && card.error_summary) {
+    lines.push(`错误摘要：${compactText(card.error_summary, 120)}`);
+  }
+
+  return {
+    config: {
+      wide_screen_mode: true
+    },
+    header: {
+      template,
+      title: plainText(statusFallbackTitle(card))
+    },
+    elements: [
+      {
+        tag: "markdown",
+        content: lines.join("\n")
+      }
+    ]
+  };
+}
+
+function syncSkipped(input: {
+  dryRun: boolean;
+  messageId: string | null;
+  recipient: string | null;
+  chatId: string | null;
+  error: string;
+}): SyncCardStatusResult {
+  return {
+    ok: false,
+    method: "skipped",
+    status: "skipped",
+    dry_run: input.dryRun,
+    update_cli_run_id: null,
+    fallback_cli_run_id: null,
+    card_message_id: input.messageId,
+    recipient: input.recipient,
+    chat_id: input.chatId,
+    error: input.error
+  };
+}
+
+async function sendStatusFallbackCard(input: {
+  repos: Repositories;
+  config: AppConfig;
+  card: DryRunConfirmationCard;
+  recipient: string | null;
+  chatId: string | null;
+  identity: LarkImIdentity;
+  runner?: LarkCliRunner;
+}): Promise<SyncCardStatusResult> {
+  const destinationArgs = buildDestinationArgs({
+    chatId: input.chatId,
+    recipient: input.recipient
+  });
+  if (destinationArgs === null) {
+    return syncSkipped({
+      dryRun: input.config.feishuCardSendDryRun,
+      messageId: null,
+      recipient: input.recipient,
+      chatId: input.chatId,
+      error: "card status fallback requires recipient or chat_id"
+    });
+  }
+
+  const result = await runLarkCli(
+    [
+      "im",
+      "+messages-send",
+      ...destinationArgs,
+      "--msg-type",
+      "interactive",
+      "--content",
+      JSON.stringify(buildStatusFallbackCard(input.card)),
+      "--as",
+      input.identity,
+      "--idempotency-key",
+      `meeting-atlas-card-status-${input.card.request_id}-${input.card.status}`
+    ],
+    {
+      repos: input.repos,
+      config: input.config,
+      toolName: "lark.im.send_card_status_fallback",
+      dryRun: input.config.feishuCardSendDryRun,
+      expectJson: true,
+      runner: input.runner
+    }
+  );
+
+  if (result.dryRun || result.status === "planned") {
+    return {
+      ok: true,
+      method: "fallback",
+      status: "planned",
+      dry_run: true,
+      update_cli_run_id: null,
+      fallback_cli_run_id: result.id,
+      card_message_id: null,
+      recipient: input.recipient,
+      chat_id: input.chatId,
+      error: null
+    };
+  }
+
+  if (result.status === "success") {
+    return {
+      ok: true,
+      method: "fallback",
+      status: "sent",
+      dry_run: false,
+      update_cli_run_id: null,
+      fallback_cli_run_id: result.id,
+      card_message_id: messageIdFromParsed(result.parsed),
+      recipient: input.recipient,
+      chat_id: input.chatId,
+      error: null
+    };
+  }
+
+  return {
+    ok: false,
+    method: "fallback",
+    status: "failed",
+    dry_run: false,
+    update_cli_run_id: null,
+    fallback_cli_run_id: result.id,
+    card_message_id: null,
+    recipient: input.recipient,
+    chat_id: input.chatId,
+    error: `lark.im.send_card_status_fallback failed: ${result.error ?? "unknown error"}`
+  };
+}
+
+export async function syncConfirmationCardStatus(
+  input: SyncCardStatusInput
+): Promise<SyncCardStatusResult> {
+  const config = input.config ?? loadConfig();
+  const identity = input.identity ?? "bot";
+  const messageId = trimToNull(input.messageId ?? input.confirmation.card_message_id);
+  const chatId = trimToNull(input.chatId);
+  const recipient = trimToNull(input.recipient ?? input.confirmation.recipient);
+
+  if (messageId !== null) {
+    const cardJson = JSON.stringify(buildFeishuInteractiveCard(input.card));
+    const result = await runLarkCli(
+      [
+        "im",
+        "messages",
+        "patch",
+        "--params",
+        JSON.stringify({ message_id: messageId }),
+        "--data",
+        JSON.stringify({ content: cardJson }),
+        "--as",
+        identity
+      ],
+      {
+        repos: input.repos,
+        config,
+        toolName: "lark.im.update_card",
+        dryRun: config.feishuCardSendDryRun,
+        expectJson: true,
+        runner: input.runner
+      }
+    );
+
+    if (result.dryRun || result.status === "planned") {
+      return {
+        ok: true,
+        method: "update",
+        status: "planned",
+        dry_run: true,
+        update_cli_run_id: result.id,
+        fallback_cli_run_id: null,
+        card_message_id: messageId,
+        recipient,
+        chat_id: chatId,
+        error: null
+      };
+    }
+
+    if (result.status === "success") {
+      return {
+        ok: true,
+        method: "update",
+        status: "updated",
+        dry_run: false,
+        update_cli_run_id: result.id,
+        fallback_cli_run_id: null,
+        card_message_id: messageId,
+        recipient,
+        chat_id: chatId,
+        error: null
+      };
+    }
+  }
+
+  return sendStatusFallbackCard({
+    repos: input.repos,
+    config,
+    card: input.card,
+    recipient,
+    chatId,
+    identity,
+    runner: input.runner
+  });
 }
 
 export async function sendCard(input: SendCardInput): Promise<SendCardResult> {

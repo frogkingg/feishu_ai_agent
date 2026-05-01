@@ -12,16 +12,15 @@ import {
   formatUserListForDisplay
 } from "../utils/display";
 import { stableDemoId } from "../utils/id";
+import { personalWorkspaceName } from "../utils/personalWorkspace";
 
-const HOME_PAGE_LABEL = "Henry 个人工作台 / 总览";
-const MEETING_SUMMARY_LABEL = "会议总结";
-const TRANSCRIPT_LABEL = "会议转写记录";
-const DECISIONS_LABEL = "关键结论与决策";
-const ACTION_CALENDAR_INDEX_LABEL = "待办与日程索引";
-const ACTION_INDEX_LABEL = "待办索引";
-const CALENDAR_INDEX_LABEL = "日程索引";
-const SOURCES_LABEL = "关联资料";
-const RISKS_LABEL = "风险、问题与待验证假设";
+const README_LABEL = "README / 项目总览";
+const PROJECT_BOARD_LABEL = "Project Board / 进度与待办";
+const TIMELINE_LABEL = "Timeline / 里程碑与甘特";
+const MEETINGS_LABEL = "Meetings / 会议记录";
+const RESOURCES_LABEL = "Docs & Resources / 文档与资料";
+const DECISIONS_RISKS_LABEL = "Decisions & Risks / 决策与风险";
+const CALENDAR_LABEL = "Calendar / 日程索引";
 
 const DecisionPatterns = [
   /结论/,
@@ -193,6 +192,60 @@ function transcriptReference(meeting: MeetingRow): string {
   return `${reference}，transcript_text 已存入本地 meetings 表`;
 }
 
+function markdownTable(headers: string[], rows: string[][]): string {
+  const escapeCell = (value: string) => value.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
+  return [
+    `| ${headers.map(escapeCell).join(" | ")} |`,
+    `| ${headers.map(() => "---").join(" | ")} |`,
+    ...rows.map((row) => `| ${row.map(escapeCell).join(" | ")} |`)
+  ].join("\n");
+}
+
+function progressBar(done: number, total: number): string {
+  if (total <= 0) {
+    return "---------- 0%";
+  }
+
+  const ratio = Math.max(0, Math.min(1, done / total));
+  const filled = Math.round(ratio * 10);
+  return `${"#".repeat(filled)}${"-".repeat(10 - filled)} ${Math.round(ratio * 100)}%`;
+}
+
+function statusFromCounts(input: { actions: number; calendars: number; risks: number }): string {
+  if (input.risks > 0) {
+    return "At risk";
+  }
+
+  if (input.actions > 0 || input.calendars > 0) {
+    return "In progress";
+  }
+
+  return "Watching";
+}
+
+function timelineRows(meetings: MeetingRow[], calendars: CalendarDraftRow[]): string[][] {
+  const meetingRows = meetings.map((meeting) => [
+    "会议",
+    meeting.started_at ?? "待补充",
+    "已记录",
+    formatMeetingReference(meeting, {
+      preferredLink: "minutes",
+      hideInternalId: true
+    })
+  ]);
+  const calendarRows = calendars.map((calendar) => [
+    "后续日程",
+    calendar.start_time ?? "待补充",
+    calendar.start_time ? "待确认" : "缺少时间",
+    `${calendar.title}（来源${sourceMeetingReference(
+      new Map(meetings.map((meeting) => [meeting.id, meeting])),
+      calendar.meeting_id
+    )}）`
+  ]);
+
+  return [...meetingRows, ...calendarRows];
+}
+
 type PageDraft = {
   label: string;
   page_type: KnowledgeBasePage["page_type"];
@@ -230,88 +283,126 @@ function buildPages(input: {
   );
   const pageDrafts: PageDraft[] = [
     {
-      label: MEETING_SUMMARY_LABEL,
-      page_type: "meeting_summary",
-      source_signals: ["always"],
-      renderMarkdown: (title) =>
-        [`# ${title}`, "", bulletList(meetingSummaries, "暂无会议总结")].join("\n")
+      label: PROJECT_BOARD_LABEL,
+      page_type: "board",
+      source_signals: ["actions", "risks"],
+      renderMarkdown: (title) => {
+        const rows = [
+          [
+            "P0",
+            "确认并推进明确待办",
+            statusFromCounts({
+              actions: actionIndex.length,
+              calendars: calendarIndex.length,
+              risks: risks.length
+            }),
+            progressBar(
+              input.actions.filter((action) => action.confirmation_status === "executed").length,
+              input.actions.length
+            ),
+            actionIndex.length > 0 ? actionIndex.slice(0, 3).join("<br>") : "暂无待办"
+          ],
+          [
+            "P1",
+            "沉淀会议结论与资料",
+            decisions.length > 0 || input.sources.length > 0 ? "In progress" : "Watching",
+            progressBar(
+              decisions.length + input.sources.length,
+              Math.max(1, input.meetings.length + input.sources.length)
+            ),
+            decisions.length > 0 ? decisions.slice(0, 3).join("<br>") : "暂无决策沉淀"
+          ],
+          [
+            "P2",
+            "跟踪风险与后续优化",
+            risks.length > 0 ? "At risk" : "Watching",
+            progressBar(0, Math.max(1, risks.length)),
+            risks.length > 0 ? risks.slice(0, 3).join("<br>") : "暂无风险"
+          ]
+        ];
+
+        return [
+          `# ${title}`,
+          "",
+          markdownTable(["优先级", "泳道", "状态", "完成度", "当前信号"], rows)
+        ].join("\n");
+      }
     },
     {
-      label: TRANSCRIPT_LABEL,
-      page_type: "transcript",
+      label: TIMELINE_LABEL,
+      page_type: "timeline",
+      source_signals: ["always", "calendars"],
+      renderMarkdown: (title) =>
+        [
+          `# ${title}`,
+          "",
+          markdownTable(
+            ["阶段", "时间", "状态", "来源会议"],
+            timelineRows(input.meetings, input.calendars)
+          )
+        ].join("\n")
+    },
+    {
+      label: MEETINGS_LABEL,
+      page_type: "meetings",
       source_signals: ["always"],
       renderMarkdown: (title) =>
         [
           `# ${title}`,
           "",
+          "## 会议摘要",
+          bulletList(meetingSummaries, "暂无会议总结"),
+          "",
+          "## 转写记录",
           "会议全文不直接塞入模型上下文；这里仅保留转写记录引用。",
           "",
           bulletList(transcriptRefs, "暂无转写记录引用")
         ].join("\n")
+    },
+    {
+      label: RESOURCES_LABEL,
+      page_type: "resources",
+      source_signals: ["sources"],
+      renderMarkdown: (title) =>
+        [
+          `# ${title}`,
+          "",
+          "## 关键链接 / 来源",
+          bulletList(
+            [...meetingRefs, ...input.sources.map((source) => `资料：${source}`)],
+            "暂无来源"
+          ),
+          "",
+          "## 资料引用",
+          bulletList(input.sources, "暂无关联资料")
+        ].join("\n")
+    },
+    {
+      label: DECISIONS_RISKS_LABEL,
+      page_type: "decisions",
+      source_signals: ["decisions", "risks"],
+      renderMarkdown: (title) =>
+        [
+          `# ${title}`,
+          "",
+          "## 决策",
+          bulletList(decisions, "暂无关键结论与决策"),
+          "",
+          "## 风险",
+          bulletList(risks, "暂无风险、问题与待验证假设")
+        ].join("\n")
+    },
+    {
+      label: CALENDAR_LABEL,
+      page_type: "calendar",
+      source_signals: ["calendars"],
+      renderMarkdown: (title) =>
+        [`# ${title}`, "", bulletList(calendarIndex, "暂无日程")].join("\n")
     }
   ];
 
-  if (decisions.length > 0) {
-    pageDrafts.push({
-      label: DECISIONS_LABEL,
-      page_type: "decisions",
-      source_signals: ["decisions"],
-      renderMarkdown: (title) =>
-        [`# ${title}`, "", bulletList(decisions, "暂无关键结论与决策")].join("\n")
-    });
-  }
-
-  if (actionIndex.length > 0 || calendarIndex.length > 0) {
-    const label =
-      actionIndex.length > 0 && calendarIndex.length > 0
-        ? ACTION_CALENDAR_INDEX_LABEL
-        : actionIndex.length > 0
-          ? ACTION_INDEX_LABEL
-          : CALENDAR_INDEX_LABEL;
-    const sourceSignals: KnowledgeBasePageSignal[] = [
-      ...(actionIndex.length > 0 ? (["actions"] as const) : []),
-      ...(calendarIndex.length > 0 ? (["calendars"] as const) : [])
-    ];
-
-    pageDrafts.push({
-      label,
-      page_type: "index",
-      source_signals: sourceSignals,
-      renderMarkdown: (title) => {
-        const sections = [`# ${title}`, ""];
-        if (actionIndex.length > 0) {
-          sections.push("## 待办索引", bulletList(actionIndex, "暂无待办"), "");
-        }
-        if (calendarIndex.length > 0) {
-          sections.push("## 日程索引", bulletList(calendarIndex, "暂无日程"));
-        }
-        return sections.join("\n").trimEnd();
-      }
-    });
-  }
-
-  if (risks.length > 0) {
-    pageDrafts.push({
-      label: RISKS_LABEL,
-      page_type: "risks",
-      source_signals: ["risks"],
-      renderMarkdown: (title) =>
-        [`# ${title}`, "", bulletList(risks, "暂无风险、问题与待验证假设")].join("\n")
-    });
-  }
-
-  if (input.sources.length > 0) {
-    pageDrafts.push({
-      label: SOURCES_LABEL,
-      page_type: "sources",
-      source_signals: ["sources"],
-      renderMarkdown: (title) =>
-        [`# ${title}`, "", bulletList(input.sources, "暂无关联资料")].join("\n")
-    });
-  }
-
   const pageTitles = [
-    numberedTitle(0, HOME_PAGE_LABEL),
+    numberedTitle(0, README_LABEL),
     ...pageDrafts.map((page, index) => numberedTitle(index + 1, page.label))
   ];
   const homeTitle = pageTitles[0];
@@ -329,25 +420,28 @@ function buildPages(input: {
     markdown: [
       `# ${homeTitle}`,
       "",
-      `个人知识库：${input.name}`,
+      `项目：${input.name}`,
       "",
-      "## 个人工作台目标",
+      "## 项目简介",
       input.goal,
       "",
-      "## 自适应结构",
-      bulletList(pageTitles, "暂无结构"),
-      "",
-      "## 内容信号",
+      "## 当前状态",
       bulletList(signalSummary, "暂无内容信号"),
+      "",
+      "## 下一步",
+      bulletList(actionIndex.slice(0, 5), "暂无待办"),
+      "",
+      "## 关键链接 / 来源",
+      bulletList([...meetingRefs, ...input.sources.map((source) => `资料：${source}`)], "暂无来源"),
+      "",
+      "## 仓库式目录",
+      bulletList(pageTitles, "暂无结构"),
       "",
       "## 主题关键词",
       bulletList(input.keywords, "暂无关键词"),
       "",
       "## 会议范围",
-      bulletList(meetingRefs, "暂无会议"),
-      "",
-      "## 来源引用",
-      bulletList([...meetingRefs, ...input.sources.map((source) => `资料：${source}`)], "暂无来源")
+      bulletList(meetingRefs, "暂无会议")
     ].join("\n")
   };
 
@@ -381,7 +475,8 @@ export function runKnowledgeCuratorAgent(input: {
     input.meetings.flatMap((meeting) => parseStringArray(meeting.keywords_json))
   );
   const sources = extractSourceReferences(input.meetings);
-  const goal = `沉淀 ${input.topicName} 相关会议结论、执行事项和来源资料，形成 Henry 个人工作台的可持续更新记录。`;
+  const workspaceName = personalWorkspaceName();
+  const goal = `沉淀 ${input.topicName} 相关会议结论、执行事项、日程和来源资料，形成${workspaceName}可持续更新的项目记录。`;
   const pages = buildPages({
     name: input.topicName,
     goal,
@@ -396,7 +491,7 @@ export function runKnowledgeCuratorAgent(input: {
     kb_id: stableDemoId("kb", input.topicName),
     name: input.topicName,
     goal,
-    description: `由 ${input.meetings.length} 场相关会议 dry-run 创建的 Henry 个人知识库。`,
+    description: `由 ${input.meetings.length} 场相关会议 dry-run 创建的项目知识库。`,
     owner: input.owner,
     status: "active",
     confidence_origin: input.confidenceOrigin,

@@ -72,6 +72,8 @@ export const DryRunConfirmationCardSchema = z.object({
   target_id: z.string().min(1),
   recipient: z.string().nullable(),
   status: ConfirmationStatusSchema,
+  status_text: z.string().min(1).optional(),
+  error_summary: z.string().min(1).optional(),
   title: z.string().min(1),
   summary: z.string().min(1),
   sections: z.array(CardSectionSchema),
@@ -89,6 +91,7 @@ export const CardConfirmationInputSchema = z.object({
   status: ConfirmationStatusSchema.default("sent"),
   original_payload: z.unknown(),
   edited_payload: z.unknown().nullable().optional(),
+  error: z.string().nullable().optional(),
   created_at: z.string().min(1).optional()
 });
 

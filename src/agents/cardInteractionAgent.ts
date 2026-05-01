@@ -66,6 +66,11 @@ function parseJsonOrNull(value: string | null): unknown | null {
   return value === null ? null : parseJson(value);
 }
 
+function compactStatusText(value: string, maxLength = 140): string {
+  const singleLine = value.replace(/\s+/g, " ").trim();
+  return singleLine.length > maxLength ? `${singleLine.slice(0, maxLength - 1)}...` : singleLine;
+}
+
 function withoutCardPreview(value: unknown): unknown {
   const payload = asObject(value);
   if (Object.keys(payload).length === 0) {
@@ -448,6 +453,82 @@ function buildCard(card: DryRunConfirmationCard): DryRunConfirmationCard {
   return DryRunConfirmationCardSchema.parse(sanitizeForCard(card));
 }
 
+function executedStatusText(cardType: DryRunConfirmationCard["card_type"]): string {
+  if (cardType === "action_confirmation") {
+    return "已添加待办";
+  }
+
+  if (cardType === "calendar_confirmation") {
+    return "已添加日程";
+  }
+
+  if (cardType === "create_kb_confirmation") {
+    return "已创建知识库";
+  }
+
+  if (cardType === "append_meeting_confirmation") {
+    return "已追加到知识库";
+  }
+
+  return "已完成";
+}
+
+function statusText(input: {
+  status: CardInput["status"];
+  cardType: DryRunConfirmationCard["card_type"];
+}): string | undefined {
+  if (input.status === "confirmed") {
+    return "正在添加到飞书...";
+  }
+
+  if (input.status === "executed") {
+    return executedStatusText(input.cardType);
+  }
+
+  if (input.status === "rejected") {
+    return input.cardType === "create_kb_confirmation" ? "已拒绝" : "已不添加";
+  }
+
+  if (input.status === "failed") {
+    return "添加失败";
+  }
+
+  return undefined;
+}
+
+function actionsForStatus(input: {
+  status: CardInput["status"];
+  actions: CardAction[];
+}): CardAction[] {
+  if (input.status === "failed") {
+    const retryKeys = new Set<CardAction["key"]>([
+      "confirm",
+      "confirm_with_edits",
+      "create_kb",
+      "edit_and_create",
+      "remind_later",
+      "reject"
+    ]);
+    return input.actions.filter((action) => retryKeys.has(action.key));
+  }
+
+  if (input.status === "sent" || input.status === "draft" || input.status === "edited") {
+    return input.actions;
+  }
+
+  return [];
+}
+
+function statusFields(input: CardInput): {
+  error_summary?: string;
+} {
+  const error = asString(input.error);
+  return {
+    error_summary:
+      input.status === "failed" && error !== null ? compactStatusText(error) : undefined
+  };
+}
+
 function normalizeActionDraft(input: CardInput): ActionItemDraft {
   const { draft } = payloadAndDraft(input);
   return ActionItemDraftSchema.parse({
@@ -485,8 +566,11 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   const { payload } = payloadAndDraft(parsed);
   const draft = normalizeActionDraft(parsed);
   const meetingReference = meetingReferenceFromPayload(payload);
+  const cardType = "action_confirmation" as const;
+  const actions = actionConfirmationActions(parsed.id);
+  const ownerText = draft.owner ?? "待确认";
   const summary = [
-    draft.owner ? `负责人：${draft.owner}` : "负责人待补充",
+    `建议负责人：${ownerText}`,
     draft.due_date ? `截止：${draft.due_date}` : "截止时间待补充",
     draft.priority ? `优先级：${draft.priority}` : "优先级待补充"
   ]
@@ -494,11 +578,13 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
     .join("；");
 
   return buildCard({
-    card_type: "action_confirmation",
+    card_type: cardType,
     request_id: parsed.id,
     target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
+    status_text: statusText({ status: parsed.status, cardType }),
+    ...statusFields(parsed),
     title: `确认待办：${draft.title}`,
     summary: summary || "请确认是否创建该待办。",
     sections: [
@@ -506,7 +592,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
         title: "待办确认",
         fields: [
           displayField("title", "任务标题", draft.title),
-          displayField("recommended_owner", "负责人", draft.owner),
+          displayField("recommended_owner", "建议负责人", ownerText),
           displayField("due_date", "截止时间", draft.due_date),
           displayField("priority", "优先级", draft.priority)
         ]
@@ -529,7 +615,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
         value: draft.title,
         required: true
       }),
-      editableField({ key: "owner", label: "负责人", inputType: "text", value: draft.owner }),
+      editableField({ key: "owner", label: "建议负责人", inputType: "text", value: draft.owner }),
       editableField({
         key: "due_date",
         label: "截止日期",
@@ -550,7 +636,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
         value: draft.collaborators
       })
     ],
-    actions: actionConfirmationActions(parsed.id),
+    actions: actionsForStatus({ status: parsed.status, actions }),
     dry_run: true,
     version: "dry_run_v1"
   });
@@ -563,6 +649,8 @@ export function buildCalendarConfirmationCard(
   const { payload } = payloadAndDraft(parsed);
   const draft = normalizeCalendarDraft(parsed);
   const meetingReference = meetingReferenceFromPayload(payload);
+  const cardType = "calendar_confirmation" as const;
+  const actions = calendarConfirmationActions(parsed.id);
   const summary = [
     draft.start_time ? `开始：${draft.start_time}` : "开始时间待补充",
     draft.end_time ? `结束：${draft.end_time}` : null,
@@ -574,11 +662,13 @@ export function buildCalendarConfirmationCard(
     .join("；");
 
   return buildCard({
-    card_type: "calendar_confirmation",
+    card_type: cardType,
     request_id: parsed.id,
     target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
+    status_text: statusText({ status: parsed.status, cardType }),
+    ...statusFields(parsed),
     title: `确认日程：${draft.title}`,
     summary: summary || "请确认是否创建该日程。",
     sections: [
@@ -639,7 +729,7 @@ export function buildCalendarConfirmationCard(
       editableField({ key: "location", label: "地点", inputType: "text", value: draft.location }),
       editableField({ key: "agenda", label: "议程", inputType: "textarea", value: draft.agenda })
     ],
-    actions: calendarConfirmationActions(parsed.id),
+    actions: actionsForStatus({ status: parsed.status, actions }),
     dry_run: true,
     version: "dry_run_v1"
   });
@@ -650,6 +740,8 @@ export function buildCreateKbConfirmationCard(
 ): DryRunConfirmationCard {
   const parsed = CardConfirmationInputSchema.parse(input);
   const payload = asObject(parsed.original_payload);
+  const cardType = "create_kb_confirmation" as const;
+  const actions = createKbConfirmationActions(parsed.id);
   const topicName = firstString([payload.topic_name, payload.name], "新主题知识库");
   const suggestedGoal = firstString(
     [payload.suggested_goal, payload.goal],
@@ -669,11 +761,13 @@ export function buildCreateKbConfirmationCard(
   );
 
   return buildCard({
-    card_type: "create_kb_confirmation",
+    card_type: cardType,
     request_id: parsed.id,
     target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
+    status_text: statusText({ status: parsed.status, cardType }),
+    ...statusFields(parsed),
     title: `确认创建知识库：${topicName}`,
     summary,
     sections: [
@@ -720,7 +814,7 @@ export function buildCreateKbConfirmationCard(
         value: defaultStructure
       })
     ],
-    actions: createKbConfirmationActions(parsed.id),
+    actions: actionsForStatus({ status: parsed.status, actions }),
     dry_run: true,
     version: "dry_run_v1"
   });
@@ -731,6 +825,8 @@ export function buildAppendMeetingConfirmationCard(
 ): DryRunConfirmationCard {
   const parsed = CardConfirmationInputSchema.parse(input);
   const payload = asObject(parsed.original_payload);
+  const cardType = "append_meeting_confirmation" as const;
+  const actions = basicActions(parsed.id, "确认追加");
   const kbName = firstString([payload.kb_name], "现有知识库");
   const meetingReference = firstString(
     [
@@ -748,11 +844,13 @@ export function buildAppendMeetingConfirmationCard(
   const summary = [`知识库：${kbName}`, `会议：${meetingReference}`].join("；");
 
   return buildCard({
-    card_type: "append_meeting_confirmation",
+    card_type: cardType,
     request_id: parsed.id,
     target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
+    status_text: statusText({ status: parsed.status, cardType }),
+    ...statusFields(parsed),
     title: `确认追加会议：${kbName}`,
     summary,
     sections: [
@@ -773,7 +871,7 @@ export function buildAppendMeetingConfirmationCard(
       })
     ],
     editable_fields: [],
-    actions: basicActions(parsed.id, "确认追加"),
+    actions: actionsForStatus({ status: parsed.status, actions }),
     dry_run: true,
     version: "dry_run_v1"
   });
@@ -782,14 +880,18 @@ export function buildAppendMeetingConfirmationCard(
 export function buildGenericConfirmationCard(input: CardConfirmationInput): DryRunConfirmationCard {
   const parsed = CardConfirmationInputSchema.parse(input);
   const requestType = parsed.request_type ?? "confirmation";
+  const cardType = "generic_confirmation" as const;
+  const actions = basicActions(parsed.id, "确认执行");
   const payloadPreview = JSON.stringify(withoutCardPreview(parsed.original_payload), null, 2);
 
   return buildCard({
-    card_type: "generic_confirmation",
+    card_type: cardType,
     request_id: parsed.id,
     target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
+    status_text: statusText({ status: parsed.status, cardType }),
+    ...statusFields(parsed),
     title: `确认请求：${requestType}`,
     summary: "请确认是否执行该请求。",
     sections: [
@@ -802,7 +904,7 @@ export function buildGenericConfirmationCard(input: CardConfirmationInput): DryR
       })
     ],
     editable_fields: [],
-    actions: basicActions(parsed.id, "确认执行"),
+    actions: actionsForStatus({ status: parsed.status, actions }),
     dry_run: true,
     version: "dry_run_v1"
   });
@@ -844,6 +946,7 @@ export function buildConfirmationCardFromRequest(
     status: request.status,
     original_payload: withoutCardPreview(parseJson(request.original_payload_json)),
     edited_payload: parseJsonOrNull(request.edited_payload_json),
+    error: request.error,
     created_at: request.created_at
   };
 

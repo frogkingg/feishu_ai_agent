@@ -105,6 +105,9 @@ SourceMention 格式：
 
 - 只有会议明确形成“谁要做什么”时，才写入 action_items。
 - 一个 action item 至少需要有明确责任人或明确动作主体，并且有可交付物或可完成动作。
+- owner 只能来自会议证据中的明确点名分配、发言人主动承诺，或可追溯到发言人的“我负责/我来做”；接收人、会议组织者、卡片接收者、当前用户都不等于 owner。
+- 如果 evidence 中没有直接支撑 owner 的原话，不要为了补全字段推断 owner；owner = null，并在 missing_fields 中加入 "owner"。
+- suggested_reason 只能解释会议证据如何支持该 action，不要写“用户据此认领/承诺完成”“组织者默认负责”“已发送给某人所以负责”等无会议证据的话术。
 - 明确截止时间会增强 action 判断；如果有截止时间，必须写入 due_date。
 - 如果只有“需要建立 SOP”“需要关注风险”“可以后续整理”“可以看看”“有机会研究”，但没有 owner、动作主体、交付物或截止时间，不要生成 action item。
 - “建立 SOP”这类团队共识，如果没有 owner 和 due_date，优先作为 key_decisions，不要强行变成 action item。
@@ -175,7 +178,7 @@ SourceMention 格式：
 "start_time": "2026-06-05T16:00:00+08:00",
 "end_time": null,
 "duration_minutes": 60,
-"participants": ["林悦", "周宁", "Henry"],
+"participants": ["林悦", "周宁", "项目负责人"],
 "agenda": "复审首页线框和确认入口是否收敛。",
 "location": null,
 "evidence": "会议约定 2026-06-05 16:00 做第二轮产品原型评审。",
@@ -217,7 +220,7 @@ SourceMention 格式：
 "start_time": null,
 "end_time": null,
 "duration_minutes": null,
-"participants": ["Henry", "周宁"],
+"participants": ["项目负责人", "周宁"],
 "agenda": "对齐卡片发送回调、确认状态和失败重试口径。",
 "location": null,
 "evidence": "周宁提出下周找时间和服务端做一次回调状态对齐，但现场没有确定哪一天和几点。",

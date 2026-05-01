@@ -83,14 +83,18 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(updates[0].update_type).toBe("kb_created");
 
     const markdown = updates[0].after_text ?? "";
-    expect(markdown).toContain("00 Henry 个人工作台 / 总览");
-    expect(markdown).toContain("自适应结构");
-    expect(markdown).toContain("01 会议总结");
-    expect(markdown).toContain("02 会议转写记录");
-    expect(markdown).toContain("关键结论与决策");
-    expect(markdown).toContain("待办与日程索引");
-    expect(markdown).toContain("风险、问题与待验证假设");
-    expect(markdown).toContain("关联资料");
+    expect(markdown).toContain("00 README / 项目总览");
+    expect(markdown).toContain("01 Project Board / 进度与待办");
+    expect(markdown).toContain("02 Timeline / 里程碑与甘特");
+    expect(markdown).toContain("03 Meetings / 会议记录");
+    expect(markdown).toContain("04 Docs & Resources / 文档与资料");
+    expect(markdown).toContain("05 Decisions & Risks / 决策与风险");
+    expect(markdown).toContain("06 Calendar / 日程索引");
+    expect(markdown).toContain("## 项目简介");
+    expect(markdown).toContain("## 当前状态");
+    expect(markdown).toContain("## 下一步");
+    expect(markdown).toContain("## 关键链接 / 来源");
+    expect(markdown).toContain("## 会议范围");
     expect(markdown).not.toContain("整体目标");
     expect(markdown).not.toContain("整体分析");
     expect(markdown).toContain("https://example.feishu.cn/minutes/min_001");
@@ -227,13 +231,13 @@ describe("createKnowledgeBaseWorkflow", () => {
     ]);
     expect(JSON.parse(spaceCreateArgs[0][spaceCreateArgs[0].indexOf("--data") + 1])).toEqual({
       name: "无人机操作流程主题知识库",
-      description: "由 2 场相关会议 dry-run 创建的 Henry 个人知识库。"
+      description: "由 2 场相关会议 dry-run 创建的项目知识库。"
     });
     expect(wikiNodeCreateArgs[0]).toEqual(
-      expect.arrayContaining(["--space-id", "space_1", "--title", "01 会议总结"])
+      expect.arrayContaining(["--space-id", "space_1", "--title", "01 Project Board / 进度与待办"])
     );
     expect(wikiNodeCreateArgs[1]).toEqual(
-      expect.arrayContaining(["--space-id", "space_1", "--title", "02 会议转写记录"])
+      expect.arrayContaining(["--space-id", "space_1", "--title", "02 Timeline / 里程碑与甘特"])
     );
     expect(wikiNodeCreateArgs.every((args) => !args.includes("--parent-node-token"))).toBe(true);
     expect(updateArgs[0]).toEqual(
@@ -253,7 +257,7 @@ describe("createKnowledgeBaseWorkflow", () => {
       ])
     );
     const firstUpdateContent = updateArgs[0][updateArgs[0].indexOf("--content") + 1];
-    expect(firstUpdateContent).toContain("# 01 会议总结");
+    expect(firstUpdateContent).toContain("# 01 Project Board / 进度与待办");
     expect(repos.listCliRuns().map((run) => run.status)).toEqual(
       Array(1 + childPageCount * 2).fill("success")
     );

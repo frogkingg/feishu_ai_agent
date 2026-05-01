@@ -7,7 +7,7 @@ import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
 import { confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
 import { ConfirmationRequestRow, MeetingRow, Repositories } from "./services/store/repositories";
-import { sendCard } from "./tools/larkIm";
+import { sendCard, syncConfirmationCardStatus } from "./tools/larkIm";
 import { type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
@@ -206,7 +206,7 @@ const PERSONAL_KNOWLEDGE_REQUEST_TYPES = new Set<ConfirmationRequestRow["request
   "create_kb",
   "append_meeting"
 ]);
-const PROCESSED_CONFIRMATION_STATUSES = new Set(["executed", "rejected", "failed"]);
+const PROCESSED_CONFIRMATION_STATUSES = new Set(["executed", "rejected"]);
 const IN_FLIGHT_CONFIRMATION_STATUSES = new Set(["confirmed"]);
 const INTERNAL_CARD_VALUE_KEYS = new Set([
   "confirmation_id",
@@ -353,6 +353,8 @@ function extractCardCallbackPayload(payload: unknown): {
   actionKey: string | null;
   editedPayload?: unknown;
   reason?: string | null;
+  messageId?: string | null;
+  chatId?: string | null;
 } {
   const root = asRecord(payload) ?? {};
   const event = recordAtPath(payload, ["event"]) ?? {};
@@ -394,12 +396,30 @@ function extractCardCallbackPayload(payload: unknown): {
   );
   const reasonValue = valueFromActionPayload(actionValue, "reason");
   const reason = stringValue(reasonValue);
+  const messageId = firstString([
+    valueAtPath(payload, ["event", "context", "open_message_id"]),
+    valueAtPath(payload, ["event", "context", "message_id"]),
+    valueAtPath(payload, ["event", "message", "message_id"]),
+    valueAtPath(payload, ["event", "message_id"]),
+    root.open_message_id,
+    root.message_id
+  ]);
+  const chatId = firstString([
+    valueAtPath(payload, ["event", "context", "open_chat_id"]),
+    valueAtPath(payload, ["event", "context", "chat_id"]),
+    valueAtPath(payload, ["event", "message", "chat_id"]),
+    valueAtPath(payload, ["event", "chat_id"]),
+    root.open_chat_id,
+    root.chat_id
+  ]);
 
   return {
     requestId,
     actionKey,
     editedPayload,
-    reason
+    reason,
+    messageId,
+    chatId
   };
 }
 
@@ -462,6 +482,40 @@ function alreadyProcessedToast(input: { status: string }) {
 
 function alreadyProcessingToast() {
   return toast("success", "该确认请求正在处理中，不会重复执行");
+}
+
+function cardStatusLogContext(input: {
+  confirmationId: string;
+  phase: string;
+  result: Awaited<ReturnType<typeof syncConfirmationCardStatus>>;
+}) {
+  return {
+    confirmation_id: input.confirmationId,
+    phase: input.phase,
+    card_status_method: input.result.method,
+    card_status_ok: input.result.ok,
+    card_status_error: input.result.error
+  };
+}
+
+async function syncCardStatusForRequest(input: {
+  repos: Repositories;
+  config: AppConfig;
+  request: ConfirmationRequestRow;
+  messageId?: string | null;
+  chatId?: string | null;
+  runner?: LarkCliRunner;
+}) {
+  const latest = input.repos.getConfirmationRequest(input.request.id) ?? input.request;
+  return syncConfirmationCardStatus({
+    repos: input.repos,
+    config: input.config,
+    confirmation: latest,
+    card: buildConfirmationCardFromRequest(latest),
+    messageId: input.messageId,
+    chatId: input.chatId,
+    runner: input.runner
+  });
 }
 
 function sendCardStatusCode(result: { ok: boolean; error: string | null }): number {
@@ -720,9 +774,17 @@ export function buildServer(input: {
       return toast("error", "确认请求不存在");
     }
 
-    const confirmation = input.repos.getConfirmationRequest(parsed.requestId);
+    const requestId = parsed.requestId;
+    const confirmation = input.repos.getConfirmationRequest(requestId);
     if (confirmation === null) {
       return toast("error", "确认请求不存在");
+    }
+
+    if (parsed.messageId && confirmation.card_message_id === null) {
+      input.repos.updateConfirmationCardMessage({
+        id: confirmation.id,
+        card_message_id: parsed.messageId
+      });
     }
 
     if (parsed.actionKey === null) {
@@ -741,15 +803,83 @@ export function buildServer(input: {
 
     try {
       if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        void confirmRequest({
-          repos: input.repos,
-          config: input.config,
-          id: parsed.requestId,
-          editedPayload: parsed.editedPayload,
-          runner: input.larkCliRunner
-        }).catch((error) => {
+        input.repos.updateConfirmationRequest({
+          id: requestId,
+          status: "confirmed",
+          edited_payload_json:
+            parsed.editedPayload === undefined ? null : JSON.stringify(parsed.editedPayload),
+          confirmed_at: nowIso(),
+          error: null
+        });
+        const acceptedConfirmation = input.repos.getConfirmationRequest(requestId) ?? confirmation;
+
+        void (async () => {
+          const processingUpdate = await syncCardStatusForRequest({
+            repos: input.repos,
+            config: input.config,
+            request: acceptedConfirmation,
+            messageId: parsed.messageId,
+            chatId: parsed.chatId,
+            runner: input.larkCliRunner
+          });
+          if (!processingUpdate.ok) {
+            request.log.warn(
+              cardStatusLogContext({
+                confirmationId: requestId,
+                phase: "processing",
+                result: processingUpdate
+              }),
+              "card status update fell back or failed while marking processing"
+            );
+          }
+
+          const execution = await confirmRequest({
+            repos: input.repos,
+            config: input.config,
+            id: requestId,
+            editedPayload: parsed.editedPayload,
+            runner: input.larkCliRunner
+          });
+          const finalUpdate = await syncCardStatusForRequest({
+            repos: input.repos,
+            config: input.config,
+            request: execution.confirmation,
+            messageId: parsed.messageId,
+            chatId: parsed.chatId,
+            runner: input.larkCliRunner
+          });
+          if (!finalUpdate.ok) {
+            request.log.warn(
+              cardStatusLogContext({
+                confirmationId: requestId,
+                phase: "final",
+                result: finalUpdate
+              }),
+              "card status update fell back or failed after execution"
+            );
+          }
+        })().catch(async (error) => {
+          input.repos.updateConfirmationRequest({
+            id: requestId,
+            status: "failed",
+            error: briefError(error)
+          });
+          const failed = input.repos.getConfirmationRequest(requestId) ?? confirmation;
+          const finalUpdate = await syncCardStatusForRequest({
+            repos: input.repos,
+            config: input.config,
+            request: failed,
+            messageId: parsed.messageId,
+            chatId: parsed.chatId,
+            runner: input.larkCliRunner
+          });
           request.log.error(
-            { err: error, confirmation_id: parsed.requestId },
+            {
+              err: error,
+              confirmation_id: requestId,
+              card_status_method: finalUpdate.method,
+              card_status_ok: finalUpdate.ok
+            },
             "async confirm failed"
           );
         });
@@ -758,10 +888,24 @@ export function buildServer(input: {
       }
 
       if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        rejectRequest({
+        const rejected = rejectRequest({
           repos: input.repos,
-          id: parsed.requestId,
+          id: requestId,
           reason: parsed.reason ?? parsed.actionKey
+        });
+
+        void syncCardStatusForRequest({
+          repos: input.repos,
+          config: input.config,
+          request: rejected,
+          messageId: parsed.messageId,
+          chatId: parsed.chatId,
+          runner: input.larkCliRunner
+        }).catch((error) => {
+          request.log.error(
+            { err: error, confirmation_id: requestId },
+            "failed to update rejected card status"
+          );
         });
 
         return toast("success", "已拒绝");
@@ -772,12 +916,32 @@ export function buildServer(input: {
       if (previewAction !== undefined) {
         const result = cardPreviewStubAction({
           repos: input.repos,
-          id: parsed.requestId,
+          id: requestId,
           action: previewAction
         });
         if (result === null) {
           return toast("error", "确认请求不存在");
         }
+
+        const latest = input.repos.getConfirmationRequest(requestId) ?? confirmation;
+        void syncConfirmationCardStatus({
+          repos: input.repos,
+          config: input.config,
+          confirmation: latest,
+          card: {
+            ...buildConfirmationCardFromRequest(latest),
+            status_text: "已收到，稍后处理",
+            actions: []
+          },
+          messageId: parsed.messageId,
+          chatId: parsed.chatId,
+          runner: input.larkCliRunner
+        }).catch((error) => {
+          request.log.error(
+            { err: error, confirmation_id: requestId, action: parsed.actionKey },
+            "failed to update preview card status"
+          );
+        });
 
         return toast("success", CardActionPendingMessage);
       }
@@ -785,7 +949,7 @@ export function buildServer(input: {
       return toast("error", "暂不支持此操作");
     } catch (error) {
       request.log.error(
-        { err: error, confirmation_id: parsed.requestId, action: parsed.actionKey },
+        { err: error, confirmation_id: requestId, action: parsed.actionKey },
         "card action failed"
       );
       return toast("error", briefError(error));

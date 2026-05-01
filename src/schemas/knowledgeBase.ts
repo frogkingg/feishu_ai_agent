@@ -23,6 +23,11 @@ export const KnowledgeBasePageSchema = z.object({
     "index",
     "meeting_summary",
     "transcript",
+    "board",
+    "timeline",
+    "meetings",
+    "resources",
+    "calendar",
     "sources",
     "risks",
     "changelog"

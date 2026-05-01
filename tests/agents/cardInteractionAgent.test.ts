@@ -57,7 +57,7 @@ describe("CardInteractionAgent", () => {
     expect(card).toMatchObject({
       card_type: "action_confirmation",
       title: "确认待办：整理无人机操作流程",
-      summary: "负责人：张三；截止：2026-05-01；优先级：P1",
+      summary: "建议负责人：张三；截止：2026-05-01；优先级：P1",
       dry_run: true
     });
     expect(card.editable_fields.map((field) => field.key)).toEqual([
@@ -90,6 +90,44 @@ describe("CardInteractionAgent", () => {
     ).toEqual({
       edited_payload: "$editable_fields"
     });
+  });
+
+  it("shows pending confirmation when action owner is not supported by meeting evidence", () => {
+    const card = expectValidCard(
+      buildActionConfirmationCard({
+        id: "conf_action_no_owner",
+        target_id: "act_no_owner",
+        recipient: "Henry",
+        status: "sent",
+        original_payload: {
+          draft: {
+            ...actionDraft,
+            owner: null,
+            evidence: "会议中提出需要整理操作流程，但没有明确负责人。",
+            suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+            missing_fields: ["owner"]
+          },
+          meeting_id: "mtg_001"
+        }
+      })
+    );
+
+    const visibleText = JSON.stringify({
+      title: card.title,
+      summary: card.summary,
+      sections: card.sections,
+      editable_fields: card.editable_fields
+    });
+    expect(card.summary).toContain("建议负责人：待确认");
+    expect(
+      card.sections[0]?.fields.find((field) => field.key === "recommended_owner")
+    ).toMatchObject({
+      label: "建议负责人",
+      value: "待确认"
+    });
+    expect(visibleText).not.toContain("Henry");
+    expect(visibleText).not.toContain("认领");
+    expect(visibleText).not.toContain("承诺");
   });
 
   it("builds calendar confirmation dry-run card JSON", () => {

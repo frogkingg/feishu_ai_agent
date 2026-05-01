@@ -516,22 +516,29 @@ async function listConfirmations(context: DemoContext): Promise<ConfirmationRequ
     cardCount === confirmations.length,
     "Every confirmation should include a dry-run card"
   );
+  const actionableConfirmations = confirmations.filter((confirmation) =>
+    ["draft", "sent", "edited", "failed"].includes(confirmation.status)
+  );
+  const missingActionButtons = actionableConfirmations.flatMap((confirmation) => {
+    const actionKeys = confirmation.dry_run_card?.actions.map((action) => action.key) ?? [];
+    const expectedKeys =
+      confirmation.request_type === "action"
+        ? ACTION_CARD_ACTION_KEYS
+        : confirmation.request_type === "calendar"
+          ? CALENDAR_CARD_ACTION_KEYS
+          : confirmation.request_type === "create_kb"
+            ? CREATE_KB_CARD_ACTION_KEYS
+            : confirmation.request_type === "append_meeting"
+              ? APPEND_MEETING_CARD_ACTION_KEYS
+              : DEFAULT_CARD_ACTION_KEYS;
+    const missing = expectedKeys.filter((key) => !actionKeys.includes(key));
+    return missing.length > 0
+      ? [`${confirmation.id}/${confirmation.request_type}: missing ${missing.join(",")}`]
+      : [];
+  });
   assertDemo(
-    confirmations.every((confirmation) => {
-      const actionKeys = confirmation.dry_run_card?.actions.map((action) => action.key) ?? [];
-      const expectedKeys =
-        confirmation.request_type === "action"
-          ? ACTION_CARD_ACTION_KEYS
-          : confirmation.request_type === "calendar"
-            ? CALENDAR_CARD_ACTION_KEYS
-            : confirmation.request_type === "create_kb"
-              ? CREATE_KB_CARD_ACTION_KEYS
-              : confirmation.request_type === "append_meeting"
-                ? APPEND_MEETING_CARD_ACTION_KEYS
-                : DEFAULT_CARD_ACTION_KEYS;
-      return expectedKeys.every((key) => actionKeys.includes(key));
-    }),
-    "Dry-run cards should include the expected action buttons"
+    missingActionButtons.length === 0,
+    `Dry-run cards should include the expected action buttons: ${missingActionButtons.join("; ")}`
   );
   ok(context, `confirmations=${confirmations.length}, dry_run_cards=${cardCount}`);
   return confirmations;

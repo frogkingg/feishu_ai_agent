@@ -6,6 +6,7 @@ import { buildServer } from "../../src/server";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { ConfirmationRequestRow, createRepositories } from "../../src/services/store/repositories";
+import { type LarkCliRunner } from "../../src/tools/larkCli";
 
 function flushAsyncWork(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
@@ -20,6 +21,92 @@ function signLegacyCardAction(input: {
   return createHash("sha1")
     .update(input.timestamp + input.nonce + input.verificationToken + JSON.stringify(input.body))
     .digest("hex");
+}
+
+function contentArg(args: string[]) {
+  const contentIndex = args.indexOf("--content");
+  expect(contentIndex).toBeGreaterThanOrEqual(0);
+  return args[contentIndex + 1];
+}
+
+function dataContentArg(args: string[]) {
+  const dataIndex = args.indexOf("--data");
+  expect(dataIndex).toBeGreaterThanOrEqual(0);
+  const data = JSON.parse(args[dataIndex + 1]) as { content?: string };
+  expect(data.content).toEqual(expect.any(String));
+  return data.content!;
+}
+
+function createDirectActionConfirmation(
+  repos: ReturnType<typeof createRepositories>,
+  options: { cardMessageId?: string | null } = {}
+) {
+  const meeting = repos.createMeeting({
+    id: "mtg_direct_card_action",
+    external_meeting_id: null,
+    title: "客户访谈复盘",
+    started_at: "2026-05-01T10:00:00+08:00",
+    ended_at: "2026-05-01T11:00:00+08:00",
+    organizer: "ou_owner",
+    participants_json: JSON.stringify(["ou_owner"]),
+    minutes_url: null,
+    transcript_url: null,
+    transcript_text: "张三负责整理客户访谈结论。",
+    summary: "会议确认访谈结论整理动作。",
+    keywords_json: JSON.stringify(["客户访谈"]),
+    matched_kb_id: null,
+    match_score: null,
+    archive_status: "not_archived",
+    action_count: 1,
+    calendar_count: 0
+  });
+  const action = repos.createActionItem({
+    id: "act_direct_card_action",
+    meeting_id: meeting.id,
+    kb_id: null,
+    title: "整理客户访谈结论",
+    description: "汇总访谈输出。",
+    owner: "ou_owner",
+    collaborators_json: JSON.stringify([]),
+    due_date: "2026-05-03",
+    priority: "P1",
+    evidence: "张三负责整理客户访谈结论。",
+    confidence: 0.91,
+    suggested_reason: "会议明确了负责人。",
+    missing_fields_json: JSON.stringify([]),
+    confirmation_status: "candidate",
+    feishu_task_guid: null,
+    task_url: null,
+    rejection_reason: null
+  });
+
+  return repos.createConfirmationRequest({
+    id: "conf_direct_card_action",
+    request_type: "action",
+    target_id: action.id,
+    recipient: "ou_owner",
+    card_message_id: options.cardMessageId ?? null,
+    status: "sent",
+    original_payload_json: JSON.stringify({
+      draft: {
+        title: action.title,
+        description: action.description,
+        owner: action.owner,
+        collaborators: [],
+        due_date: action.due_date,
+        priority: action.priority,
+        evidence: action.evidence,
+        confidence: action.confidence,
+        suggested_reason: action.suggested_reason,
+        missing_fields: []
+      },
+      meeting_reference: "客户访谈复盘（会议纪要：https://example.feishu.cn/minutes/min_direct）"
+    }),
+    edited_payload_json: null,
+    confirmed_at: null,
+    executed_at: null,
+    error: null
+  });
 }
 
 async function createAppWithConfirmations(larkVerificationToken: string | null = null) {
@@ -318,6 +405,194 @@ describe("POST /webhooks/feishu/card-action", () => {
       due_date: "2026-05-02",
       priority: "P0"
     });
+  });
+
+  it("updates the original card to processing and then executed after confirm clicks", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const updateCalls: string[][] = [];
+    const verificationToken = "verification-token";
+    const runner: LarkCliRunner = async (_bin, args) => {
+      updateCalls.push(args);
+      return { stdout: JSON.stringify({ ok: true }), stderr: "" };
+    };
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCardSendDryRun: false,
+        larkVerificationToken: verificationToken,
+        larkCliBin: "fake-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new MockLlmClient(),
+      larkCliRunner: runner
+    });
+    const confirmation = createDirectActionConfirmation(repos);
+    const payload = {
+      event: {
+        context: {
+          open_message_id: "om_original_card",
+          open_chat_id: "oc_card_chat"
+        },
+        action: {
+          value: {
+            confirmation_id: confirmation.id,
+            action_key: "confirm"
+          }
+        }
+      }
+    };
+    const timestamp = "1777574291";
+    const nonce = "card-status-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success"
+      }
+    });
+    await flushAsyncWork();
+
+    expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
+      status: "executed",
+      card_message_id: "om_original_card"
+    });
+    const cardUpdateRuns = repos.listCliRuns().filter((run) => run.tool === "lark.im.update_card");
+    expect(cardUpdateRuns).toHaveLength(2);
+    expect(cardUpdateRuns.every((run) => run.status === "success")).toBe(true);
+    expect(updateCalls).toHaveLength(2);
+    expect(updateCalls[0]).toEqual(
+      expect.arrayContaining([
+        "im",
+        "messages",
+        "patch",
+        "--params",
+        JSON.stringify({ message_id: "om_original_card" })
+      ])
+    );
+    expect(dataContentArg(updateCalls[0])).toContain("正在添加到飞书...");
+    expect(dataContentArg(updateCalls[0])).not.toContain("添加待办");
+    expect(dataContentArg(updateCalls[1])).toContain("已添加待办");
+    expect(
+      repos.listCliRuns().some((run) => run.tool === "lark.im.send_card_status_fallback")
+    ).toBe(false);
+  });
+
+  it("falls back to a lightweight result card when final card update fails after execution failure", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    let updateAttempts = 0;
+    const verificationToken = "verification-token";
+    const runner: LarkCliRunner = async (_bin, args) => {
+      if (args[0] === "im" && args[1] === "messages" && args[2] === "patch") {
+        updateAttempts += 1;
+        if (updateAttempts === 1) {
+          return { stdout: JSON.stringify({ ok: true }), stderr: "" };
+        }
+        throw new Error("card update API unavailable");
+      }
+
+      if (args[0] === "task" && args[1] === "+create") {
+        throw new Error("fake task create failure");
+      }
+
+      if (args[0] === "im" && args[1] === "+messages-send") {
+        return {
+          stdout: JSON.stringify({ message_id: "om_status_fallback" }),
+          stderr: ""
+        };
+      }
+
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    };
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: false,
+        feishuCardSendDryRun: false,
+        larkVerificationToken: verificationToken,
+        larkCliBin: "fake-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new MockLlmClient(),
+      larkCliRunner: runner
+    });
+    const confirmation = createDirectActionConfirmation(repos, {
+      cardMessageId: "om_existing_card"
+    });
+    const payload = {
+      event: {
+        context: {
+          open_chat_id: "oc_card_chat"
+        },
+        action: {
+          value: {
+            confirmation_id: confirmation.id,
+            action_key: "confirm"
+          }
+        }
+      }
+    };
+    const timestamp = "1777574292";
+    const nonce = "card-fallback-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    await flushAsyncWork();
+
+    expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("lark.task.create failed")
+    });
+    const runs = repos.listCliRuns();
+    expect(runs.map((run) => run.tool)).toEqual([
+      "lark.im.update_card",
+      "lark.task.create",
+      "lark.im.update_card",
+      "lark.im.send_card_status_fallback"
+    ]);
+    expect(runs[2]).toMatchObject({
+      tool: "lark.im.update_card",
+      status: "failed"
+    });
+    expect(runs[3]).toMatchObject({
+      tool: "lark.im.send_card_status_fallback",
+      status: "success"
+    });
+    const fallbackArgs = JSON.parse(runs[3].args_json) as string[];
+    expect(fallbackArgs).toEqual(expect.arrayContaining(["--chat-id", "oc_card_chat"]));
+    expect(contentArg(fallbackArgs)).toContain("添加失败");
+    expect(contentArg(fallbackArgs)).toContain("fake task create failure");
   });
 
   it("returns already_processed toast for repeated terminal clicks without re-executing", async () => {

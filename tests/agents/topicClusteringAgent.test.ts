@@ -287,10 +287,13 @@ describe("TopicClusteringAgent", () => {
       match_reasons: second.topic_match.match_reasons,
       score: second.topic_match.score,
       default_structure: [
-        "00 Henry 个人工作台 / 总览",
-        "01 会议总结",
-        "02 会议转写记录",
-        "03 待办与日程索引"
+        "00 README / 项目总览",
+        "01 Project Board / 进度与待办",
+        "02 Timeline / 里程碑与甘特",
+        "03 Meetings / 会议记录",
+        "04 Docs & Resources / 文档与资料",
+        "05 Decisions & Risks / 决策与风险",
+        "06 Calendar / 日程索引"
       ],
       card_preview: {
         card_type: "create_kb_confirmation",

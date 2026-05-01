@@ -231,6 +231,69 @@ describe("MeetingExtractionAgent", () => {
     expect(llm.calls).toHaveLength(1);
   });
 
+  it("does not assign the organizer or card recipient as action owner without meeting evidence", async () => {
+    const llm = new SequenceLlmClient([
+      validExtraction({
+        action_items: [
+          {
+            title: "整理发布清单",
+            description: "把发布前检查项整理成清单。",
+            owner: "Henry",
+            collaborators: [],
+            due_date: "2026-05-10",
+            priority: "P1",
+            evidence: "会议中提出需要整理发布前检查清单。",
+            confidence: 0.8,
+            suggested_reason: "组织者 Henry 默认负责，用户据此认领完成。",
+            missing_fields: []
+          }
+        ]
+      })
+    ]);
+
+    const extraction = await runMeetingExtractionAgent({
+      meeting: createMeeting("会议中提出需要整理发布前检查清单。"),
+      llm
+    });
+
+    expect(extraction.action_items[0]).toMatchObject({
+      owner: null,
+      missing_fields: expect.arrayContaining(["owner"]),
+      suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。"
+    });
+  });
+
+  it("keeps explicitly named action owners when evidence supports the assignment", async () => {
+    const llm = new SequenceLlmClient([
+      validExtraction({
+        action_items: [
+          {
+            title: "修改首页线框图",
+            description: "按评审结论更新首页线框图。",
+            owner: "陈一",
+            collaborators: [],
+            due_date: "2026-05-06",
+            priority: "P1",
+            evidence: "陈一：我负责在 2026-05-06 前把首页线框图改一版。",
+            confidence: 0.92,
+            suggested_reason: "会议中陈一明确负责修改首页线框图，并给出截止日期。",
+            missing_fields: []
+          }
+        ]
+      })
+    ]);
+
+    const extraction = await runMeetingExtractionAgent({
+      meeting: createMeeting("陈一：我负责在 2026-05-06 前把首页线框图改一版。"),
+      llm
+    });
+
+    expect(extraction.action_items[0]).toMatchObject({
+      owner: "陈一",
+      missing_fields: []
+    });
+  });
+
   it("does not keep domain-specific challenge terms in production extraction logic", () => {
     const sourcePath = join(process.cwd(), "src/agents/meetingExtractionAgent.ts");
     const source = readFileSync(sourcePath, "utf8");

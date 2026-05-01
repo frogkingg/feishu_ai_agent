@@ -14,6 +14,7 @@ import { createConfirmationRequest } from "../services/confirmationService";
 import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
 import { formatMeetingReference } from "../utils/display";
 import { createId } from "../utils/id";
+import { personalWorkspaceName } from "../utils/personalWorkspace";
 
 const KnowledgeBaseActionIntentPatterns = [
   /创建.{0,12}知识库/,
@@ -21,7 +22,6 @@ const KnowledgeBaseActionIntentPatterns = [
   /归档到.{0,12}知识库/,
   /建立.{0,12}知识库/
 ];
-const PersonalWorkspaceName = "Henry 个人工作台";
 const PersonalKnowledgeBaseMode = "personal";
 
 export interface ProcessMeetingResult {
@@ -46,12 +46,20 @@ function suggestTopicName(input: { title: string; keywords: string[] }): string 
   return primaryKeywords ? `${primaryKeywords}主题知识库` : `${input.title}主题知识库`;
 }
 
-function suggestGoal(topicName: string): string {
-  return `沉淀${topicName}相关会议结论、行动项、日程与资料来源，形成 Henry 个人可持续更新的项目知识库。`;
+function suggestGoal(topicName: string, workspaceName: string): string {
+  return `沉淀${topicName}相关会议结论、行动项、日程与资料来源，形成${workspaceName}可持续更新的项目知识库。`;
 }
 
 function defaultKnowledgeBaseStructure(): string[] {
-  return ["00 Henry 个人工作台 / 总览", "01 会议总结", "02 会议转写记录", "03 待办与日程索引"];
+  return [
+    "00 README / 项目总览",
+    "01 Project Board / 进度与待办",
+    "02 Timeline / 里程碑与甘特",
+    "03 Meetings / 会议记录",
+    "04 Docs & Resources / 文档与资料",
+    "05 Decisions & Risks / 决策与风险",
+    "06 Calendar / 日程索引"
+  ];
 }
 
 function isKnowledgeBaseCreationAction(
@@ -256,6 +264,7 @@ export async function processMeetingWorkflow(input: {
       title: input.meeting.title,
       keywords: extraction.topic_keywords
     });
+    const workspaceName = personalWorkspaceName();
     confirmations.push(
       createConfirmationRequest({
         repos: input.repos,
@@ -264,9 +273,9 @@ export async function processMeetingWorkflow(input: {
         recipient: input.meeting.organizer,
         originalPayload: {
           knowledge_base_mode: PersonalKnowledgeBaseMode,
-          workspace_name: PersonalWorkspaceName,
+          workspace_name: workspaceName,
           topic_name: topicName,
-          suggested_goal: suggestGoal(topicName),
+          suggested_goal: suggestGoal(topicName, workspaceName),
           candidate_meeting_ids: topicMatch.candidate_meeting_ids,
           candidate_meeting_refs: meetingReferencesForIds({
             repos: input.repos,
@@ -324,7 +333,7 @@ export async function processMeetingTextToConfirmationsWorkflow(input: {
     ...result,
     personal_workspace: {
       mode: PersonalKnowledgeBaseMode,
-      name: input.personalWorkspaceName ?? PersonalWorkspaceName,
+      name: input.personalWorkspaceName ?? personalWorkspaceName(),
       recipient: input.meeting.organizer
     },
     confirmation_summary: countConfirmationRequests(confirmations),

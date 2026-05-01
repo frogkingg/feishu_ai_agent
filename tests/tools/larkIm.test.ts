@@ -360,6 +360,98 @@ describe("larkIm.sendCard", () => {
     });
   });
 
+  it("renders terminal and failed card statuses without repeat-confirm buttons", () => {
+    const executed = buildFeishuInteractiveCard(
+      buildActionConfirmationCard({
+        id: "conf_executed_action",
+        target_id: "act_executed",
+        recipient: "ou_recipient",
+        status: "executed",
+        original_payload: card
+      })
+    );
+    expect(JSON.stringify(executed)).toContain("已添加待办");
+    expect(executed.header.template).toBe("green");
+    expect(executed.elements.find((element) => element.tag === "action")).toBeUndefined();
+
+    const rejected = buildFeishuInteractiveCard(
+      buildCalendarConfirmationCard({
+        id: "conf_rejected_calendar",
+        target_id: "cal_rejected",
+        recipient: "ou_recipient",
+        status: "rejected",
+        original_payload: {
+          draft: {
+            title: "客户访谈复盘",
+            start_time: "2026-05-05T10:00:00+08:00",
+            end_time: null,
+            duration_minutes: 60,
+            participants: ["张三"],
+            agenda: "复盘访谈结论。",
+            location: null,
+            evidence: "周二 10 点复盘。",
+            confidence: 0.8,
+            missing_fields: []
+          }
+        }
+      })
+    );
+    expect(JSON.stringify(rejected)).toContain("已不添加");
+    expect(rejected.header.template).toBe("grey");
+    expect(rejected.elements.find((element) => element.tag === "action")).toBeUndefined();
+
+    const processing = buildFeishuInteractiveCard(
+      buildCreateKbConfirmationCard({
+        id: "conf_processing_kb",
+        target_id: "kb_processing",
+        recipient: "ou_recipient",
+        status: "confirmed",
+        original_payload: {
+          topic_name: "客户访谈沉淀",
+          meeting_ids: ["mtg_001"],
+          default_structure: ["00 总览"]
+        }
+      })
+    );
+    expect(JSON.stringify(processing)).toContain("正在添加到飞书...");
+    expect(processing.elements.find((element) => element.tag === "action")).toBeUndefined();
+
+    const failed = buildFeishuInteractiveCard(
+      buildActionConfirmationCard({
+        id: "conf_failed_action",
+        target_id: "act_failed",
+        recipient: "ou_recipient",
+        status: "failed",
+        error: "lark.task.create failed: fake task error with a very clear cause",
+        original_payload: {
+          draft: {
+            title: "整理客户访谈结论",
+            description: "汇总访谈输出。",
+            owner: "张三",
+            collaborators: [],
+            due_date: "2026-05-01",
+            priority: "P1",
+            evidence: "张三负责整理。",
+            confidence: 0.91,
+            suggested_reason: "会议明确了负责人。",
+            missing_fields: []
+          }
+        }
+      })
+    );
+    const failedJson = JSON.stringify(failed);
+    expect(failed.header.template).toBe("red");
+    expect(failedJson).toContain("添加失败");
+    expect(failedJson).toContain("fake task error");
+    expect(failed.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        { text: { content: "重试添加待办" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
+  });
+
   it("records planned send-card cli_runs when both dry-run switches are true", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const result = await sendCard({

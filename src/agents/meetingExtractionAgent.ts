@@ -10,6 +10,16 @@ const CalendarSignalWords = ["截止", "评审", "分享", "演示", "发布", "
 const CalendarReminderWords = ["截止", "提醒", "到期", "里程碑"];
 const CalendarReviewWords = ["评审", "复盘"];
 const CalendarShareWords = ["分享", "演示", "发布"];
+const UnsupportedOwnershipReasonPatterns = [
+  /接收人/,
+  /收件人/,
+  /组织者/,
+  /主持人身份/,
+  /发送.{0,6}卡片/,
+  /用户据此/,
+  /默认/
+];
+const UnsupportedCommitmentPhrases = [/用户据此.{0,12}(认领|承诺)/, /据此.{0,12}(认领|承诺)/];
 
 function readPrompt(name: string): string {
   return readFileSync(join(process.cwd(), "src/prompts", name), "utf8");
@@ -105,6 +115,63 @@ function normalizeRawExtraction(raw: unknown): unknown {
   return normalizeCalendarDrafts(asMeetingExtractionObject(raw));
 }
 
+function missingFieldsWithOwner(fields: string[]): string[] {
+  return fields.includes("owner") ? fields : [...fields, "owner"];
+}
+
+function hasOwnerEvidence(input: {
+  owner: string;
+  evidence: string;
+  suggestedReason: string;
+}): boolean {
+  const text = `${input.evidence} ${input.suggestedReason}`;
+  if (!text.includes(input.owner)) {
+    return false;
+  }
+
+  return !UnsupportedOwnershipReasonPatterns.some((pattern) => pattern.test(text));
+}
+
+function sanitizeReason(input: { owner: string | null; suggestedReason: string }): string {
+  if (input.owner !== null) {
+    return input.suggestedReason;
+  }
+
+  if (UnsupportedCommitmentPhrases.some((pattern) => pattern.test(input.suggestedReason))) {
+    return "会议证据中未明确负责人，需确认后再创建待办。";
+  }
+
+  return input.suggestedReason;
+}
+
+function sanitizeActionOwnership(extraction: MeetingExtractionResult): MeetingExtractionResult {
+  return {
+    ...extraction,
+    action_items: extraction.action_items.map((item) => {
+      const owner =
+        item.owner !== null &&
+        hasOwnerEvidence({
+          owner: item.owner,
+          evidence: item.evidence,
+          suggestedReason: item.suggested_reason
+        })
+          ? item.owner
+          : null;
+
+      return {
+        ...item,
+        owner,
+        suggested_reason: sanitizeReason({
+          owner,
+          suggestedReason: item.suggested_reason
+        }),
+        missing_fields:
+          owner === null ? missingFieldsWithOwner(item.missing_fields) : item.missing_fields
+      };
+    })
+  };
+}
+
 function briefSchemaError(error: unknown): string {
   if (error instanceof ZodError) {
     return error.issues
@@ -141,7 +208,9 @@ async function repairExtractionWithLlm(input: {
     schemaName: "MeetingExtractionResult"
   });
 
-  return MeetingExtractionResultSchema.parse(normalizeRawExtraction(repaired));
+  return sanitizeActionOwnership(
+    MeetingExtractionResultSchema.parse(normalizeRawExtraction(repaired))
+  );
 }
 
 export async function runMeetingExtractionAgent(input: {
@@ -165,7 +234,7 @@ export async function runMeetingExtractionAgent(input: {
   const normalized = normalizeRawExtraction(raw);
   const parsed = MeetingExtractionResultSchema.safeParse(normalized);
   if (parsed.success) {
-    return parsed.data;
+    return sanitizeActionOwnership(parsed.data);
   }
 
   return repairExtractionWithLlm({

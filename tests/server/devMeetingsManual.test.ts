@@ -171,7 +171,7 @@ describe("POST /dev/meetings/manual", () => {
 
     expect(secondBody.personal_workspace).toEqual({
       mode: "personal",
-      name: "Henry 个人工作台",
+      name: "个人工作台",
       recipient: "Henry"
     });
     expect(combinedSummary.action).toBeGreaterThan(0);
@@ -202,12 +202,15 @@ describe("POST /dev/meetings/manual", () => {
     };
     expect(createKbPayload).toMatchObject({
       knowledge_base_mode: "personal",
-      workspace_name: "Henry 个人工作台",
+      workspace_name: "个人工作台",
       default_structure: [
-        "00 Henry 个人工作台 / 总览",
-        "01 会议总结",
-        "02 会议转写记录",
-        "03 待办与日程索引"
+        "00 README / 项目总览",
+        "01 Project Board / 进度与待办",
+        "02 Timeline / 里程碑与甘特",
+        "03 Meetings / 会议记录",
+        "04 Docs & Resources / 文档与资料",
+        "05 Decisions & Risks / 决策与风险",
+        "06 Calendar / 日程索引"
       ]
     });
     expect(createKbPayload.candidate_meeting_refs).toEqual(
