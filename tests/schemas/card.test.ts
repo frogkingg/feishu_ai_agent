@@ -30,6 +30,13 @@ describe("DryRunConfirmationCardSchema", () => {
           input_type: "text",
           value: "整理流程",
           required: true
+        },
+        {
+          key: "owner",
+          label: "负责人",
+          input_type: "person",
+          value: null,
+          required: true
         }
       ],
       actions: [

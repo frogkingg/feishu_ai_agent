@@ -7,7 +7,11 @@ import { loadConfig } from "../../src/config";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
 import { type LarkCliRunner } from "../../src/tools/larkCli";
-import { buildFeishuInteractiveCard, sendCard } from "../../src/tools/larkIm";
+import {
+  buildFeishuInteractiveCard,
+  sendCard,
+  syncConfirmationCardStatus
+} from "../../src/tools/larkIm";
 
 const card = buildActionConfirmationCard({
   id: "conf_card_send",
@@ -42,10 +46,20 @@ describe("larkIm.sendCard", () => {
     return args[contentIndex + 1];
   }
 
+  function dataArg(args: string[]) {
+    const dataIndex = args.indexOf("--data");
+    expect(dataIndex).toBeGreaterThanOrEqual(0);
+    return args[dataIndex + 1];
+  }
+
   it("builds an interactive card payload from the dry-run preview", () => {
     const interactive = buildFeishuInteractiveCard(card);
     const serialized = JSON.stringify(interactive);
 
+    expect(interactive.config).toMatchObject({
+      wide_screen_mode: true,
+      update_multi: true
+    });
     expect(interactive.header.title.content).toBe(`📌 ${card.title}`);
     expect(interactive.header.template).toBe("turquoise");
     expect(serialized).toContain("📌 待办");
@@ -125,7 +139,8 @@ describe("larkIm.sendCard", () => {
     const actionElement = interactive.elements.find((element) => element.tag === "action");
 
     expect(serialized).toContain("缺少负责人，需先补全后再添加待办");
-    expect(serialized).toContain('"name":"owner"');
+    expect(serialized).not.toContain('"name":"owner"');
+    expect(serialized).not.toContain('"tag":"select_person"');
     expect(serialized).toContain('"action":"complete_owner"');
     expect(serialized).not.toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
@@ -138,6 +153,56 @@ describe("larkIm.sendCard", () => {
             action: "complete_owner",
             confirmation_id: "conf_missing_owner",
             request_id: "conf_missing_owner",
+            edited_payload: "$editable_fields"
+          }
+        },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
+  });
+
+  it("renders owner completion cards with Feishu person selection and save action", () => {
+    const completionCard = buildActionConfirmationCard({
+      id: "conf_owner_completion",
+      target_id: "act_owner_completion",
+      recipient: "ou_recipient",
+      status: "edited",
+      original_payload: {
+        draft: {
+          title: "整理客户访谈结论",
+          description: "汇总访谈输出。",
+          owner: null,
+          collaborators: [],
+          due_date: "2026-05-03",
+          priority: "P1",
+          evidence: "会议中提出需要整理客户访谈结论，但没有明确负责人。",
+          confidence: 0.82,
+          suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+          missing_fields: ["owner"]
+        }
+      }
+    });
+
+    const interactive = buildFeishuInteractiveCard(completionCard);
+    const serialized = JSON.stringify(interactive);
+    const actionElement = interactive.elements.find((element) => element.tag === "action");
+
+    expect(serialized).toContain("请选择负责人，保存后会直接添加待办");
+    expect(serialized).toContain('"tag":"select_person"');
+    expect(serialized).toContain('"name":"owner"');
+    expect(serialized).not.toContain("@确认待办");
+    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).not.toContain('"action":"confirm_with_edits"');
+    expect(actionElement).toMatchObject({
+      actions: [
+        {
+          text: { content: "保存并添加待办" },
+          value: {
+            action_key: "complete_owner",
+            action: "complete_owner",
+            confirmation_id: "conf_owner_completion",
+            request_id: "conf_owner_completion",
             edited_payload: "$editable_fields"
           }
         },
@@ -421,19 +486,11 @@ describe("larkIm.sendCard", () => {
     );
     expect(JSON.stringify(executed)).toContain("已添加待办");
     expect(executed.header.template).toBe("green");
-    const executedAction = executed.elements.find((element) => element.tag === "action");
-    expect(executedAction).toMatchObject({
-      actions: [
-        {
-          name: "status_executed",
-          text: { content: "已添加待办" },
-          type: "primary",
-          disabled: true
-        }
-      ]
-    });
-    expect(JSON.stringify(executedAction)).not.toContain('"action":"confirm"');
-    expect(JSON.stringify(executedAction)).not.toContain("behaviors");
+    const executedJson = JSON.stringify(executed);
+    expect(executed.elements.find((element) => element.tag === "action")).toBeUndefined();
+    expect(executedJson).not.toContain("disabled");
+    expect(executedJson).not.toContain('"action":"confirm"');
+    expect(executedJson).not.toContain("behaviors");
 
     const rejected = buildFeishuInteractiveCard(
       buildCalendarConfirmationCard({
@@ -459,19 +516,11 @@ describe("larkIm.sendCard", () => {
     );
     expect(JSON.stringify(rejected)).toContain("已不添加");
     expect(rejected.header.template).toBe("grey");
-    const rejectedAction = rejected.elements.find((element) => element.tag === "action");
-    expect(rejectedAction).toMatchObject({
-      actions: [
-        {
-          name: "status_rejected",
-          text: { content: "已不添加" },
-          type: "default",
-          disabled: true
-        }
-      ]
-    });
-    expect(JSON.stringify(rejectedAction)).not.toContain('"action":"confirm"');
-    expect(JSON.stringify(rejectedAction)).not.toContain("behaviors");
+    const rejectedJson = JSON.stringify(rejected);
+    expect(rejected.elements.find((element) => element.tag === "action")).toBeUndefined();
+    expect(rejectedJson).not.toContain("disabled");
+    expect(rejectedJson).not.toContain('"action":"confirm"');
+    expect(rejectedJson).not.toContain("behaviors");
 
     const processing = buildFeishuInteractiveCard(
       buildCreateKbConfirmationCard({
@@ -486,17 +535,10 @@ describe("larkIm.sendCard", () => {
         }
       })
     );
-    expect(JSON.stringify(processing)).toContain("正在添加到飞书...");
-    expect(processing.elements.find((element) => element.tag === "action")).toMatchObject({
-      actions: [
-        {
-          name: "status_confirmed",
-          text: { content: "正在添加到飞书..." },
-          type: "default",
-          disabled: true
-        }
-      ]
-    });
+    const processingJson = JSON.stringify(processing);
+    expect(processingJson).toContain("正在添加到飞书...");
+    expect(processing.elements.find((element) => element.tag === "action")).toBeUndefined();
+    expect(processingJson).not.toContain("disabled");
 
     const failed = buildFeishuInteractiveCard(
       buildActionConfirmationCard({
@@ -525,22 +567,84 @@ describe("larkIm.sendCard", () => {
     expect(failed.header.template).toBe("red");
     expect(failedJson).toContain("添加失败");
     expect(failedJson).toContain("fake task error");
-    expect(failed.elements.find((element) => element.tag === "action")).toMatchObject({
-      actions: [
-        {
-          name: "status_failed",
-          text: { content: "添加失败" },
-          type: "danger",
-          disabled: true
-        }
-      ]
+    expect(failed.elements.find((element) => element.tag === "action")).toBeUndefined();
+    expect(failedJson).not.toContain("disabled");
+    expect(failedJson).not.toContain('"action":"confirm"');
+    expect(failedJson).not.toContain("behaviors");
+  });
+
+  it("falls back from card-action token update to message PATCH with terminal card content", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const calls: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      calls.push(args);
+      if (args[0] === "api" && args[1] === "POST") {
+        throw new Error("card action token expired");
+      }
+      if (args[0] === "api" && args[1] === "PATCH") {
+        return { stdout: JSON.stringify({ ok: true }), stderr: "" };
+      }
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    };
+    const confirmation = repos.createConfirmationRequest({
+      id: "conf_sync_status",
+      request_type: "action",
+      target_id: "act_sync_status",
+      recipient: "ou_recipient",
+      card_message_id: "om_existing_card",
+      status: "executed",
+      original_payload_json: JSON.stringify({}),
+      edited_payload_json: null,
+      confirmed_at: null,
+      executed_at: null,
+      error: null
     });
-    expect(
-      JSON.stringify(failed.elements.find((element) => element.tag === "action"))
-    ).not.toContain('"action":"confirm"');
-    expect(
-      JSON.stringify(failed.elements.find((element) => element.tag === "action"))
-    ).not.toContain("behaviors");
+    const finalCard = {
+      ...card,
+      status: "executed" as const,
+      status_text: "已添加待办",
+      actions: []
+    };
+
+    const result = await syncConfirmationCardStatus({
+      repos,
+      config: loadConfig({
+        feishuDryRun: false,
+        feishuCardSendDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
+      confirmation,
+      card: finalCard,
+      updateToken: "card_action_token",
+      messageId: "om_existing_card",
+      chatId: "oc_card_chat",
+      runner
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      method: "update",
+      status: "updated",
+      card_message_id: "om_existing_card"
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(
+      expect.arrayContaining(["api", "POST", "/open-apis/interactive/v1/card/update", "--data"])
+    );
+    const tokenData = JSON.parse(dataArg(calls[0])) as { token: string; card: { config: unknown } };
+    expect(tokenData.token).toBe("card_action_token");
+    expect(tokenData.card.config).toMatchObject({ update_multi: true });
+
+    expect(calls[1]).toEqual(
+      expect.arrayContaining(["api", "PATCH", "/open-apis/im/v1/messages/om_existing_card"])
+    );
+    expect(calls[1]).not.toContain("--params");
+    const patchData = JSON.parse(dataArg(calls[1])) as { content: string };
+    const patchedCard = JSON.parse(patchData.content) as { elements: Array<{ tag: string }> };
+    expect(JSON.stringify(patchedCard)).toContain("已添加待办");
+    expect(JSON.stringify(patchedCard)).not.toContain("disabled");
+    expect(patchedCard.elements.some((element) => element.tag === "action")).toBe(false);
+    expect(repos.listCliRuns().map((run) => run.status)).toEqual(["failed", "success"]);
   });
 
   it("records planned send-card cli_runs when both dry-run switches are true", async () => {

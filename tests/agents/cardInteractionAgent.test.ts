@@ -137,6 +137,49 @@ describe("CardInteractionAgent", () => {
     expect(card.status_text).toBe("缺少负责人，需先补全后再添加待办");
   });
 
+  it("builds a lightweight owner completion card with a person picker", () => {
+    const card = expectValidCard(
+      buildActionConfirmationCard({
+        id: "conf_owner_completion",
+        target_id: "act_owner_completion",
+        recipient: "ou_recipient",
+        status: "edited",
+        original_payload: {
+          draft: {
+            ...actionDraft,
+            owner: null,
+            evidence: "会议中提出需要整理操作流程，但没有明确负责人。",
+            suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+            missing_fields: ["owner"]
+          }
+        }
+      })
+    );
+
+    expect(card).toMatchObject({
+      card_type: "action_confirmation",
+      title: "补全负责人：整理无人机操作流程",
+      status_text: "请选择负责人，保存后会直接添加待办"
+    });
+    expect(card.editable_fields).toEqual([
+      {
+        key: "owner",
+        label: "负责人",
+        input_type: "person",
+        value: null,
+        required: true
+      }
+    ]);
+    expect(card.actions.find((action) => action.key === "complete_owner")).toMatchObject({
+      label: "保存并添加待办",
+      payload_template: {
+        edited_payload: "$editable_fields"
+      }
+    });
+    expect(JSON.stringify(card)).not.toContain("@确认待办");
+    expect(JSON.stringify(card)).not.toContain("Henry");
+  });
+
   it("builds calendar confirmation dry-run card JSON", () => {
     const card = expectValidCard(
       buildCalendarConfirmationCard({

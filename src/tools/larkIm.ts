@@ -47,6 +47,7 @@ export interface SyncCardStatusInput {
   config?: AppConfig;
   confirmation: ConfirmationRequestRow;
   card: DryRunConfirmationCard;
+  updateToken?: string | null;
   messageId?: string | null;
   chatId?: string | null;
   recipient?: string | null;
@@ -67,7 +68,6 @@ type FeishuButton = {
   text: FeishuText;
   type: "primary" | "danger" | "default";
   value?: Record<string, unknown>;
-  disabled?: boolean;
   behaviors?: Array<{
     type: "callback";
     value: Record<string, unknown>;
@@ -110,6 +110,12 @@ type FeishuCardElement =
       initial_option?: string;
     }
   | {
+      tag: "select_person";
+      name: string;
+      placeholder: FeishuText;
+      value?: string;
+    }
+  | {
       tag: "action";
       actions: FeishuButton[];
     };
@@ -117,6 +123,7 @@ type FeishuCardElement =
 interface FeishuInteractiveCard {
   config: {
     wide_screen_mode: boolean;
+    update_multi: boolean;
   };
   header: {
     template: FeishuHeaderTemplate;
@@ -222,6 +229,15 @@ function buildEditableElement(
       placeholder,
       options,
       initial_option: defaultValue
+    };
+  }
+
+  if (field.input_type === "person") {
+    return {
+      tag: "select_person",
+      name: field.key,
+      placeholder,
+      value: defaultValue
     };
   }
 
@@ -483,6 +499,14 @@ function requiredEditableKeys(card: DryRunConfirmationCard): string[] {
 }
 
 function requiredEditableFields(card: DryRunConfirmationCard) {
+  if (
+    card.card_type === "action_confirmation" &&
+    card.status === "sent" &&
+    hasMissingEditableField(card, "owner")
+  ) {
+    return [];
+  }
+
   const requiredKeys = new Set(requiredEditableKeys(card));
   return card.editable_fields
     .filter((field) => requiredKeys.has(field.key))
@@ -534,21 +558,6 @@ function visibleActions(card: DryRunConfirmationCard) {
     .filter((action): action is DryRunConfirmationCard["actions"][number] => Boolean(action));
 }
 
-function terminalStatusButton(card: DryRunConfirmationCard): FeishuButton | null {
-  if (!["confirmed", "executed", "rejected", "failed"].includes(card.status)) {
-    return null;
-  }
-
-  const label = card.status_text ?? (card.status === "confirmed" ? "处理中" : "已处理");
-  return {
-    tag: "button",
-    name: `status_${card.status}`,
-    text: plainText(label),
-    type: card.status === "executed" ? "primary" : card.status === "failed" ? "danger" : "default",
-    disabled: true
-  };
-}
-
 function isEditableRenderStatus(status: DryRunConfirmationCard["status"]): boolean {
   return status === "draft" || status === "sent" || status === "edited";
 }
@@ -576,6 +585,10 @@ function buttonLabel(
   }
 
   if (key === "complete_owner") {
+    if (card.card_type === "action_confirmation" && card.status === "edited") {
+      return `${prefix}${retryPrefix}保存并添加待办`;
+    }
+
     return `${prefix}${retryPrefix}补全负责人`;
   }
 
@@ -665,14 +678,6 @@ export function buildFeishuInteractiveCard(
     );
   }
 
-  const statusButton = terminalStatusButton(card);
-  if (statusButton !== null) {
-    elements.push({
-      tag: "action",
-      actions: [statusButton]
-    });
-  }
-
   const actions = visibleActions(card);
   if (actions.length > 0) {
     elements.push({
@@ -701,7 +706,8 @@ export function buildFeishuInteractiveCard(
 
   return {
     config: {
-      wide_screen_mode: true
+      wide_screen_mode: true,
+      update_multi: true
     },
     header: {
       template: headerTemplate(card),
@@ -771,40 +777,12 @@ function failedResult(input: {
   };
 }
 
-function statusFallbackTitle(card: DryRunConfirmationCard): string {
-  if (card.status_text) {
-    return card.status_text;
-  }
-
-  if (card.status === "sent") {
-    return "待处理";
-  }
-
-  return card.status;
-}
-
 function buildStatusFallbackCard(card: DryRunConfirmationCard): FeishuInteractiveCard {
-  const template = headerTemplate(card);
-  const lines = [`**${statusFallbackTitle(card)}**`, compactSummary(card)];
-  if (card.status === "failed" && card.error_summary) {
-    lines.push(`错误摘要：${compactText(card.error_summary, 120)}`);
-  }
-
-  return {
-    config: {
-      wide_screen_mode: true
-    },
-    header: {
-      template,
-      title: plainText(statusFallbackTitle(card))
-    },
-    elements: [
-      {
-        tag: "markdown",
-        content: lines.join("\n")
-      }
-    ]
-  };
+  return buildFeishuInteractiveCard({
+    ...card,
+    editable_fields: [],
+    actions: []
+  });
 }
 
 function syncSkipped(input: {
@@ -924,19 +902,74 @@ export async function syncConfirmationCardStatus(
 ): Promise<SyncCardStatusResult> {
   const config = input.config ?? loadConfig();
   const identity = input.identity ?? "bot";
+  const updateToken = trimToNull(input.updateToken);
   const messageId = trimToNull(input.messageId ?? input.confirmation.card_message_id);
   const chatId = trimToNull(input.chatId);
   const recipient = trimToNull(input.recipient ?? input.confirmation.recipient);
+  const cardContent = buildFeishuInteractiveCard(input.card);
+  const cardJson = JSON.stringify(cardContent);
 
-  if (messageId !== null) {
-    const cardJson = JSON.stringify(buildFeishuInteractiveCard(input.card));
+  if (updateToken !== null) {
     const result = await runLarkCli(
       [
-        "im",
-        "messages",
-        "patch",
-        "--params",
-        JSON.stringify({ message_id: messageId }),
+        "api",
+        "POST",
+        "/open-apis/interactive/v1/card/update",
+        "--data",
+        JSON.stringify({
+          token: updateToken,
+          card: cardContent
+        }),
+        "--as",
+        identity
+      ],
+      {
+        repos: input.repos,
+        config,
+        toolName: "lark.im.update_card",
+        dryRun: config.feishuCardSendDryRun,
+        expectJson: true,
+        runner: input.runner
+      }
+    );
+
+    if (result.dryRun || result.status === "planned") {
+      return {
+        ok: true,
+        method: "update",
+        status: "planned",
+        dry_run: true,
+        update_cli_run_id: result.id,
+        fallback_cli_run_id: null,
+        card_message_id: messageId,
+        recipient,
+        chat_id: chatId,
+        error: null
+      };
+    }
+
+    if (result.status === "success") {
+      return {
+        ok: true,
+        method: "update",
+        status: "updated",
+        dry_run: false,
+        update_cli_run_id: result.id,
+        fallback_cli_run_id: null,
+        card_message_id: messageId,
+        recipient,
+        chat_id: chatId,
+        error: null
+      };
+    }
+  }
+
+  if (messageId !== null) {
+    const result = await runLarkCli(
+      [
+        "api",
+        "PATCH",
+        `/open-apis/im/v1/messages/${messageId}`,
         "--data",
         JSON.stringify({ content: cardJson }),
         "--as",

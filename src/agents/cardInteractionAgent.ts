@@ -341,6 +341,17 @@ function actionConfirmationActions(requestId: string): CardAction[] {
   ];
 }
 
+function actionOwnerCompletionActions(requestId: string): CardAction[] {
+  return actionConfirmationActions(requestId).map((action) =>
+    action.key === "complete_owner"
+      ? {
+          ...action,
+          label: "保存并添加待办"
+        }
+      : action
+  );
+}
+
 function calendarConfirmationActions(requestId: string): CardAction[] {
   return [
     {
@@ -589,6 +600,55 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   const meetingReference = meetingReferenceFromPayload(payload);
   const cardType = "action_confirmation" as const;
   const ownerMissing = draft.owner === null || draft.missing_fields.includes("owner");
+  if (ownerMissing && parsed.status === "edited") {
+    const actions = actionOwnerCompletionActions(parsed.id).filter(
+      (action) => action.key !== "confirm" && action.key !== "confirm_with_edits"
+    );
+
+    return buildCard({
+      card_type: cardType,
+      request_id: parsed.id,
+      target_id: publicTargetId(parsed.target_id),
+      recipient: parsed.recipient,
+      status: parsed.status,
+      status_text: "请选择负责人，保存后会直接添加待办",
+      ...statusFields(parsed),
+      title: `补全负责人：${draft.title}`,
+      summary: "选择负责人后会直接保存 owner，并添加飞书待办。",
+      sections: [
+        section({
+          title: "待办概要",
+          fields: [
+            displayField("title", "任务标题", draft.title),
+            displayField("due_date", "截止时间", draft.due_date),
+            displayField("priority", "优先级", draft.priority)
+          ]
+        }),
+        section({
+          title: "会议依据",
+          fields: [
+            ...(meetingReference !== null
+              ? [displayField("meeting_reference", "会议", meetingReference)]
+              : []),
+            displayField("evidence", "依据", draft.evidence)
+          ]
+        })
+      ],
+      editable_fields: [
+        editableField({
+          key: "owner",
+          label: "负责人",
+          inputType: "person",
+          value: draft.owner,
+          required: true
+        })
+      ],
+      actions: actionsForStatus({ status: parsed.status, actions }),
+      dry_run: true,
+      version: "dry_run_v1"
+    });
+  }
+
   const actions = actionConfirmationActions(parsed.id).filter((action) =>
     ownerMissing
       ? action.key !== "confirm" && action.key !== "confirm_with_edits"
@@ -639,9 +699,9 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
         ? [
             section({
               title: "补全负责人",
-              helpText: "当前会议证据没有明确负责人。请补充 owner 后先保存，再二次确认添加待办。",
+              helpText: "当前会议证据没有明确负责人。请点击补全负责人后选择 owner。",
               fields: [
-                displayField("owner_completion", "补全方式", "文本输入补全负责人，保存后再次确认")
+                displayField("owner_completion", "补全方式", "点击补全负责人，选择后直接添加待办")
               ]
             })
           ]

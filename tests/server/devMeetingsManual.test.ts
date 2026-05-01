@@ -205,12 +205,12 @@ describe("POST /dev/meetings/manual", () => {
       knowledge_base_mode: "personal",
       workspace_name: personalWorkspaceName(),
       default_structure: [
-        "00 README / 项目总览",
-        "01 Project Board / 进度与待办",
-        "02 Timeline / 里程碑与甘特",
-        "03 Meetings / 会议记录",
-        "04 Docs & Resources / 文档与资料",
-        "05 Decisions & Risks / 决策与风险",
+        "00 README / Dashboard",
+        "01 Core Content / 主题模块",
+        "02 Merged FAQ / 问题合并",
+        "03 Archive / 来源追溯",
+        "04 Project Board / 行动与风险",
+        "05 Timeline / 时间轴与日程",
         "06 Calendar / 日程索引"
       ]
     });

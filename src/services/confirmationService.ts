@@ -74,6 +74,48 @@ function mergeEditedPayload(input: {
   };
 }
 
+function ownerIdFromValue(value: unknown, depth = 0): string | null {
+  if (depth > 8) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const ownerId = ownerIdFromValue(item, depth + 1);
+      if (ownerId !== null) {
+        return ownerId;
+      }
+    }
+    return null;
+  }
+
+  const record = asObject(value);
+  for (const key of ["open_id", "user_id", "id", "value"] as const) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      const ownerId = ownerIdFromValue(record[key], depth + 1);
+      if (ownerId !== null) {
+        return ownerId;
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeActionOwnerPatch(payload: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.prototype.hasOwnProperty.call(payload, "owner")) {
+    return payload;
+  }
+
+  const owner = ownerIdFromValue(payload.owner);
+  return owner === null ? payload : { ...payload, owner };
+}
+
 function hasText(value: string | null): boolean {
   return value !== null && value.trim().length > 0;
 }
@@ -223,6 +265,7 @@ export function completeActionOwner(input: {
 }): {
   confirmation: ConfirmationRequestRow;
   owner: string | null;
+  editedPayload: Record<string, unknown>;
 } {
   const request = input.repos.getConfirmationRequest(input.id);
   if (!request) {
@@ -234,18 +277,21 @@ export function completeActionOwner(input: {
   if (request.status === "executed") {
     return {
       confirmation: request,
-      owner: null
+      owner: null,
+      editedPayload: {}
     };
   }
   if (request.status === "rejected") {
     throw new Error(`Cannot complete owner for rejected request: ${input.id}`);
   }
 
-  const editedPayload = mergeEditedPayload({
-    existingJson: request.edited_payload_json,
-    editedPayload: input.editedPayload
-  });
-  const owner = typeof editedPayload.owner === "string" ? editedPayload.owner.trim() : "";
+  const editedPayload = normalizeActionOwnerPatch(
+    mergeEditedPayload({
+      existingJson: request.edited_payload_json,
+      editedPayload: input.editedPayload
+    })
+  );
+  const owner = ownerIdFromValue(editedPayload.owner) ?? "";
 
   input.repos.updateConfirmationRequest({
     id: request.id,
@@ -262,7 +308,8 @@ export function completeActionOwner(input: {
       error: null,
       updated_at: nowIso()
     },
-    owner: owner.length > 0 ? owner : null
+    owner: owner.length > 0 ? owner : null,
+    editedPayload
   };
 }
 

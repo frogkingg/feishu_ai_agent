@@ -380,6 +380,7 @@ function extractCardCallbackPayload(payload: unknown): {
   actionKey: string | null;
   editedPayload?: unknown;
   reason?: string | null;
+  updateToken?: string | null;
   messageId?: string | null;
   chatId?: string | null;
 } {
@@ -423,6 +424,13 @@ function extractCardCallbackPayload(payload: unknown): {
   );
   const reasonValue = valueFromActionPayload(actionValue, "reason");
   const reason = stringValue(reasonValue);
+  const updateToken = firstString([
+    valueAtPath(payload, ["event", "token"]),
+    valueAtPath(payload, ["event", "context", "token"]),
+    valueAtPath(payload, ["event", "action", "token"]),
+    valueAtPath(payload, ["action", "token"]),
+    root.token
+  ]);
   const messageId = firstString([
     valueAtPath(payload, ["event", "context", "open_message_id"]),
     valueAtPath(payload, ["event", "context", "message_id"]),
@@ -445,6 +453,7 @@ function extractCardCallbackPayload(payload: unknown): {
     actionKey,
     editedPayload,
     reason,
+    updateToken,
     messageId,
     chatId
   };
@@ -537,6 +546,7 @@ async function syncCardStatusForRequest(input: {
   repos: Repositories;
   config: AppConfig;
   request: ConfirmationRequestRow;
+  updateToken?: string | null;
   messageId?: string | null;
   chatId?: string | null;
   runner?: LarkCliRunner;
@@ -547,6 +557,7 @@ async function syncCardStatusForRequest(input: {
     config: input.config,
     confirmation: latest,
     card: buildConfirmationCardFromRequest(latest),
+    updateToken: input.updateToken,
     messageId: input.messageId,
     chatId: input.chatId,
     runner: input.runner
@@ -859,6 +870,7 @@ export function buildServer(input: {
             repos: input.repos,
             config: input.config,
             request: execution.confirmation,
+            updateToken: parsed.updateToken,
             messageId: parsed.messageId,
             chatId: parsed.chatId,
             runner: input.larkCliRunner
@@ -884,6 +896,7 @@ export function buildServer(input: {
             repos: input.repos,
             config: input.config,
             request: failed,
+            updateToken: parsed.updateToken,
             messageId: parsed.messageId,
             chatId: parsed.chatId,
             runner: input.larkCliRunner
@@ -917,6 +930,7 @@ export function buildServer(input: {
           repos: input.repos,
           config: input.config,
           request: rejected,
+          updateToken: parsed.updateToken,
           messageId: parsed.messageId,
           chatId: parsed.chatId,
           runner: input.larkCliRunner
@@ -941,10 +955,83 @@ export function buildServer(input: {
           editedPayload: parsed.editedPayload
         });
 
+        if (completion.owner !== null) {
+          input.repos.updateConfirmationRequest({
+            id: requestId,
+            status: "confirmed",
+            edited_payload_json: JSON.stringify(completion.editedPayload),
+            confirmed_at: nowIso(),
+            error: null
+          });
+          const acceptedConfirmation =
+            input.repos.getConfirmationRequest(requestId) ?? confirmation;
+
+          void (async () => {
+            const execution = await confirmRequest({
+              repos: input.repos,
+              config: input.config,
+              id: requestId,
+              editedPayload: completion.editedPayload,
+              runner: input.larkCliRunner
+            });
+            const finalUpdate = await syncCardStatusForRequest({
+              repos: input.repos,
+              config: input.config,
+              request: execution.confirmation,
+              updateToken: parsed.updateToken,
+              messageId: parsed.messageId,
+              chatId: parsed.chatId,
+              runner: input.larkCliRunner
+            });
+            if (!finalUpdate.ok) {
+              request.log.warn(
+                cardStatusLogContext({
+                  confirmationId: requestId,
+                  phase: "final",
+                  result: finalUpdate
+                }),
+                "card status update fell back or failed after owner completion execution"
+              );
+            }
+          })().catch(async (error) => {
+            input.repos.updateConfirmationRequest({
+              id: requestId,
+              status: "failed",
+              error: briefError(error)
+            });
+            const failed = input.repos.getConfirmationRequest(requestId) ?? confirmation;
+            const finalUpdate = await syncCardStatusForRequest({
+              repos: input.repos,
+              config: input.config,
+              request: failed,
+              updateToken: parsed.updateToken,
+              messageId: parsed.messageId,
+              chatId: parsed.chatId,
+              runner: input.larkCliRunner
+            });
+            request.log.error(
+              {
+                err: error,
+                confirmation_id: requestId,
+                card_status_method: finalUpdate.method,
+                card_status_ok: finalUpdate.ok
+              },
+              "async owner completion confirm failed"
+            );
+          });
+
+          return cardCallbackResponse({
+            type: "info",
+            content: CardActionAcceptedMessage,
+            confirmation: acceptedConfirmation
+          });
+        }
+
         void syncCardStatusForRequest({
           repos: input.repos,
           config: input.config,
           request: completion.confirmation,
+          updateToken: parsed.updateToken,
           messageId: parsed.messageId,
           chatId: parsed.chatId,
           runner: input.larkCliRunner
@@ -956,11 +1043,8 @@ export function buildServer(input: {
         });
 
         return cardCallbackResponse({
-          type: completion.owner === null ? "info" : "success",
-          content:
-            completion.owner === null
-              ? "请先补全负责人，再添加待办"
-              : "负责人已补全，请再次确认后添加待办",
+          type: "info",
+          content: "请选择负责人后保存并添加待办",
           confirmation: completion.confirmation
         });
       }
@@ -988,6 +1072,7 @@ export function buildServer(input: {
           config: input.config,
           confirmation: latest,
           card: pendingCard,
+          updateToken: parsed.updateToken,
           messageId: parsed.messageId,
           chatId: parsed.chatId,
           runner: input.larkCliRunner
@@ -1219,6 +1304,26 @@ export function buildServer(input: {
         id: params.id,
         editedPayload: body.edited_payload ?? request.body
       });
+
+      if (result.owner !== null) {
+        const execution = await confirmRequest({
+          repos: input.repos,
+          config: input.config,
+          id: params.id,
+          editedPayload: result.editedPayload,
+          runner: input.larkCliRunner
+        });
+
+        return {
+          ok: true,
+          dry_run: true,
+          completion: "owner_recorded_and_task_requested",
+          owner: result.owner,
+          confirmation: execution.confirmation,
+          result: execution.result,
+          dry_run_card: buildConfirmationCardFromRequest(execution.confirmation)
+        };
+      }
 
       return {
         ok: true,

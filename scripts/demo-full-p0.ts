@@ -661,20 +661,29 @@ async function completeOwner(
   step(context, `POST /dev/confirmations/${id}/complete-owner`);
   const result = await requestJson<{
     ok: boolean;
-    completion: "owner_missing" | "owner_recorded";
+    completion: "owner_missing" | "owner_recorded" | "owner_recorded_and_task_requested";
     confirmation: ConfirmationRequest;
+    result?: unknown;
   }>(context, "POST", `/dev/confirmations/${id}/complete-owner`, {
     edited_payload: editedPayload
   });
   assertDemo(result.ok === true, `Owner completion ${id} did not return ok`);
   assertDemo(
-    result.completion === "owner_recorded",
+    result.completion === "owner_recorded" ||
+      result.completion === "owner_recorded_and_task_requested",
     `Owner completion ${id} did not record owner; completion=${result.completion}`
   );
-  assertDemo(
-    result.confirmation.status === "edited",
-    `Owner completion ${id} did not enter edited state; status=${result.confirmation.status}`
-  );
+  if (result.completion === "owner_recorded_and_task_requested") {
+    assertDemo(
+      result.confirmation.status === "executed",
+      `Owner completion ${id} did not execute task; status=${result.confirmation.status}`
+    );
+  } else {
+    assertDemo(
+      result.confirmation.status === "edited",
+      `Owner completion ${id} did not enter edited state; status=${result.confirmation.status}`
+    );
+  }
   ok(context, `completed owner for action confirmation ${id}`);
   return result.confirmation;
 }
@@ -685,7 +694,14 @@ async function confirmActionRequest(
   editedPayload?: unknown
 ): Promise<ConfirmResponse> {
   if (actionOwnerMissing(request)) {
-    await completeOwner(context, request.id, editedPayload ?? DEMO_OWNER_COMPLETION);
+    const ownerCompleted = await completeOwner(
+      context,
+      request.id,
+      editedPayload ?? DEMO_OWNER_COMPLETION
+    );
+    if (ownerCompleted.status === "executed") {
+      return { confirmation: ownerCompleted, result: { completed_owner: true } };
+    }
     return confirmRequest(context, request.id);
   }
 

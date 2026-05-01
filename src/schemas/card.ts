@@ -20,6 +20,7 @@ export const CardFieldInputTypeSchema = z.enum([
   "datetime",
   "number",
   "select",
+  "person",
   "multi_text",
   "readonly"
 ]);
