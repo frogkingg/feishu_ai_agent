@@ -357,6 +357,62 @@ describe("confirm action request", () => {
     expect(updatedAction?.suggested_reason).toContain("以用户确认结果为准");
   });
 
+  it("keeps owner-missing confirmations in completion state instead of creating a task", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createActionTestMeeting(repos);
+    const action = repos.createActionItem({
+      id: "act_missing_owner_completion",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "整理客户访谈结论",
+      description: "汇总访谈输出。",
+      owner: null,
+      collaborators_json: JSON.stringify([]),
+      due_date: "2026-05-08",
+      priority: "P1",
+      evidence: "会议中提出需要整理客户访谈结论，但没有明确负责人。",
+      confidence: 0.84,
+      suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+      missing_fields_json: JSON.stringify(["owner"]),
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null,
+      rejection_reason: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "action",
+      targetId: action.id,
+      recipient: meeting.organizer,
+      originalPayload: { draft: action }
+    });
+
+    const result = await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: true, larkCliBin: "definitely-not-real-lark" }),
+      id: request.id
+    });
+
+    const updatedRequest = repos.getConfirmationRequest(request.id);
+    const updatedAction = repos.getActionItem(action.id);
+    expect(result.result).toMatchObject({
+      completion_required: true,
+      missing_fields: ["owner"]
+    });
+    expect(updatedRequest).toMatchObject({
+      status: "edited",
+      executed_at: null,
+      error: null
+    });
+    expect(updatedAction).toMatchObject({
+      owner: null,
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null
+    });
+    expect(repos.listCliRuns()).toHaveLength(0);
+  });
+
   it("marks confirmation failed in real mode when the fake lark CLI runner fails", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const failingRunner: LarkCliRunner = async () => {

@@ -86,6 +86,8 @@ SourceMention 格式：
 4. 不确定负责人时 owner = null，并在 missing_fields 中加入 "owner"。
 5. 不确定截止时间时 due_date = null，并在 missing_fields 中加入 "due_date"。
 6. due_date 必须是 YYYY-MM-DD 格式，例如 "2026-05-01"。
+   6a. 如果会议输入中提供 meeting_started_at，所有“今天、明天、后天、本周五、下周五、周五前、下周、月底”等相对日期都必须以 meeting_started_at 为基准归一，不要以当前系统日期为基准。
+   6b. 只有日期没有小时的表达可用于 action due_date；calendar start_time 必须有明确日期和小时，否则 start_time = null，并在 missing_fields 中加入 "start_time"。
 7. 每个 calendar draft 必须有 title。
 8. 每个 calendar draft 必须有 evidence。
 9. start_time 和 end_time 如果不确定，必须为 null。

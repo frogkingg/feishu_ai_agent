@@ -61,6 +61,19 @@ interface FeishuText {
 
 type FeishuHeaderTemplate = "blue" | "turquoise" | "green" | "orange" | "red" | "grey";
 
+type FeishuButton = {
+  tag: "button";
+  name: string;
+  text: FeishuText;
+  type: "primary" | "danger" | "default";
+  value?: Record<string, unknown>;
+  disabled?: boolean;
+  behaviors?: Array<{
+    type: "callback";
+    value: Record<string, unknown>;
+  }>;
+};
+
 type FeishuCardElement =
   | {
       tag: "markdown";
@@ -98,17 +111,7 @@ type FeishuCardElement =
     }
   | {
       tag: "action";
-      actions: Array<{
-        tag: "button";
-        name: string;
-        text: FeishuText;
-        type: "primary" | "danger" | "default";
-        value: Record<string, unknown>;
-        behaviors: Array<{
-          type: "callback";
-          value: Record<string, unknown>;
-        }>;
-      }>;
+      actions: FeishuButton[];
     };
 
 interface FeishuInteractiveCard {
@@ -487,10 +490,19 @@ function requiredEditableFields(card: DryRunConfirmationCard) {
     .slice(0, 3);
 }
 
+function hasMissingEditableField(card: DryRunConfirmationCard, key: string): boolean {
+  const field = card.editable_fields.find((item) => item.key === key);
+  return field === undefined ? false : hasMissingValue(field);
+}
+
 function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
   const hasRequiredEdits = requiredEditableFields(card).length > 0;
 
   if (card.card_type === "action_confirmation") {
+    if (hasMissingEditableField(card, "owner")) {
+      return ["complete_owner", "remind_later", "reject"];
+    }
+
     return hasRequiredEdits
       ? ["confirm_with_edits", "remind_later", "reject"]
       : ["confirm", "remind_later", "reject"];
@@ -512,7 +524,7 @@ function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
 }
 
 function visibleActions(card: DryRunConfirmationCard) {
-  if (["confirmed", "executed", "rejected"].includes(card.status)) {
+  if (["confirmed", "executed", "rejected", "failed"].includes(card.status)) {
     return [];
   }
 
@@ -520,6 +532,25 @@ function visibleActions(card: DryRunConfirmationCard) {
   return preferredActionKeys(card)
     .map((key) => actionByKey.get(key))
     .filter((action): action is DryRunConfirmationCard["actions"][number] => Boolean(action));
+}
+
+function terminalStatusButton(card: DryRunConfirmationCard): FeishuButton | null {
+  if (!["confirmed", "executed", "rejected", "failed"].includes(card.status)) {
+    return null;
+  }
+
+  const label = card.status_text ?? (card.status === "confirmed" ? "处理中" : "已处理");
+  return {
+    tag: "button",
+    name: `status_${card.status}`,
+    text: plainText(label),
+    type: card.status === "executed" ? "primary" : card.status === "failed" ? "danger" : "default",
+    disabled: true
+  };
+}
+
+function isEditableRenderStatus(status: DryRunConfirmationCard["status"]): boolean {
+  return status === "draft" || status === "sent" || status === "edited";
 }
 
 function buttonLabel(
@@ -542,6 +573,10 @@ function buttonLabel(
       return `${prefix}${retryPrefix}补全后追加到知识库`;
     }
     return `${prefix}${retryPrefix}补全后确认`;
+  }
+
+  if (key === "complete_owner") {
+    return `${prefix}${retryPrefix}补全负责人`;
   }
 
   if (key === "confirm") {
@@ -619,7 +654,7 @@ export function buildFeishuInteractiveCard(
     );
   }
 
-  const editableFields = requiredEditableFields(card);
+  const editableFields = isEditableRenderStatus(card.status) ? requiredEditableFields(card) : [];
   if (editableFields.length > 0) {
     elements.push(
       {
@@ -628,6 +663,14 @@ export function buildFeishuInteractiveCard(
       editableIntro({ ...card, editable_fields: editableFields }),
       ...editableFields.filter((field) => field.input_type !== "readonly").map(buildEditableElement)
     );
+  }
+
+  const statusButton = terminalStatusButton(card);
+  if (statusButton !== null) {
+    elements.push({
+      tag: "action",
+      actions: [statusButton]
+    });
   }
 
   const actions = visibleActions(card);

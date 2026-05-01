@@ -299,6 +299,16 @@ function actionConfirmationActions(requestId: string): CardAction[] {
       }
     },
     {
+      key: "complete_owner",
+      label: "补全负责人",
+      style: "primary",
+      action_type: "http_post",
+      endpoint: `/dev/confirmations/${requestId}/complete-owner`,
+      payload_template: {
+        edited_payload: "$editable_fields"
+      }
+    },
+    {
       key: "reject",
       label: "拒绝",
       style: "danger",
@@ -443,9 +453,22 @@ function payloadAndDraft(input: CardInput): {
 } {
   const payload = asObject(input.original_payload);
   const draft = asObject(payload.draft);
+  const editedPayload = asObject(input.edited_payload);
+  const editedDraft = asObject(editedPayload.draft);
+  const edited =
+    Object.keys(editedDraft).length > 0
+      ? {
+          ...editedPayload,
+          ...editedDraft
+        }
+      : editedPayload;
+  const baseDraft = Object.keys(draft).length > 0 ? draft : payload;
   return {
     payload,
-    draft: Object.keys(draft).length > 0 ? draft : payload
+    draft: {
+      ...baseDraft,
+      ...edited
+    }
   };
 }
 
@@ -477,6 +500,16 @@ function statusText(input: {
   status: CardInput["status"];
   cardType: DryRunConfirmationCard["card_type"];
 }): string | undefined {
+  if (input.status === "edited") {
+    if (input.cardType === "action_confirmation") {
+      return "已进入负责人补全流程，补全后请再次确认添加待办";
+    }
+    if (input.cardType === "calendar_confirmation") {
+      return "已进入时间补全流程，补全后请再次确认添加日程";
+    }
+    return "已补全，待再次确认";
+  }
+
   if (input.status === "confirmed") {
     return "正在添加到飞书...";
   }
@@ -500,18 +533,6 @@ function actionsForStatus(input: {
   status: CardInput["status"];
   actions: CardAction[];
 }): CardAction[] {
-  if (input.status === "failed") {
-    const retryKeys = new Set<CardAction["key"]>([
-      "confirm",
-      "confirm_with_edits",
-      "create_kb",
-      "edit_and_create",
-      "remind_later",
-      "reject"
-    ]);
-    return input.actions.filter((action) => retryKeys.has(action.key));
-  }
-
   if (input.status === "sent" || input.status === "draft" || input.status === "edited") {
     return input.actions;
   }
@@ -567,7 +588,12 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   const draft = normalizeActionDraft(parsed);
   const meetingReference = meetingReferenceFromPayload(payload);
   const cardType = "action_confirmation" as const;
-  const actions = actionConfirmationActions(parsed.id);
+  const ownerMissing = draft.owner === null || draft.missing_fields.includes("owner");
+  const actions = actionConfirmationActions(parsed.id).filter((action) =>
+    ownerMissing
+      ? action.key !== "confirm" && action.key !== "confirm_with_edits"
+      : action.key !== "complete_owner"
+  );
   const ownerText = draft.owner ?? "待确认";
   const summary = [
     `建议负责人：${ownerText}`,
@@ -583,7 +609,10 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
     target_id: publicTargetId(parsed.target_id),
     recipient: parsed.recipient,
     status: parsed.status,
-    status_text: statusText({ status: parsed.status, cardType }),
+    status_text:
+      ownerMissing && parsed.status === "sent"
+        ? "缺少负责人，需先补全后再添加待办"
+        : statusText({ status: parsed.status, cardType }),
     ...statusFields(parsed),
     title: `确认待办：${draft.title}`,
     summary: summary || "请确认是否创建该待办。",
@@ -605,7 +634,18 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
             : []),
           displayField("evidence", "依据", draft.evidence)
         ]
-      })
+      }),
+      ...(ownerMissing
+        ? [
+            section({
+              title: "补全负责人",
+              helpText: "当前会议证据没有明确负责人。请补充 owner 后先保存，再二次确认添加待办。",
+              fields: [
+                displayField("owner_completion", "补全方式", "文本输入补全负责人，保存后再次确认")
+              ]
+            })
+          ]
+        : [])
     ],
     editable_fields: [
       editableField({

@@ -231,6 +231,108 @@ describe("MeetingExtractionAgent", () => {
     expect(llm.calls).toHaveLength(1);
   });
 
+  it("normalizes relative due dates and calendar times against meeting start time", async () => {
+    const llm = new SequenceLlmClient([
+      validExtraction({
+        action_items: [
+          {
+            title: "更新发布检查清单",
+            description: "补齐发布前检查项。",
+            owner: "陈一",
+            collaborators: [],
+            due_date: null,
+            priority: "P1",
+            evidence: "陈一：我明天前更新发布检查清单。",
+            confidence: 0.9,
+            suggested_reason: "会议中陈一主动承诺更新发布检查清单。",
+            missing_fields: ["due_date"]
+          },
+          {
+            title: "补充回归风险列表",
+            description: "补充回归测试风险。",
+            owner: "周宁",
+            collaborators: [],
+            due_date: null,
+            priority: "P1",
+            evidence: "周宁：后天我把回归风险列表补上。",
+            confidence: 0.9,
+            suggested_reason: "会议中周宁主动承诺补充回归风险列表。",
+            missing_fields: ["due_date"]
+          }
+        ],
+        calendar_drafts: [
+          {
+            title: "移动端原型",
+            start_time: "2026-04-29T15:00:00+08:00",
+            end_time: null,
+            duration_minutes: 30,
+            participants: ["设计", "产品"],
+            agenda: "评审移动端原型。",
+            location: null,
+            evidence: "下周五下午 3 点安排移动端原型评审。",
+            confidence: 0.88,
+            missing_fields: ["end_time", "location"]
+          }
+        ]
+      })
+    ]);
+
+    const extraction = await runMeetingExtractionAgent({
+      meeting: createMeeting(
+        "陈一：我明天前更新发布检查清单。周宁：后天我把回归风险列表补上。下周五下午 3 点安排移动端原型评审。"
+      ),
+      llm
+    });
+
+    expect(extraction.action_items[0]).toMatchObject({
+      owner: "陈一",
+      due_date: "2026-04-30",
+      missing_fields: []
+    });
+    expect(extraction.action_items[1]).toMatchObject({
+      owner: "周宁",
+      due_date: "2026-05-01",
+      missing_fields: []
+    });
+    expect(extraction.calendar_drafts[0]).toMatchObject({
+      title: "移动端原型评审",
+      start_time: "2026-05-08T15:00:00+08:00",
+      end_time: "2026-05-08T15:30:00+08:00"
+    });
+  });
+
+  it("keeps calendar start time missing when evidence has date but no concrete hour", async () => {
+    const llm = new SequenceLlmClient([
+      validExtraction({
+        calendar_drafts: [
+          {
+            title: "接口对齐沟通",
+            start_time: "2026-05-08T10:00:00+08:00",
+            end_time: null,
+            duration_minutes: null,
+            participants: ["项目负责人", "服务端"],
+            agenda: "对齐接口状态。",
+            location: null,
+            evidence: "下周五安排接口对齐沟通，具体几点待定。",
+            confidence: 0.82,
+            missing_fields: []
+          }
+        ]
+      })
+    ]);
+
+    const extraction = await runMeetingExtractionAgent({
+      meeting: createMeeting("下周五安排接口对齐沟通，具体几点待定。"),
+      llm
+    });
+
+    expect(extraction.calendar_drafts[0]).toMatchObject({
+      start_time: null,
+      end_time: null,
+      missing_fields: ["start_time"]
+    });
+  });
+
   it("does not assign the organizer or card recipient as action owner without meeting evidence", async () => {
     const llm = new SequenceLlmClient([
       validExtraction({

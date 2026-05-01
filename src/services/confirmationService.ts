@@ -56,6 +56,24 @@ function editedDraftPatch(value: unknown): Record<string, unknown> {
   };
 }
 
+function parseJsonObject(value: string | null): Record<string, unknown> {
+  if (value === null) {
+    return {};
+  }
+
+  return asObject(JSON.parse(value) as unknown);
+}
+
+function mergeEditedPayload(input: {
+  existingJson: string | null;
+  editedPayload?: unknown;
+}): Record<string, unknown> {
+  return {
+    ...editedDraftPatch(parseJsonObject(input.existingJson)),
+    ...editedDraftPatch(input.editedPayload)
+  };
+}
+
 function hasText(value: string | null): boolean {
   return value !== null && value.trim().length > 0;
 }
@@ -63,6 +81,10 @@ function hasText(value: string | null): boolean {
 function removeKnownMissingFields(missingFields: string[], filledFields: string[]): string[] {
   const filled = new Set(filledFields);
   return missingFields.filter((field) => !filled.has(field));
+}
+
+function addKnownMissingField(missingFields: string[], field: string): string[] {
+  return missingFields.includes(field) ? missingFields : [...missingFields, field];
 }
 
 function cleanActionMissingFields(draft: {
@@ -194,6 +216,56 @@ export function createConfirmationRequest(input: {
   });
 }
 
+export function completeActionOwner(input: {
+  repos: Repositories;
+  id: string;
+  editedPayload?: unknown;
+}): {
+  confirmation: ConfirmationRequestRow;
+  owner: string | null;
+} {
+  const request = input.repos.getConfirmationRequest(input.id);
+  if (!request) {
+    throw new Error(`Confirmation request not found: ${input.id}`);
+  }
+  if (request.request_type !== "action") {
+    throw new Error(`Owner completion is only supported for action requests: ${input.id}`);
+  }
+  if (request.status === "executed") {
+    return {
+      confirmation: request,
+      owner: null
+    };
+  }
+  if (request.status === "rejected") {
+    throw new Error(`Cannot complete owner for rejected request: ${input.id}`);
+  }
+
+  const editedPayload = mergeEditedPayload({
+    existingJson: request.edited_payload_json,
+    editedPayload: input.editedPayload
+  });
+  const owner = typeof editedPayload.owner === "string" ? editedPayload.owner.trim() : "";
+
+  input.repos.updateConfirmationRequest({
+    id: request.id,
+    status: "edited",
+    edited_payload_json: JSON.stringify(editedPayload),
+    error: null
+  });
+
+  return {
+    confirmation: input.repos.getConfirmationRequest(request.id) ?? {
+      ...request,
+      status: "edited",
+      edited_payload_json: JSON.stringify(editedPayload),
+      error: null,
+      updated_at: nowIso()
+    },
+    owner: owner.length > 0 ? owner : null
+  };
+}
+
 export async function confirmRequest(input: {
   repos: Repositories;
   config?: AppConfig;
@@ -234,7 +306,10 @@ export async function confirmRequest(input: {
       if (!action) {
         throw new Error(`Action item not found: ${request.target_id}`);
       }
-      const patch = editedDraftPatch(input.editedPayload);
+      const patch = mergeEditedPayload({
+        existingJson: request.edited_payload_json,
+        editedPayload: input.editedPayload
+      });
       const draft = ActionItemDraftSchema.parse({
         title: action.title,
         description: action.description,
@@ -253,6 +328,9 @@ export async function confirmRequest(input: {
         original: action,
         draft
       });
+      const missingFields = hasText(draft.owner)
+        ? cleanActionMissingFields(draft)
+        : addKnownMissingField(cleanActionMissingFields(draft), "owner");
       input.repos.updateActionItemDraft({
         id: action.id,
         title: draft.title,
@@ -264,8 +342,25 @@ export async function confirmRequest(input: {
         evidence: draft.evidence,
         confidence: draft.confidence,
         suggested_reason: appendActionSuggestedReason(draft.suggested_reason, changedFields),
-        missing_fields_json: JSON.stringify(cleanActionMissingFields(draft))
+        missing_fields_json: JSON.stringify(missingFields)
       });
+      if (!hasText(draft.owner)) {
+        input.repos.updateConfirmationRequest({
+          id: request.id,
+          status: "edited",
+          error: null
+        });
+
+        return {
+          confirmation: input.repos.getConfirmationRequest(request.id) ?? request,
+          result: {
+            completion_required: true,
+            missing_fields: missingFields,
+            message: "owner is required before creating a Feishu task"
+          }
+        };
+      }
+
       const updatedAction = input.repos.getActionItem(action.id) ?? action;
       const result = await createTask({
         repos: input.repos,
@@ -304,7 +399,10 @@ export async function confirmRequest(input: {
       if (!calendarDraft) {
         throw new Error(`Calendar draft not found: ${request.target_id}`);
       }
-      const patch = editedDraftPatch(input.editedPayload);
+      const patch = mergeEditedPayload({
+        existingJson: request.edited_payload_json,
+        editedPayload: input.editedPayload
+      });
       const draft = CalendarEventDraftSchema.parse({
         title: calendarDraft.title,
         start_time: calendarDraft.start_time,

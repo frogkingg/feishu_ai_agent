@@ -52,6 +52,7 @@ export const CardActionSchema = z.object({
     "confirm_with_edits",
     "reject",
     "not_mine",
+    "complete_owner",
     "convert_to_task",
     "create_kb",
     "edit_and_create",

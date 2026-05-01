@@ -128,6 +128,13 @@ describe("CardInteractionAgent", () => {
     expect(visibleText).not.toContain("Henry");
     expect(visibleText).not.toContain("认领");
     expect(visibleText).not.toContain("承诺");
+    expect(card.actions.map((action) => action.key)).toEqual([
+      "complete_owner",
+      "reject",
+      "not_mine",
+      "remind_later"
+    ]);
+    expect(card.status_text).toBe("缺少负责人，需先补全后再添加待办");
   });
 
   it("builds calendar confirmation dry-run card JSON", () => {
@@ -229,6 +236,111 @@ describe("CardInteractionAgent", () => {
       "reject",
       "never_remind_topic"
     ]);
+  });
+
+  it("renders sent, confirmed, executed, rejected, and failed status cards", () => {
+    const sent = expectValidCard(
+      buildActionConfirmationCard({
+        id: "conf_status_sent",
+        target_id: "act_status_sent",
+        recipient: "张三",
+        status: "sent",
+        original_payload: { draft: actionDraft }
+      })
+    );
+    expect(sent.status_text).toBeUndefined();
+    expect(sent.actions.map((action) => action.key)).toContain("confirm");
+
+    const confirmed = expectValidCard(
+      buildActionConfirmationCard({
+        id: "conf_status_confirmed",
+        target_id: "act_status_confirmed",
+        recipient: "张三",
+        status: "confirmed",
+        original_payload: { draft: actionDraft }
+      })
+    );
+    expect(confirmed.status_text).toBe("正在添加到飞书...");
+    expect(confirmed.actions).toEqual([]);
+
+    const executedAction = expectValidCard(
+      buildActionConfirmationCard({
+        id: "conf_status_executed_action",
+        target_id: "act_status_executed",
+        recipient: "张三",
+        status: "executed",
+        original_payload: { draft: actionDraft }
+      })
+    );
+    expect(executedAction.status_text).toBe("已添加待办");
+    expect(executedAction.actions).toEqual([]);
+
+    const executedCalendar = expectValidCard(
+      buildCalendarConfirmationCard({
+        id: "conf_status_executed_calendar",
+        target_id: "cal_status_executed",
+        recipient: "张三",
+        status: "executed",
+        original_payload: { draft: calendarDraft }
+      })
+    );
+    expect(executedCalendar.status_text).toBe("已添加日程");
+
+    const executedKb = expectValidCard(
+      buildCreateKbConfirmationCard({
+        id: "conf_status_executed_kb",
+        target_id: "kb_status_executed",
+        recipient: "张三",
+        status: "executed",
+        original_payload: {
+          topic_name: "无人机操作方案",
+          meeting_ids: ["mtg_001"],
+          default_structure: ["00 首页 / 总览"]
+        }
+      })
+    );
+    expect(executedKb.status_text).toBe("已创建知识库");
+
+    const rejectedAction = expectValidCard(
+      buildActionConfirmationCard({
+        id: "conf_status_rejected_action",
+        target_id: "act_status_rejected",
+        recipient: "张三",
+        status: "rejected",
+        original_payload: { draft: actionDraft }
+      })
+    );
+    expect(rejectedAction.status_text).toBe("已不添加");
+    expect(rejectedAction.actions).toEqual([]);
+
+    const rejectedKb = expectValidCard(
+      buildCreateKbConfirmationCard({
+        id: "conf_status_rejected_kb",
+        target_id: "kb_status_rejected",
+        recipient: "张三",
+        status: "rejected",
+        original_payload: {
+          topic_name: "无人机操作方案",
+          meeting_ids: ["mtg_001"],
+          default_structure: ["00 首页 / 总览"]
+        }
+      })
+    );
+    expect(rejectedKb.status_text).toBe("已拒绝");
+
+    const failed = expectValidCard(
+      buildActionConfirmationCard({
+        id: "conf_status_failed",
+        target_id: "act_status_failed",
+        recipient: "张三",
+        status: "failed",
+        error: "lark.task.create failed: fake task error",
+        original_payload: { draft: actionDraft }
+      })
+    );
+    expect(failed.status_text).toBe("添加失败");
+    expect(failed.error_summary).toContain("fake task error");
+    expect(failed.actions).toEqual([]);
   });
 
   it("formats open_ids and append-meeting links for card display", () => {

@@ -288,6 +288,12 @@ const ACTION_CARD_ACTION_KEYS = [
   "not_mine",
   "remind_later"
 ];
+const ACTION_OWNER_COMPLETION_CARD_ACTION_KEYS = [
+  "complete_owner",
+  "reject",
+  "not_mine",
+  "remind_later"
+];
 const CALENDAR_CARD_ACTION_KEYS = [
   "confirm",
   "confirm_with_edits",
@@ -304,6 +310,9 @@ const CREATE_KB_CARD_ACTION_KEYS = [
 ];
 const APPEND_MEETING_CARD_ACTION_KEYS = ["confirm", "reject"];
 const DEFAULT_CARD_ACTION_KEYS = ["confirm", "reject"];
+const DEMO_OWNER_COMPLETION = {
+  owner: "张三"
+};
 const TERMINAL_CONFIRMATION_STATUSES = new Set(["executed", "rejected", "failed"]);
 
 function getDemoOutputStem(mode: DemoMode): string {
@@ -341,6 +350,24 @@ function assertDemo(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  const parsed = JSON.parse(value) as unknown;
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
+
+function actionOwnerMissing(confirmation: ConfirmationRequest): boolean {
+  if (confirmation.request_type !== "action") {
+    return false;
+  }
+
+  const payload = parseJsonObject(confirmation.original_payload_json);
+  const draft = parseJsonObject(JSON.stringify(payload.draft ?? {}));
+  const missingFields = Array.isArray(draft.missing_fields) ? draft.missing_fields : [];
+  return draft.owner === null || missingFields.includes("owner");
 }
 
 function step(context: DemoContext, message: string): void {
@@ -517,13 +544,15 @@ async function listConfirmations(context: DemoContext): Promise<ConfirmationRequ
     "Every confirmation should include a dry-run card"
   );
   const actionableConfirmations = confirmations.filter((confirmation) =>
-    ["draft", "sent", "edited", "failed"].includes(confirmation.status)
+    ["draft", "sent", "edited"].includes(confirmation.status)
   );
   const missingActionButtons = actionableConfirmations.flatMap((confirmation) => {
     const actionKeys = confirmation.dry_run_card?.actions.map((action) => action.key) ?? [];
     const expectedKeys =
       confirmation.request_type === "action"
-        ? ACTION_CARD_ACTION_KEYS
+        ? actionOwnerMissing(confirmation)
+          ? ACTION_OWNER_COMPLETION_CARD_ACTION_KEYS
+          : ACTION_CARD_ACTION_KEYS
         : confirmation.request_type === "calendar"
           ? CALENDAR_CARD_ACTION_KEYS
           : confirmation.request_type === "create_kb"
@@ -622,6 +651,45 @@ async function confirmRequest(
   );
   ok(context, `executed ${result.confirmation.request_type} confirmation ${id}`);
   return result;
+}
+
+async function completeOwner(
+  context: DemoContext,
+  id: string,
+  editedPayload: unknown
+): Promise<ConfirmationRequest> {
+  step(context, `POST /dev/confirmations/${id}/complete-owner`);
+  const result = await requestJson<{
+    ok: boolean;
+    completion: "owner_missing" | "owner_recorded";
+    confirmation: ConfirmationRequest;
+  }>(context, "POST", `/dev/confirmations/${id}/complete-owner`, {
+    edited_payload: editedPayload
+  });
+  assertDemo(result.ok === true, `Owner completion ${id} did not return ok`);
+  assertDemo(
+    result.completion === "owner_recorded",
+    `Owner completion ${id} did not record owner; completion=${result.completion}`
+  );
+  assertDemo(
+    result.confirmation.status === "edited",
+    `Owner completion ${id} did not enter edited state; status=${result.confirmation.status}`
+  );
+  ok(context, `completed owner for action confirmation ${id}`);
+  return result.confirmation;
+}
+
+async function confirmActionRequest(
+  context: DemoContext,
+  request: ConfirmationRequest,
+  editedPayload?: unknown
+): Promise<ConfirmResponse> {
+  if (actionOwnerMissing(request)) {
+    await completeOwner(context, request.id, editedPayload ?? DEMO_OWNER_COMPLETION);
+    return confirmRequest(context, request.id);
+  }
+
+  return confirmRequest(context, request.id, editedPayload);
 }
 
 async function getState(context: DemoContext): Promise<StateResponse> {
@@ -1112,7 +1180,7 @@ export async function runFullP0Demo(
   const confirmedCalendarIds: string[] = [];
 
   for (const [index, request] of actionRequests.entries()) {
-    await confirmRequest(context, request.id, index === 1 ? EDITED_SECOND_ACTION : undefined);
+    await confirmActionRequest(context, request, index === 1 ? EDITED_SECOND_ACTION : undefined);
     confirmedActionIds.push(request.id);
   }
   for (const [index, request] of calendarRequests.entries()) {
@@ -1178,7 +1246,7 @@ export async function runFullP0Demo(
     "Second meeting should not create duplicate action confirmations for knowledge-base creation tasks"
   );
   for (const request of secondActionRequests) {
-    await confirmRequest(context, request.id);
+    await confirmActionRequest(context, request);
     confirmedActionIds.push(request.id);
   }
   for (const request of secondCalendarRequests) {
@@ -1239,7 +1307,7 @@ export async function runFullP0Demo(
     `Third meeting should expose one append meeting card, got ${appendMeetingCards.length}`
   );
   for (const request of thirdActionRequests) {
-    await confirmRequest(context, request.id);
+    await confirmActionRequest(context, request);
     confirmedActionIds.push(request.id);
   }
   for (const request of thirdCalendarRequests) {

@@ -5,6 +5,7 @@ import { buildServer } from "../../src/server";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { personalWorkspaceName } from "../../src/utils/personalWorkspace";
 
 describe("POST /dev/meetings/manual", () => {
   it("creates at least one action confirmation and one calendar confirmation", async () => {
@@ -171,7 +172,7 @@ describe("POST /dev/meetings/manual", () => {
 
     expect(secondBody.personal_workspace).toEqual({
       mode: "personal",
-      name: "个人工作台",
+      name: personalWorkspaceName(),
       recipient: "Henry"
     });
     expect(combinedSummary.action).toBeGreaterThan(0);
@@ -202,7 +203,7 @@ describe("POST /dev/meetings/manual", () => {
     };
     expect(createKbPayload).toMatchObject({
       knowledge_base_mode: "personal",
-      workspace_name: "个人工作台",
+      workspace_name: personalWorkspaceName(),
       default_structure: [
         "00 README / 项目总览",
         "01 Project Board / 进度与待办",

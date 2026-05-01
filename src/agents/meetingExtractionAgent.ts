@@ -4,6 +4,13 @@ import { ZodError } from "zod";
 import { MeetingExtractionResult, MeetingExtractionResultSchema } from "../schemas";
 import { LlmClient } from "../services/llm/llmClient";
 import { MeetingRow } from "../services/store/repositories";
+import {
+  addMinutesWithChinaOffset,
+  isIsoDateOnly,
+  isIsoDateTimeWithHour,
+  resolveDateExpression,
+  resolveDateTimeExpression
+} from "../utils/dates";
 
 const CalendarIntentWords = ["会议", "访谈", "评审", "同步", "沟通"];
 const CalendarSignalWords = ["截止", "评审", "分享", "演示", "发布", "复盘", "会面", "里程碑"];
@@ -111,8 +118,155 @@ function normalizeCalendarDrafts(raw: unknown): unknown {
   };
 }
 
-function normalizeRawExtraction(raw: unknown): unknown {
-  return normalizeCalendarDrafts(asMeetingExtractionObject(raw));
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function addMissingField(fields: string[], field: string): string[] {
+  return fields.includes(field) ? fields : [...fields, field];
+}
+
+function removeMissingField(fields: string[], field: string): string[] {
+  return fields.filter((item) => item !== field);
+}
+
+function textFromFields(fields: unknown[]): string {
+  return fields.filter((field): field is string => typeof field === "string").join(" ");
+}
+
+function normalizeActionDates(input: {
+  baseIso: string | null;
+  action: Record<string, unknown>;
+}): Record<string, unknown> {
+  const evidenceText = textFromFields([
+    input.action.title,
+    input.action.description,
+    input.action.evidence,
+    input.action.suggested_reason
+  ]);
+  const dueDate =
+    resolveDateExpression({
+      baseIso: input.baseIso,
+      text: evidenceText
+    }) ??
+    resolveDateExpression({
+      baseIso: input.baseIso,
+      text: textFromFields([input.action.due_date])
+    });
+  if (dueDate === null) {
+    if (
+      typeof input.action.due_date === "string" &&
+      !/^\d{4}-\d{2}-\d{2}$/.test(input.action.due_date)
+    ) {
+      return {
+        ...input.action,
+        due_date: null,
+        missing_fields: addMissingField(asStringArray(input.action.missing_fields), "due_date")
+      };
+    }
+
+    return input.action;
+  }
+
+  return {
+    ...input.action,
+    due_date: dueDate,
+    missing_fields: removeMissingField(asStringArray(input.action.missing_fields), "due_date")
+  };
+}
+
+function normalizeCalendarDates(input: {
+  baseIso: string | null;
+  draft: Record<string, unknown>;
+}): Record<string, unknown> {
+  const evidenceText = textFromFields([
+    input.draft.title,
+    input.draft.agenda,
+    input.draft.evidence
+  ]);
+  const existingStartTime =
+    typeof input.draft.start_time === "string" ? input.draft.start_time : null;
+  const evidenceResolution = resolveDateTimeExpression({
+    baseIso: input.baseIso,
+    text: evidenceText
+  });
+  const resolution =
+    evidenceResolution.date !== null
+      ? evidenceResolution
+      : resolveDateTimeExpression({
+          baseIso: input.baseIso,
+          text: textFromFields([existingStartTime])
+        });
+  const missingFields = asStringArray(input.draft.missing_fields);
+
+  if (resolution.start_time !== null) {
+    const durationMinutes =
+      typeof input.draft.duration_minutes === "number" ? input.draft.duration_minutes : null;
+    const endTime =
+      durationMinutes === null
+        ? input.draft.end_time
+        : addMinutesWithChinaOffset(resolution.start_time, durationMinutes);
+
+    return {
+      ...input.draft,
+      start_time: resolution.start_time,
+      end_time: endTime,
+      missing_fields: removeMissingField(missingFields, "start_time")
+    };
+  }
+
+  if (resolution.date !== null && !resolution.has_explicit_hour) {
+    return {
+      ...input.draft,
+      start_time: null,
+      end_time: null,
+      missing_fields: addMissingField(missingFields, "start_time")
+    };
+  }
+
+  if (
+    existingStartTime !== null &&
+    (isIsoDateOnly(existingStartTime) || !isIsoDateTimeWithHour(existingStartTime))
+  ) {
+    return {
+      ...input.draft,
+      start_time: null,
+      end_time: null,
+      missing_fields: addMissingField(missingFields, "start_time")
+    };
+  }
+
+  return input.draft;
+}
+
+function normalizeRelativeDates(raw: unknown, baseIso: string | null): unknown {
+  const value = asMeetingExtractionObject(raw);
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const actionItems = Array.isArray(value.action_items)
+    ? value.action_items.map((item) =>
+        isRecord(item) ? normalizeActionDates({ baseIso, action: item }) : item
+      )
+    : value.action_items;
+  const calendarDrafts = Array.isArray(value.calendar_drafts)
+    ? value.calendar_drafts.map((draft) =>
+        isRecord(draft) ? normalizeCalendarDates({ baseIso, draft }) : draft
+      )
+    : value.calendar_drafts;
+
+  return {
+    ...value,
+    action_items: actionItems,
+    calendar_drafts: calendarDrafts
+  };
+}
+
+function normalizeRawExtraction(raw: unknown, baseIso: string | null): unknown {
+  return normalizeRelativeDates(normalizeCalendarDrafts(asMeetingExtractionObject(raw)), baseIso);
 }
 
 function missingFieldsWithOwner(fields: string[]): string[] {
@@ -187,6 +341,7 @@ async function repairExtractionWithLlm(input: {
   llm: LlmClient;
   systemPrompt: string;
   userPrompt: string;
+  baseIso: string | null;
   raw: unknown;
   error: unknown;
 }): Promise<MeetingExtractionResult> {
@@ -209,7 +364,7 @@ async function repairExtractionWithLlm(input: {
   });
 
   return sanitizeActionOwnership(
-    MeetingExtractionResultSchema.parse(normalizeRawExtraction(repaired))
+    MeetingExtractionResultSchema.parse(normalizeRawExtraction(repaired, input.baseIso))
   );
 }
 
@@ -220,6 +375,7 @@ export async function runMeetingExtractionAgent(input: {
   const systemPrompt = readPrompt("meetingExtraction.md");
   const userPrompt = [
     `title: ${input.meeting.title}`,
+    `meeting_started_at: ${input.meeting.started_at ?? "unknown"}`,
     `organizer: ${input.meeting.organizer ?? "unknown"}`,
     `participants: ${input.meeting.participants_json}`,
     "transcript:",
@@ -231,7 +387,7 @@ export async function runMeetingExtractionAgent(input: {
     schemaName: "MeetingExtractionResult"
   });
 
-  const normalized = normalizeRawExtraction(raw);
+  const normalized = normalizeRawExtraction(raw, input.meeting.started_at);
   const parsed = MeetingExtractionResultSchema.safeParse(normalized);
   if (parsed.success) {
     return sanitizeActionOwnership(parsed.data);
@@ -241,6 +397,7 @@ export async function runMeetingExtractionAgent(input: {
     llm: input.llm,
     systemPrompt,
     userPrompt,
+    baseIso: input.meeting.started_at,
     raw,
     error: parsed.error
   });

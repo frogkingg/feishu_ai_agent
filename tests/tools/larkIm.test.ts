@@ -98,6 +98,55 @@ describe("larkIm.sendCard", () => {
     ]);
   });
 
+  it("routes missing-owner action cards into owner completion instead of creation", () => {
+    const missingOwnerCard = buildActionConfirmationCard({
+      id: "conf_missing_owner",
+      target_id: "act_missing_owner",
+      recipient: "ou_recipient",
+      status: "sent",
+      original_payload: {
+        draft: {
+          title: "整理客户访谈结论",
+          description: "汇总访谈输出。",
+          owner: null,
+          collaborators: [],
+          due_date: "2026-05-03",
+          priority: "P1",
+          evidence: "会议中提出需要整理客户访谈结论，但没有明确负责人。",
+          confidence: 0.82,
+          suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+          missing_fields: ["owner"]
+        }
+      }
+    });
+
+    const interactive = buildFeishuInteractiveCard(missingOwnerCard);
+    const serialized = JSON.stringify(interactive);
+    const actionElement = interactive.elements.find((element) => element.tag === "action");
+
+    expect(serialized).toContain("缺少负责人，需先补全后再添加待办");
+    expect(serialized).toContain('"name":"owner"');
+    expect(serialized).toContain('"action":"complete_owner"');
+    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).not.toContain('"action":"confirm_with_edits"');
+    expect(actionElement).toMatchObject({
+      actions: [
+        {
+          text: { content: "补全负责人" },
+          value: {
+            action_key: "complete_owner",
+            action: "complete_owner",
+            confirmation_id: "conf_missing_owner",
+            request_id: "conf_missing_owner",
+            edited_payload: "$editable_fields"
+          }
+        },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
+  });
+
   it("renders calendar cards with calendar color and focused actions", () => {
     const calendarCard = buildCalendarConfirmationCard({
       id: "conf_calendar_send",
@@ -372,7 +421,19 @@ describe("larkIm.sendCard", () => {
     );
     expect(JSON.stringify(executed)).toContain("已添加待办");
     expect(executed.header.template).toBe("green");
-    expect(executed.elements.find((element) => element.tag === "action")).toBeUndefined();
+    const executedAction = executed.elements.find((element) => element.tag === "action");
+    expect(executedAction).toMatchObject({
+      actions: [
+        {
+          name: "status_executed",
+          text: { content: "已添加待办" },
+          type: "primary",
+          disabled: true
+        }
+      ]
+    });
+    expect(JSON.stringify(executedAction)).not.toContain('"action":"confirm"');
+    expect(JSON.stringify(executedAction)).not.toContain("behaviors");
 
     const rejected = buildFeishuInteractiveCard(
       buildCalendarConfirmationCard({
@@ -398,7 +459,19 @@ describe("larkIm.sendCard", () => {
     );
     expect(JSON.stringify(rejected)).toContain("已不添加");
     expect(rejected.header.template).toBe("grey");
-    expect(rejected.elements.find((element) => element.tag === "action")).toBeUndefined();
+    const rejectedAction = rejected.elements.find((element) => element.tag === "action");
+    expect(rejectedAction).toMatchObject({
+      actions: [
+        {
+          name: "status_rejected",
+          text: { content: "已不添加" },
+          type: "default",
+          disabled: true
+        }
+      ]
+    });
+    expect(JSON.stringify(rejectedAction)).not.toContain('"action":"confirm"');
+    expect(JSON.stringify(rejectedAction)).not.toContain("behaviors");
 
     const processing = buildFeishuInteractiveCard(
       buildCreateKbConfirmationCard({
@@ -414,7 +487,16 @@ describe("larkIm.sendCard", () => {
       })
     );
     expect(JSON.stringify(processing)).toContain("正在添加到飞书...");
-    expect(processing.elements.find((element) => element.tag === "action")).toBeUndefined();
+    expect(processing.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        {
+          name: "status_confirmed",
+          text: { content: "正在添加到飞书..." },
+          type: "default",
+          disabled: true
+        }
+      ]
+    });
 
     const failed = buildFeishuInteractiveCard(
       buildActionConfirmationCard({
@@ -445,11 +527,20 @@ describe("larkIm.sendCard", () => {
     expect(failedJson).toContain("fake task error");
     expect(failed.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
-        { text: { content: "重试添加待办" } },
-        { text: { content: "稍后处理" } },
-        { text: { content: "不添加" } }
+        {
+          name: "status_failed",
+          text: { content: "添加失败" },
+          type: "danger",
+          disabled: true
+        }
       ]
     });
+    expect(
+      JSON.stringify(failed.elements.find((element) => element.tag === "action"))
+    ).not.toContain('"action":"confirm"');
+    expect(
+      JSON.stringify(failed.elements.find((element) => element.tag === "action"))
+    ).not.toContain("behaviors");
   });
 
   it("records planned send-card cli_runs when both dry-run switches are true", async () => {

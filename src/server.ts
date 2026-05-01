@@ -4,10 +4,10 @@ import { AppConfig } from "./config";
 import { ManualMeetingInputSchema, ProcessMeetingTextInputSchema } from "./schemas";
 import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
-import { confirmRequest, rejectRequest } from "./services/confirmationService";
+import { completeActionOwner, confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
 import { ConfirmationRequestRow, MeetingRow, Repositories } from "./services/store/repositories";
-import { sendCard, syncConfirmationCardStatus } from "./tools/larkIm";
+import { buildFeishuInteractiveCard, sendCard, syncConfirmationCardStatus } from "./tools/larkIm";
 import { type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
@@ -181,12 +181,25 @@ function getFeishuEventType(payload: FeishuEventWebhookPayload): string | null {
   return typeof payload.header?.event_type === "string" ? payload.header.event_type : null;
 }
 
-function toast(type: "success" | "error", content: string) {
+type ToastType = "info" | "success" | "error";
+
+function toast(type: ToastType, content: string) {
   return {
     toast: {
       type,
       content
     }
+  };
+}
+
+function cardCallbackResponse(input: {
+  type: ToastType;
+  content: string;
+  confirmation: ConfirmationRequestRow;
+}) {
+  return {
+    ...toast(input.type, input.content),
+    card: buildFeishuInteractiveCard(buildConfirmationCardFromRequest(input.confirmation))
   };
 }
 
@@ -197,6 +210,7 @@ const CONFIRM_CARD_ACTION_KEYS = new Set([
   "edit_and_create"
 ]);
 const REJECT_CARD_ACTION_KEYS = new Set(["reject", "not_mine", "never_remind_topic"]);
+const COMPLETE_OWNER_CARD_ACTION_KEYS = new Set(["complete_owner"]);
 const PREVIEW_STUB_CARD_ACTIONS = {
   remind_later: "remind_later",
   convert_to_task: "convert_to_task",
@@ -206,7 +220,7 @@ const PERSONAL_KNOWLEDGE_REQUEST_TYPES = new Set<ConfirmationRequestRow["request
   "create_kb",
   "append_meeting"
 ]);
-const PROCESSED_CONFIRMATION_STATUSES = new Set(["executed", "rejected"]);
+const PROCESSED_CONFIRMATION_STATUSES = new Set(["executed", "rejected", "failed"]);
 const IN_FLIGHT_CONFIRMATION_STATUSES = new Set(["confirmed"]);
 const INTERNAL_CARD_VALUE_KEYS = new Set([
   "confirmation_id",
@@ -307,6 +321,10 @@ function normalizeFormValue(value: unknown): unknown {
     return undefined;
   }
 
+  if (Array.isArray(value)) {
+    return value.map(normalizeFormValue).filter((item) => item !== undefined);
+  }
+
   const record = asRecord(value);
   if (record !== null) {
     if (Object.prototype.hasOwnProperty.call(record, "value")) {
@@ -317,6 +335,15 @@ function normalizeFormValue(value: unknown): unknown {
     }
     if (Object.prototype.hasOwnProperty.call(record, "text")) {
       return normalizeFormValue(record.text);
+    }
+    if (Object.prototype.hasOwnProperty.call(record, "open_id")) {
+      return normalizeFormValue(record.open_id);
+    }
+    if (Object.prototype.hasOwnProperty.call(record, "user_id")) {
+      return normalizeFormValue(record.user_id);
+    }
+    if (Object.prototype.hasOwnProperty.call(record, "id")) {
+      return normalizeFormValue(record.id);
     }
   }
 
@@ -476,12 +503,20 @@ function cardPreviewStubAction(input: {
   };
 }
 
-function alreadyProcessedToast(input: { status: string }) {
-  return toast("success", `该确认请求已处理（${input.status}），不会重复执行`);
+function alreadyProcessedResponse(input: { confirmation: ConfirmationRequestRow }) {
+  return cardCallbackResponse({
+    type: "info",
+    content: `该确认请求已处理（${input.confirmation.status}），不会重复执行`,
+    confirmation: input.confirmation
+  });
 }
 
-function alreadyProcessingToast() {
-  return toast("success", "该确认请求正在处理中，不会重复执行");
+function alreadyProcessingResponse(input: { confirmation: ConfirmationRequestRow }) {
+  return cardCallbackResponse({
+    type: "info",
+    content: "该确认请求正在处理中，不会重复执行",
+    confirmation: input.confirmation
+  });
 }
 
 function cardStatusLogContext(input: {
@@ -792,13 +827,11 @@ export function buildServer(input: {
     }
 
     if (PROCESSED_CONFIRMATION_STATUSES.has(confirmation.status)) {
-      return alreadyProcessedToast({
-        status: confirmation.status
-      });
+      return alreadyProcessedResponse({ confirmation });
     }
 
     if (IN_FLIGHT_CONFIRMATION_STATUSES.has(confirmation.status)) {
-      return alreadyProcessingToast();
+      return alreadyProcessingResponse({ confirmation });
     }
 
     try {
@@ -814,25 +847,6 @@ export function buildServer(input: {
         const acceptedConfirmation = input.repos.getConfirmationRequest(requestId) ?? confirmation;
 
         void (async () => {
-          const processingUpdate = await syncCardStatusForRequest({
-            repos: input.repos,
-            config: input.config,
-            request: acceptedConfirmation,
-            messageId: parsed.messageId,
-            chatId: parsed.chatId,
-            runner: input.larkCliRunner
-          });
-          if (!processingUpdate.ok) {
-            request.log.warn(
-              cardStatusLogContext({
-                confirmationId: requestId,
-                phase: "processing",
-                result: processingUpdate
-              }),
-              "card status update fell back or failed while marking processing"
-            );
-          }
-
           const execution = await confirmRequest({
             repos: input.repos,
             config: input.config,
@@ -884,7 +898,11 @@ export function buildServer(input: {
           );
         });
 
-        return toast("success", CardActionAcceptedMessage);
+        return cardCallbackResponse({
+          type: "info",
+          content: CardActionAcceptedMessage,
+          confirmation: acceptedConfirmation
+        });
       }
 
       if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
@@ -908,7 +926,42 @@ export function buildServer(input: {
           );
         });
 
-        return toast("success", "已拒绝");
+        return cardCallbackResponse({
+          type: "success",
+          content: "已拒绝",
+          confirmation: rejected
+        });
+      }
+
+      if (COMPLETE_OWNER_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        const completion = completeActionOwner({
+          repos: input.repos,
+          id: requestId,
+          editedPayload: parsed.editedPayload
+        });
+
+        void syncCardStatusForRequest({
+          repos: input.repos,
+          config: input.config,
+          request: completion.confirmation,
+          messageId: parsed.messageId,
+          chatId: parsed.chatId,
+          runner: input.larkCliRunner
+        }).catch((error) => {
+          request.log.error(
+            { err: error, confirmation_id: requestId },
+            "failed to update owner completion card status"
+          );
+        });
+
+        return cardCallbackResponse({
+          type: completion.owner === null ? "info" : "success",
+          content:
+            completion.owner === null
+              ? "请先补全负责人，再添加待办"
+              : "负责人已补全，请再次确认后添加待办",
+          confirmation: completion.confirmation
+        });
       }
 
       const previewAction =
@@ -924,15 +977,16 @@ export function buildServer(input: {
         }
 
         const latest = input.repos.getConfirmationRequest(requestId) ?? confirmation;
+        const pendingCard = {
+          ...buildConfirmationCardFromRequest(latest),
+          status_text: "已收到，稍后处理",
+          actions: []
+        };
         void syncConfirmationCardStatus({
           repos: input.repos,
           config: input.config,
           confirmation: latest,
-          card: {
-            ...buildConfirmationCardFromRequest(latest),
-            status_text: "已收到，稍后处理",
-            actions: []
-          },
+          card: pendingCard,
           messageId: parsed.messageId,
           chatId: parsed.chatId,
           runner: input.larkCliRunner
@@ -943,7 +997,10 @@ export function buildServer(input: {
           );
         });
 
-        return toast("success", CardActionPendingMessage);
+        return {
+          ...toast("info", CardActionPendingMessage),
+          card: buildFeishuInteractiveCard(pendingCard)
+        };
       }
 
       return toast("error", "暂不支持此操作");
@@ -1150,6 +1207,32 @@ export function buildServer(input: {
         reason: body.reason
       })
     };
+  });
+
+  app.post("/dev/confirmations/:id/complete-owner", async (request, reply) => {
+    const params = request.params as { id: string };
+    const body = (request.body ?? {}) as { edited_payload?: unknown };
+    try {
+      const result = completeActionOwner({
+        repos: input.repos,
+        id: params.id,
+        editedPayload: body.edited_payload ?? request.body
+      });
+
+      return {
+        ok: true,
+        dry_run: true,
+        completion: result.owner === null ? "owner_missing" : "owner_recorded",
+        confirmation: result.confirmation,
+        dry_run_card: buildConfirmationCardFromRequest(result.confirmation)
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Confirmation request not found")) {
+        return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+      }
+
+      throw error;
+    }
   });
 
   app.post("/dev/confirmations/:id/remind-later", async (request, reply) => {

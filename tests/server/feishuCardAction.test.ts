@@ -109,6 +109,74 @@ function createDirectActionConfirmation(
   });
 }
 
+function createMissingOwnerActionConfirmation(repos: ReturnType<typeof createRepositories>) {
+  const meeting = repos.createMeeting({
+    id: "mtg_missing_owner_card_action",
+    external_meeting_id: null,
+    title: "客户访谈复盘",
+    started_at: "2026-05-01T10:00:00+08:00",
+    ended_at: "2026-05-01T11:00:00+08:00",
+    organizer: "ou_organizer",
+    participants_json: JSON.stringify(["ou_organizer"]),
+    minutes_url: null,
+    transcript_url: null,
+    transcript_text: "会议中提出需要整理客户访谈结论，但没有明确负责人。",
+    summary: "会议提出访谈结论整理动作。",
+    keywords_json: JSON.stringify(["客户访谈"]),
+    matched_kb_id: null,
+    match_score: null,
+    archive_status: "not_archived",
+    action_count: 1,
+    calendar_count: 0
+  });
+  const action = repos.createActionItem({
+    id: "act_missing_owner_card_action",
+    meeting_id: meeting.id,
+    kb_id: null,
+    title: "整理客户访谈结论",
+    description: "汇总访谈输出。",
+    owner: null,
+    collaborators_json: JSON.stringify([]),
+    due_date: "2026-05-03",
+    priority: "P1",
+    evidence: "会议中提出需要整理客户访谈结论，但没有明确负责人。",
+    confidence: 0.82,
+    suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+    missing_fields_json: JSON.stringify(["owner"]),
+    confirmation_status: "sent",
+    feishu_task_guid: null,
+    task_url: null,
+    rejection_reason: null
+  });
+
+  return repos.createConfirmationRequest({
+    id: "conf_missing_owner_card_action",
+    request_type: "action",
+    target_id: action.id,
+    recipient: "ou_organizer",
+    card_message_id: null,
+    status: "sent",
+    original_payload_json: JSON.stringify({
+      draft: {
+        title: action.title,
+        description: action.description,
+        owner: action.owner,
+        collaborators: [],
+        due_date: action.due_date,
+        priority: action.priority,
+        evidence: action.evidence,
+        confidence: action.confidence,
+        suggested_reason: action.suggested_reason,
+        missing_fields: ["owner"]
+      }
+    }),
+    edited_payload_json: null,
+    confirmed_at: null,
+    executed_at: null,
+    error: null
+  });
+}
+
 async function createAppWithConfirmations(larkVerificationToken: string | null = null) {
   const repos = createRepositories(createMemoryDatabase());
   const app = buildServer({
@@ -283,12 +351,14 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     });
     expect(confirmResponse.statusCode).toBe(200);
-    expect(confirmResponse.json()).toEqual({
+    expect(confirmResponse.json()).toMatchObject({
       toast: {
-        type: "success",
+        type: "info",
         content: "已收到请求，正在添加到飞书…"
-      }
+      },
+      card: expect.any(Object)
     });
+    expect(JSON.stringify(confirmResponse.json().card)).toContain("正在添加到飞书...");
     await flushAsyncWork();
     expect(repos.getConfirmationRequest(action.id)?.status).toBe("executed");
 
@@ -306,12 +376,14 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     });
     expect(rejectResponse.statusCode).toBe(200);
-    expect(rejectResponse.json()).toEqual({
+    expect(rejectResponse.json()).toMatchObject({
       toast: {
         type: "success",
         content: "已拒绝"
-      }
+      },
+      card: expect.any(Object)
     });
+    expect(JSON.stringify(rejectResponse.json().card)).toContain("已不添加");
     expect(repos.getConfirmationRequest(calendar.id)?.status).toBe("rejected");
   });
 
@@ -383,12 +455,14 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
+    expect(response.json()).toMatchObject({
       toast: {
-        type: "success",
+        type: "info",
         content: "已收到请求，正在添加到飞书…"
-      }
+      },
+      card: expect.any(Object)
     });
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书...");
     await flushAsyncWork();
 
     const updatedAction = repos.getActionItem(action.target_id);
@@ -407,7 +481,68 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
   });
 
-  it("updates the original card to processing and then executed after confirm clicks", async () => {
+  it("records owner completion from card callbacks without creating the task", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        larkVerificationToken: null,
+        larkCliBin: "definitely-not-real-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new MockLlmClient()
+    });
+    const confirmation = createMissingOwnerActionConfirmation(repos);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        event: {
+          action: {
+            value: {
+              confirmation_id: confirmation.id,
+              action_key: "complete_owner",
+              edited_payload: "$editable_fields"
+            },
+            form_value: {
+              owner: "ou_completed_owner"
+            }
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "负责人已补全，请再次确认后添加待办"
+      },
+      card: expect.any(Object)
+    });
+    expect(repos.getActionItem(confirmation.target_id)).toMatchObject({
+      owner: null,
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null
+    });
+    expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
+      status: "edited",
+      executed_at: null,
+      error: null
+    });
+    expect(JSON.parse(repos.getConfirmationRequest(confirmation.id)!.edited_payload_json!)).toEqual(
+      {
+        owner: "ou_completed_owner"
+      }
+    );
+    expect(repos.listCliRuns().filter((run) => run.tool === "lark.task.create")).toHaveLength(0);
+    expect(JSON.stringify(response.json().card)).toContain("添加待办");
+  });
+
+  it("returns a processing card and then updates the original card to executed after confirm clicks", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const updateCalls: string[][] = [];
     const verificationToken = "verification-token";
@@ -462,11 +597,16 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
+    const responseBody = response.json();
+    expect(responseBody).toMatchObject({
       toast: {
-        type: "success"
-      }
+        type: "info",
+        content: "已收到请求，正在添加到飞书…"
+      },
+      card: expect.any(Object)
     });
+    expect(JSON.stringify(responseBody.card)).toContain("正在添加到飞书...");
+    expect(JSON.stringify(responseBody.card)).not.toContain("添加待办");
     await flushAsyncWork();
 
     expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
@@ -474,9 +614,9 @@ describe("POST /webhooks/feishu/card-action", () => {
       card_message_id: "om_original_card"
     });
     const cardUpdateRuns = repos.listCliRuns().filter((run) => run.tool === "lark.im.update_card");
-    expect(cardUpdateRuns).toHaveLength(2);
+    expect(cardUpdateRuns).toHaveLength(1);
     expect(cardUpdateRuns.every((run) => run.status === "success")).toBe(true);
-    expect(updateCalls).toHaveLength(2);
+    expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0]).toEqual(
       expect.arrayContaining([
         "im",
@@ -486,9 +626,8 @@ describe("POST /webhooks/feishu/card-action", () => {
         JSON.stringify({ message_id: "om_original_card" })
       ])
     );
-    expect(dataContentArg(updateCalls[0])).toContain("正在添加到飞书...");
-    expect(dataContentArg(updateCalls[0])).not.toContain("添加待办");
-    expect(dataContentArg(updateCalls[1])).toContain("已添加待办");
+    expect(dataContentArg(updateCalls[0])).toContain("已添加待办");
+    expect(dataContentArg(updateCalls[0])).toContain('"disabled":true');
     expect(
       repos.listCliRuns().some((run) => run.tool === "lark.im.send_card_status_fallback")
     ).toBe(false);
@@ -496,14 +635,9 @@ describe("POST /webhooks/feishu/card-action", () => {
 
   it("falls back to a lightweight result card when final card update fails after execution failure", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    let updateAttempts = 0;
     const verificationToken = "verification-token";
     const runner: LarkCliRunner = async (_bin, args) => {
       if (args[0] === "im" && args[1] === "messages" && args[2] === "patch") {
-        updateAttempts += 1;
-        if (updateAttempts === 1) {
-          return { stdout: JSON.stringify({ ok: true }), stderr: "" };
-        }
         throw new Error("card update API unavailable");
       }
 
@@ -568,6 +702,13 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
 
     expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "info",
+        content: "已收到请求，正在添加到飞书…"
+      },
+      card: expect.any(Object)
+    });
     await flushAsyncWork();
 
     expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
@@ -576,20 +717,19 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
     const runs = repos.listCliRuns();
     expect(runs.map((run) => run.tool)).toEqual([
-      "lark.im.update_card",
       "lark.task.create",
       "lark.im.update_card",
       "lark.im.send_card_status_fallback"
     ]);
-    expect(runs[2]).toMatchObject({
+    expect(runs[1]).toMatchObject({
       tool: "lark.im.update_card",
       status: "failed"
     });
-    expect(runs[3]).toMatchObject({
+    expect(runs[2]).toMatchObject({
       tool: "lark.im.send_card_status_fallback",
       status: "success"
     });
-    const fallbackArgs = JSON.parse(runs[3].args_json) as string[];
+    const fallbackArgs = JSON.parse(runs[2].args_json) as string[];
     expect(fallbackArgs).toEqual(expect.arrayContaining(["--chat-id", "oc_card_chat"]));
     expect(contentArg(fallbackArgs)).toContain("添加失败");
     expect(contentArg(fallbackArgs)).toContain("fake task create failure");
@@ -632,10 +772,45 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(duplicateResponse.statusCode).toBe(200);
     expect(duplicateResponse.json()).toMatchObject({
       toast: {
-        type: "success"
+        type: "info",
+        content: expect.stringContaining("不会重复执行")
+      },
+      card: expect.any(Object)
+    });
+    expect(JSON.stringify(duplicateResponse.json().card)).toContain("已添加待办");
+    expect(repos.listCliRuns()).toHaveLength(cliRunsAfterFirstClick);
+
+    repos.updateConfirmationRequest({
+      id: action.id,
+      status: "failed",
+      error: "lark.task.create failed: fake task error"
+    });
+    const failedRunsBeforeClick = repos.listCliRuns().length;
+    const failedDuplicateResponse = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        event: {
+          action: {
+            value: {
+              confirmation_id: action.id,
+              action_key: "confirm"
+            }
+          }
+        }
       }
     });
-    expect(repos.listCliRuns()).toHaveLength(cliRunsAfterFirstClick);
+
+    expect(failedDuplicateResponse.statusCode).toBe(200);
+    expect(failedDuplicateResponse.json()).toMatchObject({
+      toast: {
+        type: "info",
+        content: expect.stringContaining("不会重复执行")
+      },
+      card: expect.any(Object)
+    });
+    expect(JSON.stringify(failedDuplicateResponse.json().card)).toContain("添加失败");
+    expect(repos.listCliRuns()).toHaveLength(failedRunsBeforeClick);
   });
 
   it("keeps preview-only card actions side-effect free before later confirmation", async () => {
@@ -658,12 +833,14 @@ describe("POST /webhooks/feishu/card-action", () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({
+      expect(response.json()).toMatchObject({
         toast: {
-          type: "success",
+          type: "info",
           content: "此操作暂未实现，将在 PR-2 中完成"
-        }
+        },
+        card: expect.any(Object)
       });
+      expect(JSON.stringify(response.json().card)).toContain("已收到，稍后处理");
     }
 
     const unchangedConfirmation = repos.getConfirmationRequest(action.id);
