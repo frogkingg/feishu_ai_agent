@@ -37,6 +37,37 @@ function createClientWithResponses(contents: string[], baseUrl = "https://llm.ex
   return { client, calls };
 }
 
+function createClientWithPayloads(payloads: unknown[], baseUrl = "https://llm.example.com/v1") {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} });
+    const payload = payloads.shift() ?? {
+      choices: [
+        {
+          message: {
+            content: "{}"
+          }
+        }
+      ]
+    };
+    return new Response(JSON.stringify(payload), { status: 200 });
+  };
+  const client = new OpenAiCompatibleLlmClient(
+    loadConfig({
+      llmProvider: "openai-compatible",
+      llmBaseUrl: baseUrl,
+      llmApiKey: "test-key",
+      llmModel: "test-model",
+      llmTimeoutMs: 5000,
+      llmTemperature: 0.2,
+      llmMaxTokens: 1234
+    }),
+    fetchMock
+  );
+
+  return { client, calls };
+}
+
 async function generateTestJson(client: OpenAiCompatibleLlmClient) {
   return client.generateJson<{ ok: boolean; items?: string[] }>({
     systemPrompt: "system",
@@ -154,6 +185,35 @@ describe("OpenAiCompatibleLlmClient", () => {
       "LLM JSON parse failed after repair retry"
     );
     expect(calls).toHaveLength(2);
+  });
+
+  it("retries once when the provider returns no message content", async () => {
+    const { client, calls } = createClientWithPayloads([
+      {
+        choices: [
+          {
+            finish_reason: "length",
+            message: {}
+          }
+        ]
+      },
+      {
+        choices: [
+          {
+            message: {
+              content: '{"ok":true}'
+            }
+          }
+        ]
+      }
+    ]);
+
+    await expect(generateTestJson(client)).resolves.toEqual({ ok: true });
+    expect(calls).toHaveLength(2);
+    const retryBody = JSON.parse(String(calls[1].init.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(retryBody.messages.at(-1)?.content).toContain("上一轮响应没有返回");
   });
 
   it("requires OpenAI-compatible credentials", () => {

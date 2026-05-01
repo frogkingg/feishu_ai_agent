@@ -3,6 +3,7 @@ import { GenerateJsonInput, LlmClient } from "./llmClient";
 
 interface ChatCompletionResponse {
   choices?: Array<{
+    finish_reason?: string;
     message?: {
       content?: unknown;
     };
@@ -16,6 +17,11 @@ type FetchLike = typeof fetch;
 type ChatMessage = {
   role: "system" | "user";
   content: string;
+};
+type CompletionContent = {
+  content: string | null;
+  finishReason: string | null;
+  errorMessage: string | null;
 };
 
 const JSON_ONLY_INSTRUCTION = "你必须只输出 JSON，不要输出 Markdown，不要输出解释。";
@@ -161,7 +167,7 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
     this.fetchFn = fetchFn;
   }
 
-  private async complete(messages: ChatMessage[]): Promise<string> {
+  private async completeOnce(messages: ChatMessage[]): Promise<CompletionContent> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -187,11 +193,13 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
       }
 
       const payload = JSON.parse(rawText) as ChatCompletionResponse;
-      const content = payload.choices?.[0]?.message?.content;
-      if (typeof content !== "string" || content.length === 0) {
-        throw new Error(payload.error?.message ?? "LLM response did not include message content");
-      }
-      return content;
+      const choice = payload.choices?.[0];
+      const content = choice?.message?.content;
+      return {
+        content: typeof content === "string" && content.length > 0 ? content : null,
+        finishReason: choice?.finish_reason ?? null,
+        errorMessage: payload.error?.message ?? null
+      };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw new Error(`LLM request timed out after ${this.timeoutMs}ms`);
@@ -200,6 +208,33 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private async complete(messages: ChatMessage[]): Promise<string> {
+    const first = await this.completeOnce(messages);
+    if (first.content !== null) {
+      return first.content;
+    }
+
+    const retry = await this.completeOnce([
+      ...messages,
+      {
+        role: "user",
+        content:
+          "上一轮响应没有返回可解析的 message.content。请重新生成，并且只返回一个合法 JSON 对象，不要 Markdown，不要解释。"
+      }
+    ]);
+    if (retry.content !== null) {
+      return retry.content;
+    }
+
+    const detail =
+      retry.errorMessage ?? first.errorMessage ?? retry.finishReason ?? first.finishReason;
+    throw new Error(
+      detail
+        ? `LLM response did not include message content: ${detail}`
+        : "LLM response did not include message content"
+    );
   }
 
   async generateJson<T>(input: GenerateJsonInput): Promise<T> {
