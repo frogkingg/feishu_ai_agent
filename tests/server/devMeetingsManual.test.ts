@@ -198,22 +198,19 @@ describe("POST /dev/meetings/manual", () => {
     const createKbPayload = JSON.parse(createKbRequest!.original_payload_json) as {
       knowledge_base_mode?: string;
       workspace_name?: string;
-      default_structure?: string[];
+      curation_guidance?: string[];
       candidate_meeting_refs?: string[];
     };
     expect(createKbPayload).toMatchObject({
       knowledge_base_mode: "personal",
       workspace_name: personalWorkspaceName(),
-      default_structure: [
-        "00 README / Dashboard",
-        "01 Core Content / 主题模块",
-        "02 Merged FAQ / 问题合并",
-        "03 Archive / 来源追溯",
-        "04 Project Board / 行动与风险",
-        "05 Timeline / 时间轴与日程",
-        "06 Calendar / 日程索引"
-      ]
+      curation_guidance: expect.arrayContaining([
+        expect.stringContaining("Knowledge Curator LLM"),
+        expect.stringContaining("代码只提供会议摘要"),
+        expect.stringContaining("Dashboard 与 Archive")
+      ])
     });
+    expect(JSON.stringify(createKbPayload)).not.toContain("default_structure");
     expect(createKbPayload.candidate_meeting_refs).toEqual(
       expect.arrayContaining([
         expect.stringContaining("https://example.feishu.cn/minutes/min_001"),

@@ -4,7 +4,7 @@ import { AppConfig } from "./config";
 import { ManualMeetingInputSchema, ProcessMeetingTextInputSchema } from "./schemas";
 import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
-import { completeActionOwner, confirmRequest, rejectRequest } from "./services/confirmationService";
+import { confirmRequest, rejectRequest } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
 import { ConfirmationRequestRow, MeetingRow, Repositories } from "./services/store/repositories";
 import { buildFeishuInteractiveCard, sendCard, syncConfirmationCardStatus } from "./tools/larkIm";
@@ -207,10 +207,10 @@ const CONFIRM_CARD_ACTION_KEYS = new Set([
   "confirm",
   "confirm_with_edits",
   "create_kb",
-  "edit_and_create"
+  "edit_and_create",
+  "complete_owner"
 ]);
 const REJECT_CARD_ACTION_KEYS = new Set(["reject", "not_mine", "never_remind_topic"]);
-const COMPLETE_OWNER_CARD_ACTION_KEYS = new Set(["complete_owner"]);
 const PREVIEW_STUB_CARD_ACTIONS = {
   remind_later: "remind_later",
   convert_to_task: "convert_to_task",
@@ -383,6 +383,7 @@ function extractCardCallbackPayload(payload: unknown): {
   updateToken?: string | null;
   messageId?: string | null;
   chatId?: string | null;
+  actorOpenId?: string | null;
 } {
   const root = asRecord(payload) ?? {};
   const event = recordAtPath(payload, ["event"]) ?? {};
@@ -447,6 +448,15 @@ function extractCardCallbackPayload(payload: unknown): {
     root.open_chat_id,
     root.chat_id
   ]);
+  const actorOpenId = firstString([
+    valueAtPath(payload, ["event", "operator", "user_id", "open_id"]),
+    valueAtPath(payload, ["event", "operator", "open_id"]),
+    valueAtPath(payload, ["event", "operator", "operator_id", "open_id"]),
+    valueAtPath(payload, ["event", "user_id", "open_id"]),
+    valueAtPath(payload, ["event", "open_id"]),
+    root.open_id,
+    root.user_id
+  ]);
 
   return {
     requestId,
@@ -455,7 +465,8 @@ function extractCardCallbackPayload(payload: unknown): {
     reason,
     updateToken,
     messageId,
-    chatId
+    chatId,
+    actorOpenId
   };
 }
 
@@ -864,6 +875,7 @@ export function buildServer(input: {
             config: input.config,
             id: requestId,
             editedPayload: parsed.editedPayload,
+            actorOpenId: parsed.actorOpenId,
             runner: input.larkCliRunner
           });
           const finalUpdate = await syncCardStatusForRequest({
@@ -945,107 +957,6 @@ export function buildServer(input: {
           type: "success",
           content: "已拒绝",
           confirmation: rejected
-        });
-      }
-
-      if (COMPLETE_OWNER_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        const completion = completeActionOwner({
-          repos: input.repos,
-          id: requestId,
-          editedPayload: parsed.editedPayload
-        });
-
-        if (completion.owner !== null) {
-          input.repos.updateConfirmationRequest({
-            id: requestId,
-            status: "confirmed",
-            edited_payload_json: JSON.stringify(completion.editedPayload),
-            confirmed_at: nowIso(),
-            error: null
-          });
-          const acceptedConfirmation =
-            input.repos.getConfirmationRequest(requestId) ?? confirmation;
-
-          void (async () => {
-            const execution = await confirmRequest({
-              repos: input.repos,
-              config: input.config,
-              id: requestId,
-              editedPayload: completion.editedPayload,
-              runner: input.larkCliRunner
-            });
-            const finalUpdate = await syncCardStatusForRequest({
-              repos: input.repos,
-              config: input.config,
-              request: execution.confirmation,
-              updateToken: parsed.updateToken,
-              messageId: parsed.messageId,
-              chatId: parsed.chatId,
-              runner: input.larkCliRunner
-            });
-            if (!finalUpdate.ok) {
-              request.log.warn(
-                cardStatusLogContext({
-                  confirmationId: requestId,
-                  phase: "final",
-                  result: finalUpdate
-                }),
-                "card status update fell back or failed after owner completion execution"
-              );
-            }
-          })().catch(async (error) => {
-            input.repos.updateConfirmationRequest({
-              id: requestId,
-              status: "failed",
-              error: briefError(error)
-            });
-            const failed = input.repos.getConfirmationRequest(requestId) ?? confirmation;
-            const finalUpdate = await syncCardStatusForRequest({
-              repos: input.repos,
-              config: input.config,
-              request: failed,
-              updateToken: parsed.updateToken,
-              messageId: parsed.messageId,
-              chatId: parsed.chatId,
-              runner: input.larkCliRunner
-            });
-            request.log.error(
-              {
-                err: error,
-                confirmation_id: requestId,
-                card_status_method: finalUpdate.method,
-                card_status_ok: finalUpdate.ok
-              },
-              "async owner completion confirm failed"
-            );
-          });
-
-          return cardCallbackResponse({
-            type: "info",
-            content: CardActionAcceptedMessage,
-            confirmation: acceptedConfirmation
-          });
-        }
-
-        void syncCardStatusForRequest({
-          repos: input.repos,
-          config: input.config,
-          request: completion.confirmation,
-          updateToken: parsed.updateToken,
-          messageId: parsed.messageId,
-          chatId: parsed.chatId,
-          runner: input.larkCliRunner
-        }).catch((error) => {
-          request.log.error(
-            { err: error, confirmation_id: requestId },
-            "failed to update owner completion card status"
-          );
-        });
-
-        return cardCallbackResponse({
-          type: "info",
-          content: "请选择负责人后保存并添加待办",
-          confirmation: completion.confirmation
         });
       }
 
@@ -1297,39 +1208,22 @@ export function buildServer(input: {
 
   app.post("/dev/confirmations/:id/complete-owner", async (request, reply) => {
     const params = request.params as { id: string };
-    const body = (request.body ?? {}) as { edited_payload?: unknown };
+    const body = (request.body ?? {}) as { edited_payload?: unknown; actor_open_id?: unknown };
     try {
-      const result = completeActionOwner({
+      const result = await confirmRequest({
         repos: input.repos,
+        config: input.config,
         id: params.id,
-        editedPayload: body.edited_payload ?? request.body
+        editedPayload: normalizeEditedPayload(body.edited_payload ?? request.body),
+        actorOpenId: stringValue(body.actor_open_id),
+        runner: input.larkCliRunner
       });
-
-      if (result.owner !== null) {
-        const execution = await confirmRequest({
-          repos: input.repos,
-          config: input.config,
-          id: params.id,
-          editedPayload: result.editedPayload,
-          runner: input.larkCliRunner
-        });
-
-        return {
-          ok: true,
-          dry_run: true,
-          completion: "owner_recorded_and_task_requested",
-          owner: result.owner,
-          confirmation: execution.confirmation,
-          result: execution.result,
-          dry_run_card: buildConfirmationCardFromRequest(execution.confirmation)
-        };
-      }
-
       return {
         ok: true,
         dry_run: true,
-        completion: result.owner === null ? "owner_missing" : "owner_recorded",
+        completion: "task_requested",
         confirmation: result.confirmation,
+        result: result.result,
         dry_run_card: buildConfirmationCardFromRequest(result.confirmation)
       };
     } catch (error) {

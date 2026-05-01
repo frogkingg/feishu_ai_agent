@@ -88,23 +88,17 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(markdown).toContain("02 Merged FAQ / 问题合并");
     expect(markdown).toContain("03 Archive / 来源追溯");
     expect(markdown).toContain("04 Project Board / 行动与风险");
-    expect(markdown).toContain("05 Timeline / 时间轴与日程");
-    expect(markdown).toContain("06 Calendar / 日程索引");
+    expect(markdown).toContain("05 Calendar / 日程索引");
     expect(markdown).toContain("## Dashboard / Overview");
-    expect(markdown).toContain("## 核心目标");
-    expect(markdown).toContain("## 会议关系诊断");
-    expect(markdown).toContain("## 核心资产导航");
-    expect(markdown).toContain("## FAQ / Archive 入口");
-    expect(markdown).toContain("## SSOT 校验");
-    expect(markdown).toContain("## 关键链接 / 来源");
-    expect(markdown).toContain("## 会议范围");
+    expect(markdown).toContain("Mock LLM 根据 digest 生成多页面草案");
+    expect(markdown).toContain("| Question | Current Answer | Sources |");
+    expect(markdown).toContain("## 来源索引");
+    expect(markdown).not.toContain("### 可执行信息");
     expect(markdown).not.toContain("整体目标");
     expect(markdown).not.toContain("整体分析");
     expect(markdown).toContain("https://example.feishu.cn/minutes/min_001");
     expect(markdown).toContain("https://example.feishu.cn/minutes/transcript_001");
     expect(markdown).toContain("本次会议围绕无人机操作方案初步访谈展开");
-    expect(markdown).toContain("本次会议继续围绕无人机操作方案");
-    expect(markdown).toContain("无人机安全规范");
 
     const archivedMeetings = repos
       .listMeetings()
@@ -218,8 +212,8 @@ describe("createKnowledgeBaseWorkflow", () => {
     const childPageCount = wikiNodeCreateArgs.length;
     expect(spaceCreateArgs).toHaveLength(1);
     expect(memberCreateArgs).toHaveLength(0);
-    expect(childPageCount).toBe(6);
-    expect(updateArgs).toHaveLength(6);
+    expect(childPageCount).toBe(5);
+    expect(updateArgs).toHaveLength(5);
     expect(spaceCreateArgs[0]).toEqual([
       "wiki",
       "spaces",
@@ -234,7 +228,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     ]);
     expect(JSON.parse(spaceCreateArgs[0][spaceCreateArgs[0].indexOf("--data") + 1])).toEqual({
       name: "无人机操作流程主题知识库",
-      description: "由 2 场相关会议 dry-run 创建的主题式知识库。"
+      description: "Mock LLM 生成的知识库草案。"
     });
     expect(wikiNodeCreateArgs[0]).toEqual(
       expect.arrayContaining(["--space-id", "space_1", "--title", "01 Core Content / 主题模块"])

@@ -97,7 +97,7 @@ describe("CardInteractionAgent", () => {
       buildActionConfirmationCard({
         id: "conf_action_no_owner",
         target_id: "act_no_owner",
-        recipient: "Henry",
+        recipient: "ou_recipient",
         status: "sent",
         original_payload: {
           draft: {
@@ -118,30 +118,34 @@ describe("CardInteractionAgent", () => {
       sections: card.sections,
       editable_fields: card.editable_fields
     });
-    expect(card.summary).toContain("建议负责人：待确认");
+    expect(card.summary).toContain("会议未识别明确负责人");
+    expect(card.summary).toContain("点击后会添加到我的个人待办");
     expect(
       card.sections[0]?.fields.find((field) => field.key === "recommended_owner")
     ).toMatchObject({
-      label: "建议负责人",
-      value: "待确认"
+      label: "添加到",
+      value: "我的个人待办"
     });
+    expect(visibleText).not.toContain("ou_recipient");
     expect(visibleText).not.toContain("Henry");
+    expect(visibleText).not.toContain("补全负责人");
+    expect(visibleText).not.toContain("select_person");
     expect(visibleText).not.toContain("认领");
     expect(visibleText).not.toContain("承诺");
-    expect(card.actions.map((action) => action.key)).toEqual([
-      "complete_owner",
-      "reject",
-      "not_mine",
-      "remind_later"
+    expect(card.actions.map((action) => action.key)).toEqual(["confirm", "remind_later", "reject"]);
+    expect(card.actions.map((action) => action.label)).toEqual([
+      "添加到我的待办",
+      "稍后处理",
+      "不添加"
     ]);
-    expect(card.status_text).toBe("缺少负责人，需先补全后再添加待办");
+    expect(card.status_text).toBe("会议未识别明确负责人，可添加到我的个人待办");
   });
 
-  it("builds a lightweight owner completion card with a person picker", () => {
+  it("keeps edited missing-owner cards in the personal todo flow", () => {
     const card = expectValidCard(
       buildActionConfirmationCard({
-        id: "conf_owner_completion",
-        target_id: "act_owner_completion",
+        id: "conf_personal_todo",
+        target_id: "act_personal_todo",
         recipient: "ou_recipient",
         status: "edited",
         original_payload: {
@@ -158,24 +162,18 @@ describe("CardInteractionAgent", () => {
 
     expect(card).toMatchObject({
       card_type: "action_confirmation",
-      title: "补全负责人：整理无人机操作流程",
-      status_text: "请选择负责人，保存后会直接添加待办"
+      title: "确认待办：整理无人机操作流程",
+      status_text: "会议未识别明确负责人，可添加到我的个人待办"
     });
-    expect(card.editable_fields).toEqual([
-      {
-        key: "owner",
-        label: "负责人",
-        input_type: "person",
-        value: null,
-        required: true
-      }
-    ]);
-    expect(card.actions.find((action) => action.key === "complete_owner")).toMatchObject({
-      label: "保存并添加待办",
-      payload_template: {
-        edited_payload: "$editable_fields"
-      }
+    expect(JSON.stringify(card)).toContain("添加到我的个人待办");
+    expect(JSON.stringify(card)).not.toContain("补全负责人");
+    expect(JSON.stringify(card)).not.toContain("select_person");
+    expect(card.editable_fields.find((field) => field.key === "owner")).toMatchObject({
+      label: "添加到",
+      input_type: "readonly",
+      value: null
     });
+    expect(card.actions.map((action) => action.key)).toEqual(["confirm", "remind_later", "reject"]);
     expect(JSON.stringify(card)).not.toContain("@确认待办");
     expect(JSON.stringify(card)).not.toContain("Henry");
   });

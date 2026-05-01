@@ -112,7 +112,7 @@ describe("larkIm.sendCard", () => {
     ]);
   });
 
-  it("routes missing-owner action cards into owner completion instead of creation", () => {
+  it("renders missing-owner action cards as personal todo creation", () => {
     const missingOwnerCard = buildActionConfirmationCard({
       id: "conf_missing_owner",
       target_id: "act_missing_owner",
@@ -138,22 +138,23 @@ describe("larkIm.sendCard", () => {
     const serialized = JSON.stringify(interactive);
     const actionElement = interactive.elements.find((element) => element.tag === "action");
 
-    expect(serialized).toContain("缺少负责人，需先补全后再添加待办");
+    expect(serialized).toContain("会议未识别明确负责人");
+    expect(serialized).toContain("我的个人待办");
     expect(serialized).not.toContain('"name":"owner"');
     expect(serialized).not.toContain('"tag":"select_person"');
-    expect(serialized).toContain('"action":"complete_owner"');
-    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).not.toContain("补全负责人");
+    expect(serialized).not.toContain('"action":"complete_owner"');
+    expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
     expect(actionElement).toMatchObject({
       actions: [
         {
-          text: { content: "补全负责人" },
+          text: { content: "添加到我的待办" },
           value: {
-            action_key: "complete_owner",
-            action: "complete_owner",
+            action_key: "confirm",
+            action: "confirm",
             confirmation_id: "conf_missing_owner",
-            request_id: "conf_missing_owner",
-            edited_payload: "$editable_fields"
+            request_id: "conf_missing_owner"
           }
         },
         { text: { content: "稍后处理" } },
@@ -162,10 +163,10 @@ describe("larkIm.sendCard", () => {
     });
   });
 
-  it("renders owner completion cards with Feishu person selection and save action", () => {
+  it("keeps edited missing-owner cards out of person selection", () => {
     const completionCard = buildActionConfirmationCard({
-      id: "conf_owner_completion",
-      target_id: "act_owner_completion",
+      id: "conf_personal_todo",
+      target_id: "act_personal_todo",
       recipient: "ou_recipient",
       status: "edited",
       original_payload: {
@@ -188,22 +189,24 @@ describe("larkIm.sendCard", () => {
     const serialized = JSON.stringify(interactive);
     const actionElement = interactive.elements.find((element) => element.tag === "action");
 
-    expect(serialized).toContain("请选择负责人，保存后会直接添加待办");
-    expect(serialized).toContain('"tag":"select_person"');
-    expect(serialized).toContain('"name":"owner"');
+    expect(serialized).toContain("会议未识别明确负责人");
+    expect(serialized).toContain("我的个人待办");
+    expect(serialized).not.toContain('"tag":"select_person"');
+    expect(serialized).not.toContain('"name":"owner"');
+    expect(serialized).not.toContain("补全负责人");
     expect(serialized).not.toContain("@确认待办");
-    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
+    expect(serialized).not.toContain('"action":"complete_owner"');
     expect(actionElement).toMatchObject({
       actions: [
         {
-          text: { content: "保存并添加待办" },
+          text: { content: "添加到我的待办" },
           value: {
-            action_key: "complete_owner",
-            action: "complete_owner",
-            confirmation_id: "conf_owner_completion",
-            request_id: "conf_owner_completion",
-            edited_payload: "$editable_fields"
+            action_key: "confirm",
+            action: "confirm",
+            confirmation_id: "conf_personal_todo",
+            request_id: "conf_personal_todo"
           }
         },
         { text: { content: "稍后处理" } },

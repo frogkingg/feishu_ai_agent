@@ -293,6 +293,7 @@ function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
       primaryFieldKeys: ["topic_name", "kb_name", "meeting_reference", "candidate_meetings"],
       detailFieldKeys: [
         "suggested_goal",
+        "curation_guidance",
         "default_structure",
         "reason",
         "meeting_summary",
@@ -499,11 +500,7 @@ function requiredEditableKeys(card: DryRunConfirmationCard): string[] {
 }
 
 function requiredEditableFields(card: DryRunConfirmationCard) {
-  if (
-    card.card_type === "action_confirmation" &&
-    card.status === "sent" &&
-    hasMissingEditableField(card, "owner")
-  ) {
+  if (card.card_type === "action_confirmation" && hasMissingEditableField(card, "owner")) {
     return [];
   }
 
@@ -524,7 +521,7 @@ function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
 
   if (card.card_type === "action_confirmation") {
     if (hasMissingEditableField(card, "owner")) {
-      return ["complete_owner", "remind_later", "reject"];
+      return ["confirm", "remind_later", "reject"];
     }
 
     return hasRequiredEdits
@@ -585,15 +582,14 @@ function buttonLabel(
   }
 
   if (key === "complete_owner") {
-    if (card.card_type === "action_confirmation" && card.status === "edited") {
-      return `${prefix}${retryPrefix}保存并添加待办`;
-    }
-
-    return `${prefix}${retryPrefix}补全负责人`;
+    return `${prefix}${retryPrefix}添加到我的待办`;
   }
 
   if (key === "confirm") {
     if (card.card_type === "action_confirmation") {
+      if (hasMissingEditableField(card, "owner")) {
+        return `${prefix}${retryPrefix}添加到我的待办`;
+      }
       return `${prefix}${retryPrefix}添加待办`;
     }
     if (card.card_type === "calendar_confirmation") {

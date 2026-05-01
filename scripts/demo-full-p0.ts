@@ -288,12 +288,7 @@ const ACTION_CARD_ACTION_KEYS = [
   "not_mine",
   "remind_later"
 ];
-const ACTION_OWNER_COMPLETION_CARD_ACTION_KEYS = [
-  "complete_owner",
-  "reject",
-  "not_mine",
-  "remind_later"
-];
+const ACTION_OWNER_COMPLETION_CARD_ACTION_KEYS = ["confirm", "reject", "remind_later"];
 const CALENDAR_CARD_ACTION_KEYS = [
   "confirm",
   "confirm_with_edits",
@@ -661,7 +656,11 @@ async function completeOwner(
   step(context, `POST /dev/confirmations/${id}/complete-owner`);
   const result = await requestJson<{
     ok: boolean;
-    completion: "owner_missing" | "owner_recorded" | "owner_recorded_and_task_requested";
+    completion:
+      | "owner_missing"
+      | "owner_recorded"
+      | "owner_recorded_and_task_requested"
+      | "task_requested";
     confirmation: ConfirmationRequest;
     result?: unknown;
   }>(context, "POST", `/dev/confirmations/${id}/complete-owner`, {
@@ -670,10 +669,14 @@ async function completeOwner(
   assertDemo(result.ok === true, `Owner completion ${id} did not return ok`);
   assertDemo(
     result.completion === "owner_recorded" ||
-      result.completion === "owner_recorded_and_task_requested",
+      result.completion === "owner_recorded_and_task_requested" ||
+      result.completion === "task_requested",
     `Owner completion ${id} did not record owner; completion=${result.completion}`
   );
-  if (result.completion === "owner_recorded_and_task_requested") {
+  if (
+    result.completion === "owner_recorded_and_task_requested" ||
+    result.completion === "task_requested"
+  ) {
     assertDemo(
       result.confirmation.status === "executed",
       `Owner completion ${id} did not execute task; status=${result.confirmation.status}`

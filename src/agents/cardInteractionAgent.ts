@@ -282,7 +282,7 @@ function actionConfirmationActions(requestId: string): CardAction[] {
   return [
     {
       key: "confirm",
-      label: "确认",
+      label: "添加待办",
       style: "primary",
       action_type: "http_post",
       endpoint: `/dev/confirmations/${requestId}/confirm`,
@@ -299,18 +299,8 @@ function actionConfirmationActions(requestId: string): CardAction[] {
       }
     },
     {
-      key: "complete_owner",
-      label: "补全负责人",
-      style: "primary",
-      action_type: "http_post",
-      endpoint: `/dev/confirmations/${requestId}/complete-owner`,
-      payload_template: {
-        edited_payload: "$editable_fields"
-      }
-    },
-    {
       key: "reject",
-      label: "拒绝",
+      label: "不添加",
       style: "danger",
       action_type: "http_post",
       endpoint: `/dev/confirmations/${requestId}/reject`,
@@ -330,7 +320,7 @@ function actionConfirmationActions(requestId: string): CardAction[] {
     },
     {
       key: "remind_later",
-      label: "稍后提醒",
+      label: "稍后处理",
       style: "default",
       action_type: "http_post",
       endpoint: `/dev/confirmations/${requestId}/remind-later`,
@@ -341,15 +331,37 @@ function actionConfirmationActions(requestId: string): CardAction[] {
   ];
 }
 
-function actionOwnerCompletionActions(requestId: string): CardAction[] {
-  return actionConfirmationActions(requestId).map((action) =>
-    action.key === "complete_owner"
-      ? {
-          ...action,
-          label: "保存并添加待办"
-        }
-      : action
-  );
+function personalTodoFallbackActions(requestId: string): CardAction[] {
+  return [
+    {
+      key: "confirm",
+      label: "添加到我的待办",
+      style: "primary",
+      action_type: "http_post",
+      endpoint: `/dev/confirmations/${requestId}/confirm`,
+      payload_template: {}
+    },
+    {
+      key: "remind_later",
+      label: "稍后处理",
+      style: "default",
+      action_type: "http_post",
+      endpoint: `/dev/confirmations/${requestId}/remind-later`,
+      payload_template: {
+        reminder: "$remind_later"
+      }
+    },
+    {
+      key: "reject",
+      label: "不添加",
+      style: "danger",
+      action_type: "http_post",
+      endpoint: `/dev/confirmations/${requestId}/reject`,
+      payload_template: {
+        reason: "$reason"
+      }
+    }
+  ];
 }
 
 function calendarConfirmationActions(requestId: string): CardAction[] {
@@ -513,7 +525,7 @@ function statusText(input: {
 }): string | undefined {
   if (input.status === "edited") {
     if (input.cardType === "action_confirmation") {
-      return "已进入负责人补全流程，补全后请再次确认添加待办";
+      return "已更新确认信息，可继续添加待办";
     }
     if (input.cardType === "calendar_confirmation") {
       return "已进入时间补全流程，补全后请再次确认添加日程";
@@ -600,68 +612,59 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   const meetingReference = meetingReferenceFromPayload(payload);
   const cardType = "action_confirmation" as const;
   const ownerMissing = draft.owner === null || draft.missing_fields.includes("owner");
-  if (ownerMissing && parsed.status === "edited") {
-    const actions = actionOwnerCompletionActions(parsed.id).filter(
-      (action) => action.key !== "confirm" && action.key !== "confirm_with_edits"
-    );
-
-    return buildCard({
-      card_type: cardType,
-      request_id: parsed.id,
-      target_id: publicTargetId(parsed.target_id),
-      recipient: parsed.recipient,
-      status: parsed.status,
-      status_text: "请选择负责人，保存后会直接添加待办",
-      ...statusFields(parsed),
-      title: `补全负责人：${draft.title}`,
-      summary: "选择负责人后会直接保存 owner，并添加飞书待办。",
-      sections: [
-        section({
-          title: "待办概要",
-          fields: [
-            displayField("title", "任务标题", draft.title),
-            displayField("due_date", "截止时间", draft.due_date),
-            displayField("priority", "优先级", draft.priority)
-          ]
-        }),
-        section({
-          title: "会议依据",
-          fields: [
-            ...(meetingReference !== null
-              ? [displayField("meeting_reference", "会议", meetingReference)]
-              : []),
-            displayField("evidence", "依据", draft.evidence)
-          ]
-        })
-      ],
-      editable_fields: [
-        editableField({
-          key: "owner",
-          label: "负责人",
-          inputType: "person",
-          value: draft.owner,
-          required: true
-        })
-      ],
-      actions: actionsForStatus({ status: parsed.status, actions }),
-      dry_run: true,
-      version: "dry_run_v1"
-    });
-  }
-
-  const actions = actionConfirmationActions(parsed.id).filter((action) =>
-    ownerMissing
-      ? action.key !== "confirm" && action.key !== "confirm_with_edits"
-      : action.key !== "complete_owner"
-  );
-  const ownerText = draft.owner ?? "待确认";
-  const summary = [
-    `建议负责人：${ownerText}`,
-    draft.due_date ? `截止：${draft.due_date}` : "截止时间待补充",
-    draft.priority ? `优先级：${draft.priority}` : "优先级待补充"
-  ]
-    .filter((item): item is string => item !== null)
-    .join("；");
+  const actions = ownerMissing
+    ? personalTodoFallbackActions(parsed.id)
+    : actionConfirmationActions(parsed.id);
+  const ownerText = ownerMissing ? "我的个人待办" : (draft.owner ?? "待确认");
+  const ownerLabel = ownerMissing ? "添加到" : "建议负责人";
+  const summary = ownerMissing
+    ? [
+        "会议未识别明确负责人",
+        "点击后会添加到我的个人待办",
+        draft.due_date ? `截止：${draft.due_date}` : "截止时间待补充",
+        draft.priority ? `优先级：${draft.priority}` : "优先级待补充"
+      ].join("；")
+    : [
+        `建议负责人：${ownerText}`,
+        draft.due_date ? `截止：${draft.due_date}` : "截止时间待补充",
+        draft.priority ? `优先级：${draft.priority}` : "优先级待补充"
+      ]
+        .filter((item): item is string => item !== null)
+        .join("；");
+  const editableFields = [
+    editableField({
+      key: "title",
+      label: "标题",
+      inputType: "text",
+      value: draft.title,
+      required: true
+    }),
+    editableField({
+      key: "owner",
+      label: ownerLabel,
+      inputType: ownerMissing ? "readonly" : "text",
+      value: draft.owner
+    }),
+    editableField({
+      key: "due_date",
+      label: "截止日期",
+      inputType: "date",
+      value: draft.due_date
+    }),
+    editableField({
+      key: "priority",
+      label: "优先级",
+      inputType: "select",
+      value: draft.priority,
+      options: ["P0", "P1", "P2"]
+    }),
+    editableField({
+      key: "collaborators",
+      label: "协作人",
+      inputType: "multi_text",
+      value: draft.collaborators
+    })
+  ];
 
   return buildCard({
     card_type: cardType,
@@ -670,8 +673,8 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
     recipient: parsed.recipient,
     status: parsed.status,
     status_text:
-      ownerMissing && parsed.status === "sent"
-        ? "缺少负责人，需先补全后再添加待办"
+      ownerMissing && (parsed.status === "sent" || parsed.status === "edited")
+        ? "会议未识别明确负责人，可添加到我的个人待办"
         : statusText({ status: parsed.status, cardType }),
     ...statusFields(parsed),
     title: `确认待办：${draft.title}`,
@@ -681,7 +684,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
         title: "待办确认",
         fields: [
           displayField("title", "任务标题", draft.title),
-          displayField("recommended_owner", "建议负责人", ownerText),
+          displayField("recommended_owner", ownerLabel, ownerText),
           displayField("due_date", "截止时间", draft.due_date),
           displayField("priority", "优先级", draft.priority)
         ]
@@ -698,44 +701,15 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
       ...(ownerMissing
         ? [
             section({
-              title: "补全负责人",
-              helpText: "当前会议证据没有明确负责人。请点击补全负责人后选择 owner。",
-              fields: [
-                displayField("owner_completion", "补全方式", "点击补全负责人，选择后直接添加待办")
-              ]
+              title: "个人待办",
+              helpText:
+                "当前会议未识别明确负责人。点击添加后，会创建到当前卡片接收人或操作用户的个人待办。",
+              fields: [displayField("personal_task_fallback", "添加方式", "添加到我的个人待办")]
             })
           ]
         : [])
     ],
-    editable_fields: [
-      editableField({
-        key: "title",
-        label: "标题",
-        inputType: "text",
-        value: draft.title,
-        required: true
-      }),
-      editableField({ key: "owner", label: "建议负责人", inputType: "text", value: draft.owner }),
-      editableField({
-        key: "due_date",
-        label: "截止日期",
-        inputType: "date",
-        value: draft.due_date
-      }),
-      editableField({
-        key: "priority",
-        label: "优先级",
-        inputType: "select",
-        value: draft.priority,
-        options: ["P0", "P1", "P2"]
-      }),
-      editableField({
-        key: "collaborators",
-        label: "协作人",
-        inputType: "multi_text",
-        value: draft.collaborators
-      })
-    ],
+    editable_fields: editableFields,
     actions: actionsForStatus({ status: parsed.status, actions }),
     dry_run: true,
     version: "dry_run_v1"
@@ -852,6 +826,8 @@ export function buildCreateKbConfirmationCard(
   );
   const candidateMeetingRefs = parseStringArray(payload.candidate_meeting_refs);
   const defaultStructure = parseStringArray(payload.default_structure);
+  const curationGuidance = parseStringArray(payload.curation_guidance);
+  const structurePreview = curationGuidance.length > 0 ? curationGuidance : defaultStructure;
   const reason = firstString([payload.reason], "检测到相关会议，建议创建主题知识库。");
   const meetingCount =
     candidateMeetingRefs.length > 0 ? candidateMeetingRefs.length : candidateMeetingIds.length;
@@ -889,8 +865,14 @@ export function buildCreateKbConfirmationCard(
           ]
         : []),
       section({
-        title: "结构预览",
-        fields: [displayField("default_structure", "目录", defaultStructure)]
+        title: curationGuidance.length > 0 ? "策展方式" : "结构预览",
+        fields: [
+          displayField(
+            curationGuidance.length > 0 ? "curation_guidance" : "default_structure",
+            curationGuidance.length > 0 ? "指南" : "目录",
+            structurePreview
+          )
+        ]
       })
     ],
     editable_fields: [
@@ -908,10 +890,10 @@ export function buildCreateKbConfirmationCard(
         value: suggestedGoal
       }),
       editableField({
-        key: "default_structure",
-        label: "默认目录",
+        key: curationGuidance.length > 0 ? "curation_guidance" : "default_structure",
+        label: curationGuidance.length > 0 ? "策展指南" : "默认目录",
         inputType: "multi_text",
-        value: defaultStructure
+        value: structurePreview
       })
     ],
     actions: actionsForStatus({ status: parsed.status, actions }),

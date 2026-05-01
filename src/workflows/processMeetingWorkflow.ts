@@ -50,15 +50,11 @@ function suggestGoal(topicName: string, workspaceName: string): string {
   return `沉淀${topicName}相关会议结论、行动项、日程与资料来源，形成${workspaceName}可持续更新、按用户任务组织的主题式 SSOT。`;
 }
 
-function defaultKnowledgeBaseStructure(): string[] {
+function knowledgeCuratorGuidance(): string[] {
   return [
-    "00 README / Dashboard",
-    "01 Core Content / 主题模块",
-    "02 Merged FAQ / 问题合并",
-    "03 Archive / 来源追溯",
-    "04 Project Board / 行动与风险",
-    "05 Timeline / 时间轴与日程",
-    "06 Calendar / 日程索引"
+    "由 Knowledge Curator LLM 根据会议关系自行选择页面与栏目",
+    "代码只提供会议摘要、行动项、日程和来源链接，不用规则模板替代策展判断",
+    "必须保留 Dashboard 与 Archive 的可追溯边界，正文按读者任务组织"
   ];
 }
 
@@ -283,7 +279,7 @@ export async function processMeetingWorkflow(input: {
           }),
           match_reasons: topicMatch.match_reasons,
           score: topicMatch.score,
-          default_structure: defaultKnowledgeBaseStructure(),
+          curation_guidance: knowledgeCuratorGuidance(),
           topic_match: topicMatch,
           meeting_ids: topicMatch.candidate_meeting_ids,
           reason: "检测到至少两场强相关会议，建议创建主题知识库。"

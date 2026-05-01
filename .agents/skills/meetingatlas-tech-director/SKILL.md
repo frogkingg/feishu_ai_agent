@@ -93,6 +93,8 @@ Use this short gate before any tool call:
 
 - Protect the MeetingAtlas safety model: `FEISHU_DRY_RUN=true` by default, confirmation-first before Feishu writes or irreversible side effects, and mock LLM for tests unless the user explicitly requests real LLM validation.
 - Preview/card/stub routes must stay side-effect free. If a confirmation id does not exist, return 404 rather than faking success.
+- For knowledge-base generation and other complex judgment work, prefer `LLM + Skill` curation over code rules. Code should collect compact meeting summaries, action items, calendar drafts, source references, and schema-validation boundaries; it should not replace the model with growing keyword classifiers or fixed page templates.
+- Treat knowledge-base Skills as curation methodology, not static templates. Let the LLM decide meeting relationships, Dashboard shape, theme pages, FAQ usefulness, Archive mapping, and optional Board/Timeline pages from the actual digest.
 - Do not commit secrets, `.env`, local databases, `node_modules`, runtime logs, or accidental demo snapshots unless the user explicitly changes that boundary.
 - GitHub is the code authority. Keep local work aligned with the intended branch/PR and do not treat unpushed local state as the final source of truth.
 - If ordinary publishing or checks are unreliable, prove the failure, use the established safer fallback, and clearly report what changed remotely.

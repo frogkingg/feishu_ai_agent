@@ -9,6 +9,7 @@ import { buildConfirmationCard } from "../agents/cardInteractionAgent";
 import { createKnowledgeBaseWorkflow } from "../workflows/createKnowledgeBaseWorkflow";
 import { appendMeetingToKnowledgeBaseWorkflow } from "../workflows/appendMeetingToKnowledgeBaseWorkflow";
 import { ActionItemDraftSchema, CalendarEventDraftSchema } from "../schemas";
+import { LlmClient } from "./llm/llmClient";
 import { type LarkCliRunner } from "../tools/larkCli";
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -118,6 +119,54 @@ function normalizeActionOwnerPatch(payload: Record<string, unknown>): Record<str
 
 function hasText(value: string | null): boolean {
   return value !== null && value.trim().length > 0;
+}
+
+function trimToNull(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function usableOpenId(value: string | null | undefined): string | null {
+  const text = trimToNull(value);
+  return text?.startsWith("ou_") ? text : null;
+}
+
+function resolveActionOwner(input: {
+  draftOwner: string | null;
+  recipient: string | null;
+  actorOpenId?: string | null;
+}): {
+  owner: string;
+  fallbackApplied: boolean;
+} {
+  const explicitOwner = trimToNull(input.draftOwner);
+  if (explicitOwner !== null) {
+    return {
+      owner: explicitOwner,
+      fallbackApplied: false
+    };
+  }
+
+  const fallbackOwner = usableOpenId(input.recipient) ?? usableOpenId(input.actorOpenId);
+  if (fallbackOwner === null) {
+    throw new Error(
+      "Cannot create personal Feishu task: missing confirmation recipient open_id or card callback open_id"
+    );
+  }
+
+  return {
+    owner: fallbackOwner,
+    fallbackApplied: true
+  };
+}
+
+function appendPersonalTodoFallbackReason(suggestedReason: string): string {
+  const note = "会议未识别明确负责人；本次确认按个人待办创建。";
+  return suggestedReason.includes(note) ? suggestedReason : [suggestedReason, note].join("\n");
 }
 
 function removeKnownMissingFields(missingFields: string[], filledFields: string[]): string[] {
@@ -318,6 +367,8 @@ export async function confirmRequest(input: {
   config?: AppConfig;
   id: string;
   editedPayload?: unknown;
+  actorOpenId?: string | null;
+  llm?: LlmClient;
   runner?: LarkCliRunner;
 }): Promise<{
   confirmation: ConfirmationRequestRow;
@@ -370,43 +421,40 @@ export async function confirmRequest(input: {
         missing_fields: parseJsonArray(action.missing_fields_json),
         ...patch
       });
+      const ownerResolution = resolveActionOwner({
+        draftOwner: draft.owner,
+        recipient: request.recipient,
+        actorOpenId: input.actorOpenId
+      });
+      const effectiveDraft = {
+        ...draft,
+        owner: ownerResolution.owner,
+        suggested_reason: ownerResolution.fallbackApplied
+          ? appendPersonalTodoFallbackReason(draft.suggested_reason)
+          : draft.suggested_reason
+      };
       const changedFields = actionChangedFields({
         patch,
         original: action,
-        draft
+        draft: effectiveDraft
       });
-      const missingFields = hasText(draft.owner)
-        ? cleanActionMissingFields(draft)
-        : addKnownMissingField(cleanActionMissingFields(draft), "owner");
+      const missingFields = cleanActionMissingFields(effectiveDraft);
       input.repos.updateActionItemDraft({
         id: action.id,
-        title: draft.title,
-        description: draft.description,
-        owner: draft.owner,
-        collaborators_json: JSON.stringify(draft.collaborators),
-        due_date: draft.due_date,
-        priority: draft.priority,
-        evidence: draft.evidence,
-        confidence: draft.confidence,
-        suggested_reason: appendActionSuggestedReason(draft.suggested_reason, changedFields),
+        title: effectiveDraft.title,
+        description: effectiveDraft.description,
+        owner: effectiveDraft.owner,
+        collaborators_json: JSON.stringify(effectiveDraft.collaborators),
+        due_date: effectiveDraft.due_date,
+        priority: effectiveDraft.priority,
+        evidence: effectiveDraft.evidence,
+        confidence: effectiveDraft.confidence,
+        suggested_reason: appendActionSuggestedReason(
+          effectiveDraft.suggested_reason,
+          changedFields
+        ),
         missing_fields_json: JSON.stringify(missingFields)
       });
-      if (!hasText(draft.owner)) {
-        input.repos.updateConfirmationRequest({
-          id: request.id,
-          status: "edited",
-          error: null
-        });
-
-        return {
-          confirmation: input.repos.getConfirmationRequest(request.id) ?? request,
-          result: {
-            completion_required: true,
-            missing_fields: missingFields,
-            message: "owner is required before creating a Feishu task"
-          }
-        };
-      }
 
       const updatedAction = input.repos.getActionItem(action.id) ?? action;
       const result = await createTask({
@@ -514,6 +562,7 @@ export async function confirmRequest(input: {
         repos: input.repos,
         config: input.config,
         confirmationId: request.id,
+        llm: input.llm,
         runner: input.runner
       });
 

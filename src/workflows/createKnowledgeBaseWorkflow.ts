@@ -5,6 +5,8 @@ import {
 } from "../agents/knowledgeCuratorAgent";
 import { AppConfig, loadConfig } from "../config";
 import { KnowledgeBaseDraft, KnowledgeUpdateSchema, TopicMatchResultSchema } from "../schemas";
+import { createLlmClient } from "../services/llm/createLlmClient";
+import { LlmClient } from "../services/llm/llmClient";
 import {
   ConfirmationRequestRow,
   KnowledgeBaseRow,
@@ -25,6 +27,7 @@ const CreateKnowledgeBasePayloadSchema = z
     match_reasons: z.array(z.string()).optional(),
     score: z.number().min(0).max(1).optional(),
     default_structure: z.array(z.string()).optional(),
+    curation_guidance: z.array(z.string()).optional(),
     topic_match: TopicMatchResultSchema,
     meeting_ids: z.array(z.string().min(1)).min(1).optional(),
     reason: z.string().min(1).optional()
@@ -75,8 +78,10 @@ export async function createKnowledgeBaseWorkflow(input: {
   repos: Repositories;
   config?: AppConfig;
   confirmationId: string;
+  llm?: LlmClient;
   runner?: LarkCliRunner;
 }): Promise<CreateKnowledgeBaseWorkflowResult> {
+  const config = input.config ?? loadConfig();
   const request = input.repos.getConfirmationRequest(input.confirmationId);
   if (!request) {
     throw new Error(`Confirmation request not found: ${input.confirmationId}`);
@@ -109,22 +114,23 @@ export async function createKnowledgeBaseWorkflow(input: {
     .filter((calendar) => meetingIds.has(calendar.meeting_id));
   const owner =
     request.recipient ?? meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? null;
-  const dryRun = input.config?.feishuKnowledgeWriteDryRun ?? input.config?.feishuDryRun ?? true;
+  const dryRun = config.feishuKnowledgeWriteDryRun ?? config.feishuDryRun ?? true;
+  const llm = input.llm ?? createLlmClient(config);
 
-  const draft = runKnowledgeCuratorAgent({
+  const draft = await runKnowledgeCuratorAgent({
     topicName: payload.topic_name,
     owner,
     meetings,
     actions,
     calendars,
-    confidenceOrigin: payload.topic_match.score
+    confidenceOrigin: payload.topic_match.score,
+    llm
   });
   const markdown = renderKnowledgeBaseMarkdown(draft);
   let wikiUrl = `mock://feishu/wiki/${draft.kb_id}`;
   let homepageUrl = `mock://feishu/wiki/${draft.kb_id}/00-home`;
 
   if (!dryRun) {
-    const config = input.config ?? loadConfig();
     const wikiSpace = await createWikiSpace({
       repos: input.repos,
       config,

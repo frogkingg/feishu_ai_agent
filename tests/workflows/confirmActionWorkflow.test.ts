@@ -265,6 +265,89 @@ describe("confirm action request", () => {
     });
   });
 
+  it("passes the recipient fallback assignee to real task creation when owner is missing", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createActionTestMeeting(repos);
+    const action = repos.createActionItem({
+      id: "act_real_task_create_personal",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "整理客户访谈结论",
+      description: "汇总访谈输出。",
+      owner: null,
+      collaborators_json: JSON.stringify([]),
+      due_date: "2026-05-08",
+      priority: "P1",
+      evidence: "会议中提出需要整理客户访谈结论，但没有明确负责人。",
+      confidence: 0.84,
+      suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+      missing_fields_json: JSON.stringify(["owner"]),
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null,
+      rejection_reason: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "action",
+      targetId: action.id,
+      recipient: "ou_personal_recipient",
+      originalPayload: { draft: action }
+    });
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const runner: LarkCliRunner = async (bin, args) => {
+      calls.push({ bin, args });
+      return {
+        stdout: JSON.stringify({
+          data: {
+            guid: "task_guid_personal",
+            url: "https://applink.feishu.cn/client/todo/detail?guid=task_guid_personal"
+          }
+        }),
+        stderr: ""
+      };
+    };
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuTaskCreateDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
+      id: request.id,
+      runner
+    });
+
+    const updatedAction = repos.getActionItem(action.id);
+    const updatedRequest = repos.getConfirmationRequest(request.id);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual([
+      "task",
+      "+create",
+      "--summary",
+      "整理客户访谈结论",
+      "--description",
+      "汇总访谈输出。",
+      "--due",
+      "2026-05-08",
+      "--assignee",
+      "ou_personal_recipient",
+      "--as",
+      "user"
+    ]);
+    expect(updatedRequest).toMatchObject({
+      status: "executed",
+      error: null
+    });
+    expect(updatedAction).toMatchObject({
+      owner: "ou_personal_recipient",
+      confirmation_status: "created",
+      feishu_task_guid: "task_guid_personal",
+      task_url: "https://applink.feishu.cn/client/todo/detail?guid=task_guid_personal"
+    });
+  });
+
   it("removes due date from missing fields when edited payload fills it", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const meeting = createActionTestMeeting(repos);
@@ -357,7 +440,7 @@ describe("confirm action request", () => {
     expect(updatedAction?.suggested_reason).toContain("以用户确认结果为准");
   });
 
-  it("keeps owner-missing confirmations in completion state instead of creating a task", async () => {
+  it("creates a personal task for the recipient when the action owner is missing", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const meeting = createActionTestMeeting(repos);
     const action = repos.createActionItem({
@@ -383,7 +466,7 @@ describe("confirm action request", () => {
       repos,
       requestType: "action",
       targetId: action.id,
-      recipient: meeting.organizer,
+      recipient: "ou_personal_recipient",
       originalPayload: { draft: action }
     });
 
@@ -396,13 +479,75 @@ describe("confirm action request", () => {
     const updatedRequest = repos.getConfirmationRequest(request.id);
     const updatedAction = repos.getActionItem(action.id);
     expect(result.result).toMatchObject({
-      completion_required: true,
-      missing_fields: ["owner"]
+      dry_run: true,
+      feishu_task_guid: `dry_task_${action.id}`,
+      task_url: `mock://feishu/task/${action.id}`
     });
     expect(updatedRequest).toMatchObject({
-      status: "edited",
-      executed_at: null,
+      status: "executed",
       error: null
+    });
+    expect(updatedAction).toMatchObject({
+      owner: "ou_personal_recipient",
+      confirmation_status: "created",
+      feishu_task_guid: `dry_task_${action.id}`,
+      task_url: `mock://feishu/task/${action.id}`
+    });
+    const cliRuns = repos.listCliRuns();
+    expect(cliRuns).toHaveLength(1);
+    const args = JSON.parse(cliRuns[0].args_json) as string[];
+    expect(args).toEqual(expect.arrayContaining(["--assignee", "ou_personal_recipient"]));
+    expect(JSON.stringify(updatedAction)).not.toContain("认领");
+    expect(JSON.stringify(updatedAction)).not.toContain("承诺");
+  });
+
+  it("fails clearly when an owner-missing action has no personal owner open_id", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createActionTestMeeting(repos);
+    const action = repos.createActionItem({
+      id: "act_missing_owner_no_recipient",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "整理客户访谈结论",
+      description: "汇总访谈输出。",
+      owner: null,
+      collaborators_json: JSON.stringify([]),
+      due_date: "2026-05-08",
+      priority: "P1",
+      evidence: "会议中提出需要整理客户访谈结论，但没有明确负责人。",
+      confidence: 0.84,
+      suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+      missing_fields_json: JSON.stringify(["owner"]),
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null,
+      rejection_reason: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "action",
+      targetId: action.id,
+      recipient: null,
+      originalPayload: { draft: action }
+    });
+
+    const result = await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: true, larkCliBin: "definitely-not-real-lark" }),
+      id: request.id
+    });
+
+    const updatedRequest = repos.getConfirmationRequest(request.id);
+    const updatedAction = repos.getActionItem(action.id);
+    expect(result.result).toMatchObject({
+      failed: true,
+      error:
+        "Cannot create personal Feishu task: missing confirmation recipient open_id or card callback open_id"
+    });
+    expect(updatedRequest).toMatchObject({
+      status: "failed",
+      error:
+        "Cannot create personal Feishu task: missing confirmation recipient open_id or card callback open_id"
     });
     expect(updatedAction).toMatchObject({
       owner: null,

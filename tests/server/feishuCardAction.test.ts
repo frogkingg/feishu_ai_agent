@@ -107,7 +107,10 @@ function createDirectActionConfirmation(
   });
 }
 
-function createMissingOwnerActionConfirmation(repos: ReturnType<typeof createRepositories>) {
+function createMissingOwnerActionConfirmation(
+  repos: ReturnType<typeof createRepositories>,
+  options: { recipient?: string | null } = {}
+) {
   const meeting = repos.createMeeting({
     id: "mtg_missing_owner_card_action",
     external_meeting_id: null,
@@ -151,7 +154,7 @@ function createMissingOwnerActionConfirmation(repos: ReturnType<typeof createRep
     id: "conf_missing_owner_card_action",
     request_type: "action",
     target_id: action.id,
-    recipient: "ou_organizer",
+    recipient: options.recipient === undefined ? "ou_organizer" : options.recipient,
     card_message_id: null,
     status: "sent",
     original_payload_json: JSON.stringify({
@@ -496,7 +499,7 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
   });
 
-  it("opens an owner completion card on first complete-owner click without creating a task", async () => {
+  it("adds missing-owner actions to the card recipient's personal todo", async () => {
     const { app, repos, confirmation } = createOwnerCompletionApp();
 
     const response = await app.inject({
@@ -507,8 +510,7 @@ describe("POST /webhooks/feishu/card-action", () => {
           action: {
             value: {
               confirmation_id: confirmation.id,
-              action_key: "complete_owner",
-              edited_payload: "$editable_fields"
+              action_key: "confirm"
             }
           }
         }
@@ -519,48 +521,60 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json()).toMatchObject({
       toast: {
         type: "info",
-        content: "请选择负责人后保存并添加待办"
+        content: "已收到请求，正在添加到飞书…"
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(response.json().card)).toContain('"tag":"select_person"');
-    expect(JSON.stringify(response.json().card)).toContain("保存并添加待办");
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书...");
+    expect(JSON.stringify(response.json().card)).not.toContain("补全负责人");
+    expect(JSON.stringify(response.json().card)).not.toContain('"tag":"select_person"');
+    await flushAsyncWork();
+
     expect(repos.getActionItem(confirmation.target_id)).toMatchObject({
-      owner: null,
-      confirmation_status: "sent",
-      feishu_task_guid: null,
-      task_url: null
+      owner: "ou_organizer",
+      confirmation_status: "created",
+      feishu_task_guid: `dry_task_${confirmation.target_id}`,
+      task_url: `mock://feishu/task/${confirmation.target_id}`
     });
     expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
-      status: "edited",
-      executed_at: null,
+      status: "executed",
       error: null
     });
-    expect(JSON.parse(repos.getConfirmationRequest(confirmation.id)!.edited_payload_json!)).toEqual(
-      {}
+    const taskRuns = repos.listCliRuns().filter((run) => run.tool === "lark.task.create");
+    expect(taskRuns).toHaveLength(1);
+    expect(JSON.parse(taskRuns[0].args_json) as string[]).toEqual(
+      expect.arrayContaining(["--assignee", "ou_organizer"])
     );
-    expect(repos.listCliRuns().filter((run) => run.tool === "lark.task.create")).toHaveLength(0);
-    expect(response.json().toast.type).not.toBe("error");
   });
 
-  it("saves selected owner and creates the task from the owner completion callback", async () => {
-    const { app, repos, confirmation } = createOwnerCompletionApp();
+  it("uses the Feishu card callback user when a missing-owner card has no recipient", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        larkVerificationToken: null,
+        larkCliBin: "definitely-not-real-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new MockLlmClient()
+    });
+    const confirmation = createMissingOwnerActionConfirmation(repos, { recipient: null });
 
     const response = await app.inject({
       method: "POST",
       url: "/webhooks/feishu/card-action",
       payload: {
         event: {
+          operator: {
+            user_id: {
+              open_id: "ou_callback_user"
+            }
+          },
           action: {
             value: {
               confirmation_id: confirmation.id,
-              action_key: "complete_owner",
-              edited_payload: "$editable_fields"
-            },
-            form_value: {
-              owner: {
-                open_id: "ou_completed_owner"
-              }
+              action_key: "confirm"
             }
           }
         }
@@ -580,7 +594,7 @@ describe("POST /webhooks/feishu/card-action", () => {
     await flushAsyncWork();
 
     expect(repos.getActionItem(confirmation.target_id)).toMatchObject({
-      owner: "ou_completed_owner",
+      owner: "ou_callback_user",
       confirmation_status: "created",
       feishu_task_guid: `dry_task_${confirmation.target_id}`,
       task_url: `mock://feishu/task/${confirmation.target_id}`
@@ -589,25 +603,61 @@ describe("POST /webhooks/feishu/card-action", () => {
       status: "executed",
       error: null
     });
-    expect(JSON.parse(repos.getConfirmationRequest(confirmation.id)!.edited_payload_json!)).toEqual(
-      {
-        owner: "ou_completed_owner"
-      }
-    );
     const taskRuns = repos.listCliRuns().filter((run) => run.tool === "lark.task.create");
     expect(taskRuns).toHaveLength(1);
     expect(JSON.parse(taskRuns[0].args_json) as string[]).toEqual(
-      expect.arrayContaining(["--assignee", "ou_completed_owner"])
+      expect.arrayContaining(["--assignee", "ou_callback_user"])
     );
   });
 
-  it.each([
-    ["open_id", { open_id: "ou_owner_open_id" }, "ou_owner_open_id"],
-    ["user_id", { user_id: "ou_owner_user_id" }, "ou_owner_user_id"],
-    ["id", { id: "ou_owner_id" }, "ou_owner_id"],
-    ["value", { value: { open_id: "ou_owner_value" } }, "ou_owner_value"],
-    ["array", [{ open_id: "ou_owner_array" }], "ou_owner_array"]
-  ])("normalizes select_person %s owner payloads", async (_shape, ownerValue, expectedOwner) => {
+  it("fails missing-owner action creation when no personal owner open_id is available", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        larkVerificationToken: null,
+        larkCliBin: "definitely-not-real-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new MockLlmClient()
+    });
+    const confirmation = createMissingOwnerActionConfirmation(repos, { recipient: null });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        event: {
+          action: {
+            value: {
+              confirmation_id: confirmation.id,
+              action_key: "confirm"
+            }
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().toast.type).toBe("info");
+    await flushAsyncWork();
+
+    expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
+      status: "failed",
+      error:
+        "Cannot create personal Feishu task: missing confirmation recipient open_id or card callback open_id"
+    });
+    expect(repos.getActionItem(confirmation.target_id)).toMatchObject({
+      owner: null,
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null
+    });
+    expect(repos.listCliRuns().filter((run) => run.tool === "lark.task.create")).toHaveLength(0);
+  });
+
+  it("treats legacy complete-owner callbacks as add-to-my-todo", async () => {
     const { app, repos, confirmation } = createOwnerCompletionApp();
 
     const response = await app.inject({
@@ -620,9 +670,6 @@ describe("POST /webhooks/feishu/card-action", () => {
               confirmation_id: confirmation.id,
               action_key: "complete_owner",
               edited_payload: "$editable_fields"
-            },
-            form_value: {
-              owner: ownerValue
             }
           }
         }
@@ -633,12 +680,14 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json().toast.type).toBe("info");
     await flushAsyncWork();
 
-    expect(repos.getActionItem(confirmation.target_id)?.owner).toBe(expectedOwner);
+    expect(JSON.stringify(response.json().card)).not.toContain("补全负责人");
+    expect(JSON.stringify(response.json().card)).not.toContain('"tag":"select_person"');
+    expect(repos.getActionItem(confirmation.target_id)?.owner).toBe("ou_organizer");
     expect(repos.getConfirmationRequest(confirmation.id)?.status).toBe("executed");
     const taskRuns = repos.listCliRuns().filter((run) => run.tool === "lark.task.create");
     expect(taskRuns).toHaveLength(1);
     expect(JSON.parse(taskRuns[0].args_json) as string[]).toEqual(
-      expect.arrayContaining(["--assignee", expectedOwner])
+      expect.arrayContaining(["--assignee", "ou_organizer"])
     );
   });
 
