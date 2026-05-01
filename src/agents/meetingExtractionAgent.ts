@@ -6,19 +6,10 @@ import { LlmClient } from "../services/llm/llmClient";
 import { MeetingRow } from "../services/store/repositories";
 
 const CalendarIntentWords = ["会议", "访谈", "评审", "同步", "沟通"];
-const CalendarReminderWords = [
-  "提交",
-  "截止",
-  "公布",
-  "发布",
-  "分享",
-  "直播",
-  "路演",
-  "决赛",
-  "复赛",
-  "清单",
-  "名单"
-];
+const CalendarSignalWords = ["截止", "评审", "分享", "演示", "发布", "复盘", "会面", "里程碑"];
+const CalendarReminderWords = ["截止", "提醒", "到期", "里程碑"];
+const CalendarReviewWords = ["评审", "复盘"];
+const CalendarShareWords = ["分享", "演示", "发布"];
 
 function readPrompt(name: string): string {
   return readFileSync(join(process.cwd(), "src/prompts", name), "utf8");
@@ -52,26 +43,34 @@ function looksLikeCalendarReminder(draft: Record<string, unknown>): boolean {
   const text = [draft.title, draft.agenda, draft.evidence]
     .filter((value): value is string => typeof value === "string")
     .join(" ");
-  const hasReminderSignal = CalendarReminderWords.some((word) => text.includes(word));
+  const hasCalendarSignal = CalendarSignalWords.some((word) => text.includes(word));
   const hasTimeSignal =
     typeof draft.start_time === "string" ||
     /(\d{1,2}\s*[月/-]\s*\d{1,2})|(\d{1,2}\s*点)|(中午|上午|下午|晚上|今晚|明天|后天|周[一二三四五六日天])/u.test(
       text
     );
 
-  return hasReminderSignal && hasTimeSignal;
+  return hasCalendarSignal && hasTimeSignal;
 }
 
-function normalizeCalendarTitle(title: string): string {
+function normalizeCalendarTitle(title: string, context: string): string {
   if (hasCalendarIntent(title)) {
     return title;
   }
 
-  if (title.includes("决赛") || title.includes("路演")) {
-    return `${title}评审会议`;
+  if (CalendarReviewWords.some((word) => context.includes(word))) {
+    return `${title}评审`;
   }
 
-  return `${title}同步`;
+  if (CalendarShareWords.some((word) => context.includes(word))) {
+    return `${title}同步`;
+  }
+
+  if (CalendarReminderWords.some((word) => context.includes(word))) {
+    return `${title}提醒同步`;
+  }
+
+  return `${title}会议`;
 }
 
 function normalizeCalendarDrafts(raw: unknown): unknown {
@@ -90,13 +89,13 @@ function normalizeCalendarDrafts(raw: unknown): unknown {
       const haystack = [draft.title, draft.agenda, draft.evidence]
         .filter((field): field is string => typeof field === "string")
         .join(" ");
-      if (hasCalendarIntent(haystack) || !looksLikeCalendarReminder(draft)) {
+      if (!looksLikeCalendarReminder(draft)) {
         return draft;
       }
 
       return {
         ...draft,
-        title: normalizeCalendarTitle(draft.title)
+        title: normalizeCalendarTitle(draft.title, haystack)
       };
     })
   };
@@ -130,7 +129,7 @@ async function repairExtractionWithLlm(input: {
       "上一次输出没有通过 MeetingExtractionResult schema 校验。",
       "请在保留原始信息的基础上修正为项目期望的顶层 JSON object。",
       "不要返回 array 作为顶层，不要 Markdown，不要解释，不要省略必填字段。",
-      "如果 calendar_drafts 中的事项是明确日程/截止/公布/分享/路演/决赛提醒，title、agenda 或 evidence 必须包含会议、访谈、评审、同步或沟通意图词。",
+      "如果 calendar_drafts 中的事项是明确带时间的日程、截止提醒、评审、分享、演示、发布、复盘、同步、会面或里程碑，title、agenda 或 evidence 必须包含会议、访谈、评审、同步或沟通意图词。",
       "如果只是任务截止且没有日程提醒意图，不要放进 calendar_drafts。",
       `schema_error: ${briefSchemaError(input.error)}`,
       "invalid_output:",

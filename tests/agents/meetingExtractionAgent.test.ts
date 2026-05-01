@@ -28,7 +28,7 @@ function createMeeting(transcriptText = "会议转写内容"): MeetingRow {
   return repos.createMeeting({
     id: "mtg_agent_test",
     external_meeting_id: null,
-    title: "飞书 AI 校园挑战赛",
+    title: "产品发布评审会",
     started_at: "2026-04-29T19:00:00+08:00",
     ended_at: "2026-04-29T20:00:00+08:00",
     organizer: "Henry",
@@ -50,11 +50,11 @@ function validExtraction(
   overrides: Partial<MeetingExtractionResult> = {}
 ): MeetingExtractionResult {
   return {
-    meeting_summary: "本次会议同步了飞书 AI 校园挑战赛的复赛安排和提交要求。",
+    meeting_summary: "本次会议同步了产品发布计划、评审安排和项目里程碑。",
     key_decisions: [],
     action_items: [],
     calendar_drafts: [],
-    topic_keywords: ["飞书 AI 校园挑战赛"],
+    topic_keywords: ["产品发布", "评审安排", "项目里程碑"],
     risks: [],
     source_mentions: [],
     confidence: 0.86,
@@ -149,14 +149,14 @@ describe("MeetingExtractionAgent", () => {
       validExtraction({
         calendar_drafts: [
           {
-            title: "复赛作品提交截止",
+            title: "需求冻结截止",
             start_time: "2026-05-07T12:00:00+08:00",
             end_time: null,
             duration_minutes: 15,
-            participants: ["参赛同学"],
-            agenda: "提醒复赛作品提交截止。",
+            participants: ["产品经理", "研发负责人"],
+            agenda: "提醒需求冻结截止。",
             location: null,
-            evidence: "复赛作品提交截止时间为 5 月 7 日中午 12 点。",
+            evidence: "需求冻结截止时间为 5 月 7 日中午 12 点。",
             confidence: 0.82,
             missing_fields: ["end_time", "location"]
           }
@@ -169,7 +169,36 @@ describe("MeetingExtractionAgent", () => {
       llm
     });
 
-    expect(extraction.calendar_drafts[0].title).toBe("复赛作品提交截止同步");
+    expect(extraction.calendar_drafts[0].title).toBe("需求冻结截止提醒同步");
+    expect(llm.calls).toHaveLength(1);
+  });
+
+  it("adds a generic review suffix when evidence shows a review schedule", async () => {
+    const llm = new SequenceLlmClient([
+      validExtraction({
+        calendar_drafts: [
+          {
+            title: "移动端原型",
+            start_time: "2026-05-08T15:00:00+08:00",
+            end_time: null,
+            duration_minutes: 45,
+            participants: ["设计", "产品", "研发"],
+            agenda: "评审移动端原型和交互风险。",
+            location: null,
+            evidence: "周五 15 点安排移动端原型评审。",
+            confidence: 0.88,
+            missing_fields: ["end_time", "location"]
+          }
+        ]
+      })
+    ]);
+
+    const extraction = await runMeetingExtractionAgent({
+      meeting: createMeeting(),
+      llm
+    });
+
+    expect(extraction.calendar_drafts[0].title).toBe("移动端原型评审");
     expect(llm.calls).toHaveLength(1);
   });
 
@@ -178,14 +207,14 @@ describe("MeetingExtractionAgent", () => {
       validExtraction({
         calendar_drafts: [
           {
-            title: "决赛路演评审会议",
+            title: "客户访谈复盘会议",
             start_time: "2026-05-15T14:00:00+08:00",
             end_time: null,
             duration_minutes: 60,
-            participants: ["参赛同学"],
-            agenda: "进行决赛路演评审。",
+            participants: ["销售", "产品"],
+            agenda: "复盘客户访谈结论。",
             location: null,
-            evidence: "决赛时间调整为 5 月 15 日。",
+            evidence: "5 月 15 日下午安排客户访谈复盘会议。",
             confidence: 0.86,
             missing_fields: ["end_time", "location"]
           }
@@ -198,7 +227,30 @@ describe("MeetingExtractionAgent", () => {
       llm
     });
 
-    expect(extraction.calendar_drafts[0].title).toBe("决赛路演评审会议");
+    expect(extraction.calendar_drafts[0].title).toBe("客户访谈复盘会议");
     expect(llm.calls).toHaveLength(1);
+  });
+
+  it("does not keep domain-specific challenge terms in production extraction logic", () => {
+    const sourcePath = join(process.cwd(), "src/agents/meetingExtractionAgent.ts");
+    const source = readFileSync(sourcePath, "utf8");
+    const blockedTerms = [
+      "比赛",
+      "校园",
+      "飞书 AI",
+      "复赛",
+      "决赛",
+      "路演",
+      "GitHub public",
+      "阶段成果",
+      "豆包",
+      "Openclaw",
+      "评分标准",
+      "参赛"
+    ];
+
+    for (const term of blockedTerms) {
+      expect(source).not.toContain(term);
+    }
   });
 });
