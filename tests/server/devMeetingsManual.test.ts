@@ -164,7 +164,8 @@ describe("POST /dev/meetings/manual", () => {
     const combinedSummary = {
       action: firstBody.confirmation_summary.action + secondBody.confirmation_summary.action,
       calendar: firstBody.confirmation_summary.calendar + secondBody.confirmation_summary.calendar,
-      create_kb: firstBody.confirmation_summary.create_kb + secondBody.confirmation_summary.create_kb
+      create_kb:
+        firstBody.confirmation_summary.create_kb + secondBody.confirmation_summary.create_kb
     };
     const combinedCards = [...firstBody.confirmation_cards, ...secondBody.confirmation_cards];
 

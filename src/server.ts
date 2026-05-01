@@ -456,9 +456,7 @@ function cardPreviewStubAction(input: {
   };
 }
 
-function alreadyProcessedToast(input: {
-  status: string;
-}) {
+function alreadyProcessedToast(input: { status: string }) {
   return toast("success", `该确认请求已处理（${input.status}），不会重复执行`);
 }
 

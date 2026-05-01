@@ -51,12 +51,7 @@ function suggestGoal(topicName: string): string {
 }
 
 function defaultKnowledgeBaseStructure(): string[] {
-  return [
-    "00 Henry 个人工作台 / 总览",
-    "01 会议总结",
-    "02 会议转写记录",
-    "03 待办与日程索引"
-  ];
+  return ["00 Henry 个人工作台 / 总览", "01 会议总结", "02 会议转写记录", "03 待办与日程索引"];
 }
 
 function isKnowledgeBaseCreationAction(
