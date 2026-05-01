@@ -10,6 +10,7 @@
     "dev": "npm run build --silent && node dist/src/index.js",
     "build": "tsc && node scripts/copy-prompts.cjs",
     "start": "node dist/src/index.js",
+    "canary:real-llm": "npm run build --silent && node dist/scripts/real-llm-canary.js",
     "demo:full-p0": "tsx scripts/demo-full-p0.ts",
     "evaluate": "tsx scripts/evaluate-fixtures.ts",
     "eval": "tsx scripts/evaluate-effectiveness.ts",

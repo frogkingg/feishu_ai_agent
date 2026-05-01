@@ -16,13 +16,20 @@ import { stableDemoId } from "../utils/id";
 import { personalWorkspaceName } from "../utils/personalWorkspace";
 import { readPrompt } from "../utils/prompts";
 
-const README_LABEL = "README / Dashboard";
-const CORE_CONTENT_LABEL = "Core Content / 主题模块";
-const MERGED_FAQ_LABEL = "Merged FAQ / 问题合并";
-const ARCHIVE_LABEL = "Archive / 来源追溯";
-const PROJECT_BOARD_LABEL = "Project Board / 行动与风险";
-const TIMELINE_LABEL = "Timeline / 时间轴与日程";
-const CALENDAR_LABEL = "Calendar / 日程索引";
+const HOME_LABEL = "首页 / 总览";
+const GOAL_LABEL = "整体目标";
+const ANALYSIS_LABEL = "整体分析";
+const PROGRESS_LABEL = "当前进度";
+const DECISIONS_LABEL = "关键结论与决策";
+const ACTION_CALENDAR_LABEL = "待办与日程索引";
+const MEETINGS_LABEL = "会议索引";
+const TRANSCRIPT_LABEL = "转写引用";
+const RESOURCES_LABEL = "关联资料";
+const RISKS_LABEL = "风险与假设";
+const CHANGELOG_LABEL = "变更记录";
+const MeetingSummaryLimit = 900;
+const TranscriptExcerptLimit = 1000;
+const EvidenceLimit = 500;
 
 type CuratorContext = {
   topicName: string;
@@ -161,14 +168,37 @@ function transcriptReference(meeting: MeetingRow): string {
   return `${meeting.title}（${meeting.started_at ?? "时间待补充"}，本地转写记录未写入知识库正文）`;
 }
 
-function compactText(value: string | null, fallback: string): string {
+function compactText(value: string | null, fallback: string, maxLength: number): string {
   const text = formatOpenIdsInText(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
   if (text.length === 0) {
     return fallback;
   }
-  return text.length > 220 ? `${text.slice(0, 217)}...` : text;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function compactJson(value: unknown, maxLength: number): string {
+  let text: string;
+  try {
+    text = JSON.stringify(value, null, 2);
+  } catch {
+    text = String(value);
+  }
+
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function meetingSummary(meeting: MeetingRow): string {
+  return compactText(meeting.summary, "暂无摘要", MeetingSummaryLimit);
+}
+
+function transcriptExcerpt(meeting: MeetingRow): string {
+  return compactText(meeting.transcript_text, "暂无转写摘录", TranscriptExcerptLimit);
 }
 
 function buildContext(input: {
@@ -189,7 +219,7 @@ function buildContext(input: {
     topicName: input.topicName,
     owner: input.owner,
     goal,
-    description: `由 ${input.meetings.length} 场相关会议 dry-run 创建的 LLM 策展知识库。`,
+    description: `由 ${input.meetings.length} 场相关会议创建的主题知识库。`,
     confidenceOrigin: input.confidenceOrigin,
     keywords,
     meetings: input.meetings,
@@ -200,6 +230,12 @@ function buildContext(input: {
 
 function buildCuratorDigest(context: CuratorContext): Record<string, unknown> {
   const meetingsById = new Map(context.meetings.map((meeting) => [meeting.id, meeting]));
+  const sourceMap = context.meetings.map((meeting, index) => ({
+    source_ref: `M${index + 1}`,
+    meeting_title: meeting.title,
+    minutes_reference: meetingReference(meeting, "minutes"),
+    transcript_reference: transcriptReference(meeting)
+  }));
 
   return {
     curator_contract: {
@@ -210,12 +246,29 @@ function buildCuratorDigest(context: CuratorContext): Record<string, unknown> {
       safety:
         "Do not include full transcript text. Preserve source traceability through meeting references and transcript links."
     },
+    prd_page_structure: [
+      "00 首页/总览：必须回答当前状态、下一步、关键结论、未解决问题",
+      "01 整体目标：说明主题目标、读者对象、成功口径和待确认边界",
+      "02 整体分析：跨会议综合分析，不按会议顺序堆叠",
+      "03 当前进度：阶段、已完成、进行中、阻塞和下一步",
+      "04 关键结论与决策：结论、依据、来源会议、置信度或待确认",
+      "05 待办与日程索引：只索引待确认草案，不替代 confirmation 流程",
+      "单会总结：每场会议至少有独立 summary 页或清晰会议索引",
+      "转写引用：只保留链接和必要摘录，不写入全文",
+      "关联资料：列出纪要、外部资料、来源引用和用途",
+      "风险与假设：风险、缺口、假设、验证方式和来源",
+      "变更记录：记录知识库创建与后续更新"
+    ],
     topic: {
       name: context.topicName,
       goal: context.goal,
       owner: context.owner,
       confidence_origin: context.confidenceOrigin,
       keywords: context.keywords
+    },
+    existing_knowledge_base: {
+      mode: "create_new",
+      existing_pages: []
     },
     meetings: context.meetings.map((meeting, index) => ({
       source_ref: `M${index + 1}`,
@@ -224,37 +277,56 @@ function buildCuratorDigest(context: CuratorContext): Record<string, unknown> {
       ended_at: meeting.ended_at,
       organizer: meeting.organizer,
       participants: formatUserListForDisplay(parseStringArray(meeting.participants_json)),
-      summary: compactText(meeting.summary, "暂无摘要"),
+      summary: meetingSummary(meeting),
       keywords: parseStringArray(meeting.keywords_json),
+      transcript_excerpt: transcriptExcerpt(meeting),
       minutes_reference: meetingReference(meeting, "minutes"),
       transcript_reference: transcriptReference(meeting)
     })),
+    decision_and_risk_context: {
+      persisted_decisions: [],
+      persisted_risks: [],
+      note:
+        "当前仓库存储层没有独立保存 key_decisions/risks；请从会议摘要、转写摘录、行动证据和日程证据中综合判断关键结论、风险与假设，并在页面中标记来源。"
+    },
     actions: context.actions.map((action) => ({
       title: action.title,
       description: action.description,
       owner: action.owner,
+      collaborators: formatUserListForDisplay(parseStringArray(action.collaborators_json)),
       due_date: action.due_date,
       priority: action.priority,
-      evidence: compactText(action.evidence, "暂无证据"),
+      evidence: compactText(action.evidence, "暂无证据", EvidenceLimit),
+      suggested_reason: action.suggested_reason,
+      missing_fields: parseStringArray(action.missing_fields_json),
+      confirmation_status: action.confirmation_status,
       source: sourceMeetingReference(meetingsById, action.meeting_id)
     })),
     calendars: context.calendars.map((calendar) => ({
       title: calendar.title,
       start_time: calendar.start_time,
       end_time: calendar.end_time,
+      duration_minutes: calendar.duration_minutes,
       participants: formatUserListForDisplay(parseStringArray(calendar.participants_json)),
       agenda: calendar.agenda,
-      evidence: compactText(calendar.evidence, "暂无证据"),
+      location: calendar.location,
+      evidence: compactText(calendar.evidence, "暂无证据", EvidenceLimit),
+      missing_fields: parseStringArray(calendar.missing_fields_json),
+      confirmation_status: calendar.confirmation_status,
       source: sourceMeetingReference(meetingsById, calendar.meeting_id)
-    }))
+    })),
+    source_mapping: sourceMap
   };
 }
 
 function buildCuratorUserPrompt(context: CuratorContext): string {
   return [
     "请根据以下多会议 digest 生成一个 KnowledgeBaseDraft JSON。",
-    "你可以自由决定页面数量、页面标题和栏目，只要满足 schema、读者任务、SSOT 和 Archive 可追溯要求。",
-    "不要输出完整 transcript，不要把会议逐字稿塞进正文。",
+    "页面结构、栏目取舍和跨会议判断由你完成；代码只负责提供上下文、schema 和写入 draft.pages。",
+    "请按 PRD 信息架构组织知识库：00 首页/总览、01 整体目标、02 整体分析、03 当前进度、04 关键结论与决策、05 待办与日程索引，并补齐单会总结、转写引用、关联资料、风险与假设、变更记录。",
+    "首页必须包含：当前状态、下一步、关键结论、未解决问题。它不是 README 模板。",
+    "每场会议至少要有独立 summary 页，或者在会议索引中给出清晰、可深化的单会摘要和来源映射。",
+    "不要输出完整 transcript，不要把会议逐字稿塞进正文；只使用 transcript_excerpt 做必要证据摘录，并保留 transcript_reference。",
     "JSON schema 摘要：",
     JSON.stringify(
       {
@@ -271,7 +343,7 @@ function buildCuratorUserPrompt(context: CuratorContext): string {
           {
             title: "string",
             page_type:
-              "home|index|analysis|board|timeline|calendar|sources|resources|risks|changelog|meeting_summary|transcript|goal|progress|decisions|meetings",
+              "home|goal|analysis|progress|decisions|index|meeting_summary|transcript|board|timeline|meetings|resources|calendar|sources|risks|changelog",
             source_signals: "always|actions|calendars|decisions|risks|sources[]",
             markdown: "string"
           }
@@ -285,6 +357,24 @@ function buildCuratorUserPrompt(context: CuratorContext): string {
   ].join("\n\n");
 }
 
+function buildRepairUserPrompt(input: {
+  context: CuratorContext;
+  previousOutput: unknown;
+  validationError: unknown;
+}): string {
+  return [
+    "你上一次输出没有通过 KnowledgeBaseDraft schema 校验。请进行一次 schema repair。",
+    "只返回完整、可解析的 KnowledgeBaseDraft JSON；不要输出解释文字、Markdown fence 或额外前后缀。",
+    "修复边界：保留来源事实和会议判断，不新增代码模板；只补齐缺失字段、修正 page_type/source_signals、保证 pages 至少 1 页且每页 markdown 非空。",
+    "validation_error:",
+    errorText(input.validationError),
+    "previous_output:",
+    compactJson(input.previousOutput, 4000),
+    "原始生成任务与 digest:",
+    buildCuratorUserPrompt(input.context)
+  ].join("\n\n");
+}
+
 function normalizeLlmPages(rawPages: unknown): KnowledgeBasePage[] {
   if (!Array.isArray(rawPages)) {
     return [];
@@ -293,7 +383,7 @@ function normalizeLlmPages(rawPages: unknown): KnowledgeBasePage[] {
   return rawPages
     .map((page, index) => {
       const record = asRecord(page);
-      const title = firstNonEmpty([record.title], numberedTitle(index, CORE_CONTENT_LABEL));
+      const title = firstNonEmpty([record.title], numberedTitle(index, ANALYSIS_LABEL));
       const markdown = firstNonEmpty([record.markdown, record.content], `# ${title}`);
       return {
         title,
@@ -338,37 +428,57 @@ function buildFallbackPages(context: CuratorContext): KnowledgeBasePage[] {
   const meetingRows = context.meetings.map((meeting) => [
     meeting.started_at ?? "待补充",
     meeting.title,
-    compactText(meeting.summary, "暂无摘要"),
+    meetingSummary(meeting),
     meetingReference(meeting, "minutes")
   ]);
-  const signalRows = [
-    ["会议", `${context.meetings.length} 场`, "Archive 保留来源入口"],
-    ["待办", `${actionIndex.length} 项`, "Project Board 只索引确认前草案"],
-    ["日程", `${calendarIndex.length} 项`, "Calendar 只索引确认前草案"],
-    ["关键词", context.keywords.join("、") || "待 LLM 补齐", "来自会议抽取结果"]
-  ];
+  const meetingSummaryPages = context.meetings.map<KnowledgeBasePage>((meeting, index) => ({
+    title: numberedTitle(7 + index, `会议总结 / M${index + 1} ${meeting.title}`),
+    page_type: "meeting_summary",
+    source_signals: ["always", "sources"],
+    markdown: [
+      `# ${numberedTitle(7 + index, `会议总结 / M${index + 1} ${meeting.title}`)}`,
+      "",
+      "## 会议摘要",
+      meetingSummary(meeting),
+      "",
+      "## 必要摘录",
+      transcriptExcerpt(meeting),
+      "",
+      "## 来源",
+      `- 纪要：${meetingReference(meeting, "minutes")}`,
+      `- 转写：${transcriptReference(meeting)}`
+    ].join("\n")
+  }));
   const pages: KnowledgeBasePage[] = [
     {
-      title: numberedTitle(0, README_LABEL),
+      title: numberedTitle(0, HOME_LABEL),
       page_type: "home",
       source_signals: ["always"],
       markdown: [
-        `# ${numberedTitle(0, README_LABEL)}`,
+        `# ${numberedTitle(0, HOME_LABEL)}`,
         "",
-        "## Dashboard / Overview",
-        context.goal,
+        "## 当前状态",
+        `已收集 ${context.meetings.length} 场会议、${actionIndex.length} 个待办草案、${calendarIndex.length} 个日程草案，形成当前主题的初始知识范围。`,
         "",
-        "## 当前信号",
-        markdownTable(["信号", "数量 / 内容", "使用方式"], signalRows),
+        "## 下一步",
+        bulletList(
+          [...actionIndex.slice(0, 4), ...calendarIndex.slice(0, 2)],
+          "继续补充会议材料，并确认后续待办、日程和来源资料"
+        ),
         "",
-        "## 读者入口",
+        "## 关键结论",
+        bulletList(
+          context.meetings.map((meeting) => `${meeting.title}：${meetingSummary(meeting)}`),
+          "暂无会议结论"
+        ),
+        "",
+        "## 未解决问题",
         bulletList(
           [
-            `${CORE_CONTENT_LABEL}：先给出当前可读版本，等待 LLM 进一步策展`,
-            `${MERGED_FAQ_LABEL}：只保留待确认问题入口，不做代码分类`,
-            `${ARCHIVE_LABEL}：保留会议、摘要、转写引用和来源映射`
+            "尚未确认的风险、假设和冲突需要结合后续会议来源继续补充",
+            "待确认哪些行动项和日程最终由用户执行"
           ],
-          "暂无入口"
+          "暂无未解决问题"
         ),
         "",
         "## 来源范围",
@@ -376,109 +486,139 @@ function buildFallbackPages(context: CuratorContext): KnowledgeBasePage[] {
       ].join("\n")
     },
     {
-      title: numberedTitle(1, CORE_CONTENT_LABEL),
-      page_type: "index",
+      title: numberedTitle(1, GOAL_LABEL),
+      page_type: "goal",
       source_signals: ["always"],
       markdown: [
-        `# ${numberedTitle(1, CORE_CONTENT_LABEL)}`,
+        `# ${numberedTitle(1, GOAL_LABEL)}`,
         "",
-        "## 当前可读版本",
-        "这是 deterministic fallback。正式结构、栏目和优先级由 LLM 根据 Skill 策展。",
+        "## 目标",
+        context.goal,
         "",
-        "## 会议摘要",
-        markdownTable(["时间", "会议", "摘要", "来源"], meetingRows),
+        "## 读者对象",
+        "需要快速理解会议沉淀、执行下一步、追溯来源的人。",
         "",
-        "## 下一步",
-        bulletList(
-          [
-            ...actionIndex.slice(0, 6),
-            ...calendarIndex.slice(0, 6),
-            "让 LLM 根据会议关系重组 Dashboard、主题页、FAQ 与 Archive"
-          ],
-          "暂无行动或日程信号"
-        )
+        "## 成功口径",
+        "读者能从首页进入目标、分析、进度、决策、待办日程、单会摘要和来源追溯。"
       ].join("\n")
     },
     {
-      title: numberedTitle(2, MERGED_FAQ_LABEL),
+      title: numberedTitle(2, ANALYSIS_LABEL),
       page_type: "analysis",
       source_signals: ["always"],
       markdown: [
-        `# ${numberedTitle(2, MERGED_FAQ_LABEL)}`,
+        `# ${numberedTitle(2, ANALYSIS_LABEL)}`,
         "",
-        "## 待 LLM 策展",
-        "fallback 不按关键词分类 FAQ；只保留问题合并入口，避免用规则替代模型判断。",
+        "## 整体分析",
+        "当前根据会议摘要、行动证据、日程证据和必要摘录形成初版综合分析。后续更新应继续补充跨会议结论、冲突点和来源依据。",
         "",
-        markdownTable(
-          ["Question", "Current Answer", "Sources"],
-          [
-            [
-              "这些会议应该如何阅读？",
-              "先看 Dashboard，再按主题页阅读，必要时回 Archive 追溯。",
-              meetingRefs.join("<br>")
-            ]
-          ]
-        )
+        markdownTable(["时间", "会议", "摘要", "来源"], meetingRows)
       ].join("\n")
     },
     {
-      title: numberedTitle(3, ARCHIVE_LABEL),
-      page_type: "sources",
+      title: numberedTitle(3, PROGRESS_LABEL),
+      page_type: "progress",
+      source_signals: ["always", "actions", "calendars"],
+      markdown: [
+        `# ${numberedTitle(3, PROGRESS_LABEL)}`,
+        "",
+        "## 已沉淀",
+        bulletList(context.meetings.map((meeting) => meeting.title), "暂无会议"),
+        "",
+        "## 进行中 / 下一步",
+        bulletList([...actionIndex, ...calendarIndex], "暂无待办或日程信号")
+      ].join("\n")
+    },
+    {
+      title: numberedTitle(4, DECISIONS_LABEL),
+      page_type: "decisions",
+      source_signals: ["decisions", "sources"],
+      markdown: [
+        `# ${numberedTitle(4, DECISIONS_LABEL)}`,
+        "",
+        "## 关键结论与决策",
+        bulletList(
+          context.meetings.map((meeting) => `${meeting.title}：${meetingSummary(meeting)}`),
+          "暂无可确认结论"
+        ),
+        "",
+        "## 说明",
+        "未在来源中确认的内容保持待确认；新增结论需要保留对应会议、摘录或行动证据。"
+      ].join("\n")
+    },
+    {
+      title: numberedTitle(5, ACTION_CALENDAR_LABEL),
+      page_type: "board",
+      source_signals: ["actions", "calendars"],
+      markdown: [
+        `# ${numberedTitle(5, ACTION_CALENDAR_LABEL)}`,
+        "",
+        "## 待办索引",
+        bulletList(actionIndex, "暂无待办"),
+        "",
+        "## 日程索引",
+        bulletList(calendarIndex, "暂无日程")
+      ].join("\n")
+    },
+    {
+      title: numberedTitle(6, MEETINGS_LABEL),
+      page_type: "meetings",
       source_signals: ["always", "sources"],
       markdown: [
-        `# ${numberedTitle(3, ARCHIVE_LABEL)}`,
+        `# ${numberedTitle(6, MEETINGS_LABEL)}`,
         "",
-        "## 来源索引",
-        markdownTable(["时间", "会议", "摘要", "来源"], meetingRows),
+        markdownTable(["时间", "会议", "摘要", "来源"], meetingRows)
+      ].join("\n")
+    },
+    ...meetingSummaryPages,
+    {
+      title: numberedTitle(7 + meetingSummaryPages.length, TRANSCRIPT_LABEL),
+      page_type: "transcript",
+      source_signals: ["sources"],
+      markdown: [
+        `# ${numberedTitle(7 + meetingSummaryPages.length, TRANSCRIPT_LABEL)}`,
         "",
         "## 转写引用",
         bulletList(transcriptRefs, "暂无转写记录引用"),
         "",
-        "## 主题到来源映射",
-        "由 LLM 在正式策展时生成；fallback 只保留来源，不做主题归类。"
+        "## 写入边界",
+        "知识库正文不写入完整转写，只保留引用和必要摘录。"
+      ].join("\n")
+    },
+    {
+      title: numberedTitle(8 + meetingSummaryPages.length, RESOURCES_LABEL),
+      page_type: "resources",
+      source_signals: ["sources"],
+      markdown: [
+        `# ${numberedTitle(8 + meetingSummaryPages.length, RESOURCES_LABEL)}`,
+        "",
+        "## 关联资料",
+        bulletList(meetingRefs, "暂无关联资料")
+      ].join("\n")
+    },
+    {
+      title: numberedTitle(9 + meetingSummaryPages.length, RISKS_LABEL),
+      page_type: "risks",
+      source_signals: ["risks", "sources"],
+      markdown: [
+        `# ${numberedTitle(9 + meetingSummaryPages.length, RISKS_LABEL)}`,
+        "",
+        "## 风险与假设",
+        "请在后续会议中持续补充风险、假设、验证方式和来源。当前未确认的风险不直接升级为结论。"
+      ].join("\n")
+    },
+    {
+      title: numberedTitle(10 + meetingSummaryPages.length, CHANGELOG_LABEL),
+      page_type: "changelog",
+      source_signals: ["always"],
+      markdown: [
+        `# ${numberedTitle(10 + meetingSummaryPages.length, CHANGELOG_LABEL)}`,
+        "",
+        "## 变更记录",
+        `- 创建知识库草案：${context.meetings.length} 场会议进入初始范围。`
       ].join("\n")
     }
   ];
-
-  if (actionIndex.length > 0) {
-    pages.push({
-      title: numberedTitle(pages.length, PROJECT_BOARD_LABEL),
-      page_type: "board",
-      source_signals: ["actions"],
-      markdown: [
-        `# ${numberedTitle(pages.length, PROJECT_BOARD_LABEL)}`,
-        "",
-        "## 行动索引",
-        bulletList(actionIndex, "暂无待办")
-      ].join("\n")
-    });
-  }
-
-  if (context.meetings.length > 0) {
-    pages.push({
-      title: numberedTitle(pages.length, TIMELINE_LABEL),
-      page_type: "timeline",
-      source_signals: ["always", "calendars"],
-      markdown: [
-        `# ${numberedTitle(pages.length, TIMELINE_LABEL)}`,
-        "",
-        markdownTable(["时间", "会议", "摘要", "来源"], meetingRows)
-      ].join("\n")
-    });
-  }
-
-  if (calendarIndex.length > 0) {
-    pages.push({
-      title: numberedTitle(pages.length, CALENDAR_LABEL),
-      page_type: "calendar",
-      source_signals: ["calendars"],
-      markdown: [
-        `# ${numberedTitle(pages.length, CALENDAR_LABEL)}`,
-        "",
-        bulletList(calendarIndex, "暂无日程")
-      ].join("\n")
-    });
-  }
 
   return pages;
 }
@@ -516,14 +656,25 @@ export async function runKnowledgeCuratorAgent(input: {
     return buildFallbackDraft(context);
   }
 
+  const systemPrompt = readPrompt("knowledgeCurator.md");
+  let previousOutput: unknown = null;
   try {
-    const raw = await input.llm.generateJson<unknown>({
-      systemPrompt: readPrompt("knowledgeCurator.md"),
+    previousOutput = await input.llm.generateJson<unknown>({
+      systemPrompt,
       userPrompt: buildCuratorUserPrompt(context),
       schemaName: "KnowledgeBaseDraft"
     });
-    return normalizeLlmDraft(raw, context);
-  } catch {
-    return buildFallbackDraft(context);
+    return normalizeLlmDraft(previousOutput, context);
+  } catch (validationError) {
+    try {
+      const repaired = await input.llm.generateJson<unknown>({
+        systemPrompt,
+        userPrompt: buildRepairUserPrompt({ context, previousOutput, validationError }),
+        schemaName: "KnowledgeBaseDraft"
+      });
+      return normalizeLlmDraft(repaired, context);
+    } catch {
+      return buildFallbackDraft(context);
+    }
   }
 }

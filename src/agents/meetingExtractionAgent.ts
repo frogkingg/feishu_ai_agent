@@ -11,22 +11,6 @@ import {
 } from "../utils/dates";
 import { readPrompt } from "../utils/prompts";
 
-const CalendarIntentWords = ["会议", "访谈", "评审", "同步", "沟通"];
-const CalendarSignalWords = ["截止", "评审", "分享", "演示", "发布", "复盘", "会面", "里程碑"];
-const CalendarReminderWords = ["截止", "提醒", "到期", "里程碑"];
-const CalendarReviewWords = ["评审", "复盘"];
-const CalendarShareWords = ["分享", "演示", "发布"];
-const UnsupportedOwnershipReasonPatterns = [
-  /接收人/,
-  /收件人/,
-  /组织者/,
-  /主持人身份/,
-  /发送.{0,6}卡片/,
-  /用户据此/,
-  /默认/
-];
-const UnsupportedCommitmentPhrases = [/用户据此.{0,12}(认领|承诺)/, /据此.{0,12}(认领|承诺)/];
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -45,72 +29,6 @@ function asMeetingExtractionObject(raw: unknown): unknown {
   }
 
   return raw;
-}
-
-function hasCalendarIntent(value: string): boolean {
-  return CalendarIntentWords.some((word) => value.includes(word));
-}
-
-function looksLikeCalendarReminder(draft: Record<string, unknown>): boolean {
-  const text = [draft.title, draft.agenda, draft.evidence]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  const hasCalendarSignal = CalendarSignalWords.some((word) => text.includes(word));
-  const hasTimeSignal =
-    typeof draft.start_time === "string" ||
-    /(\d{1,2}\s*[月/-]\s*\d{1,2})|(\d{1,2}\s*点)|(中午|上午|下午|晚上|今晚|明天|后天|周[一二三四五六日天])/u.test(
-      text
-    );
-
-  return hasCalendarSignal && hasTimeSignal;
-}
-
-function normalizeCalendarTitle(title: string, context: string): string {
-  if (hasCalendarIntent(title)) {
-    return title;
-  }
-
-  if (CalendarReviewWords.some((word) => context.includes(word))) {
-    return `${title}评审`;
-  }
-
-  if (CalendarShareWords.some((word) => context.includes(word))) {
-    return `${title}同步`;
-  }
-
-  if (CalendarReminderWords.some((word) => context.includes(word))) {
-    return `${title}提醒同步`;
-  }
-
-  return `${title}会议`;
-}
-
-function normalizeCalendarDrafts(raw: unknown): unknown {
-  const value = asMeetingExtractionObject(raw);
-  if (!isRecord(value) || !Array.isArray(value.calendar_drafts)) {
-    return value;
-  }
-
-  return {
-    ...value,
-    calendar_drafts: value.calendar_drafts.map((draft) => {
-      if (!isRecord(draft) || typeof draft.title !== "string") {
-        return draft;
-      }
-
-      const haystack = [draft.title, draft.agenda, draft.evidence]
-        .filter((field): field is string => typeof field === "string")
-        .join(" ");
-      if (!looksLikeCalendarReminder(draft)) {
-        return draft;
-      }
-
-      return {
-        ...draft,
-        title: normalizeCalendarTitle(draft.title, haystack)
-      };
-    })
-  };
 }
 
 function asStringArray(value: unknown): string[] {
@@ -261,64 +179,7 @@ function normalizeRelativeDates(raw: unknown, baseIso: string | null): unknown {
 }
 
 function normalizeRawExtraction(raw: unknown, baseIso: string | null): unknown {
-  return normalizeRelativeDates(normalizeCalendarDrafts(asMeetingExtractionObject(raw)), baseIso);
-}
-
-function missingFieldsWithOwner(fields: string[]): string[] {
-  return fields.includes("owner") ? fields : [...fields, "owner"];
-}
-
-function hasOwnerEvidence(input: {
-  owner: string;
-  evidence: string;
-  suggestedReason: string;
-}): boolean {
-  const text = `${input.evidence} ${input.suggestedReason}`;
-  if (!text.includes(input.owner)) {
-    return false;
-  }
-
-  return !UnsupportedOwnershipReasonPatterns.some((pattern) => pattern.test(text));
-}
-
-function sanitizeReason(input: { owner: string | null; suggestedReason: string }): string {
-  if (input.owner !== null) {
-    return input.suggestedReason;
-  }
-
-  if (UnsupportedCommitmentPhrases.some((pattern) => pattern.test(input.suggestedReason))) {
-    return "会议证据中未明确负责人，需确认后再创建待办。";
-  }
-
-  return input.suggestedReason;
-}
-
-function sanitizeActionOwnership(extraction: MeetingExtractionResult): MeetingExtractionResult {
-  return {
-    ...extraction,
-    action_items: extraction.action_items.map((item) => {
-      const owner =
-        item.owner !== null &&
-        hasOwnerEvidence({
-          owner: item.owner,
-          evidence: item.evidence,
-          suggestedReason: item.suggested_reason
-        })
-          ? item.owner
-          : null;
-
-      return {
-        ...item,
-        owner,
-        suggested_reason: sanitizeReason({
-          owner,
-          suggestedReason: item.suggested_reason
-        }),
-        missing_fields:
-          owner === null ? missingFieldsWithOwner(item.missing_fields) : item.missing_fields
-      };
-    })
-  };
+  return normalizeRelativeDates(asMeetingExtractionObject(raw), baseIso);
 }
 
 function briefSchemaError(error: unknown): string {
@@ -346,8 +207,10 @@ async function repairExtractionWithLlm(input: {
       "上一次输出没有通过 MeetingExtractionResult schema 校验。",
       "请在保留原始信息的基础上修正为项目期望的顶层 JSON object。",
       "不要返回 array 作为顶层，不要 Markdown，不要解释，不要省略必填字段。",
-      "如果 calendar_drafts 中的事项是明确带时间的日程、截止提醒、评审、分享、演示、发布、复盘、同步、会面或里程碑，title、agenda 或 evidence 必须包含会议、访谈、评审、同步或沟通意图词。",
-      "如果只是任务截止且没有日程提醒意图，不要放进 calendar_drafts。",
+      "请由你重新承担语义判断：action_items 只保留明确可执行事项；calendar_drafts 只保留后续会议、访谈、评审、同步、沟通等需要占用日历的安排。",
+      "只有交付物和截止时间的表达，例如“周五前完成方案”，应作为 action due_date，不要放进 calendar_drafts。",
+      "有明确沟通意图但时间不完整的表达，例如“下周找时间接口对齐沟通”，应保留为 calendar draft，start_time = null，并把 start_time 放入 missing_fields。",
+      "owner 由会议语义决定；不确定时输出 null，并把 owner 放入 missing_fields。",
       `schema_error: ${briefSchemaError(input.error)}`,
       "invalid_output:",
       JSON.stringify(input.raw),
@@ -358,9 +221,7 @@ async function repairExtractionWithLlm(input: {
     schemaName: "MeetingExtractionResult"
   });
 
-  return sanitizeActionOwnership(
-    MeetingExtractionResultSchema.parse(normalizeRawExtraction(repaired, input.baseIso))
-  );
+  return MeetingExtractionResultSchema.parse(normalizeRawExtraction(repaired, input.baseIso));
 }
 
 export async function runMeetingExtractionAgent(input: {
@@ -385,7 +246,7 @@ export async function runMeetingExtractionAgent(input: {
   const normalized = normalizeRawExtraction(raw, input.meeting.started_at);
   const parsed = MeetingExtractionResultSchema.safeParse(normalized);
   if (parsed.success) {
-    return sanitizeActionOwnership(parsed.data);
+    return parsed.data;
   }
 
   return repairExtractionWithLlm({

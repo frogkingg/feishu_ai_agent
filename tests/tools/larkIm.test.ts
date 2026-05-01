@@ -66,11 +66,13 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain(`待办 | ${card.summary}`);
     expect(serialized).toContain("待办确认");
     expect(serialized).toContain("详情依据");
+    expect(serialized).toContain("建议原因");
+    expect(serialized).toContain("置信度");
     expect(serialized).toContain("[会议纪要](https://example.feishu.cn/minutes/min_001)");
     expect(serialized).not.toContain("/dev/confirmations/conf_card_send/confirm");
     expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).toContain('"action":"not_mine"');
     expect(serialized).not.toContain("mtg_001");
     expect(serialized).toContain('"confirmation_id":"conf_card_send"');
     expect(serialized).not.toContain("安全说明");
@@ -82,15 +84,14 @@ describe("larkIm.sendCard", () => {
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
         { text: { content: "添加待办" } },
+        { text: { content: "不是我的" } },
         { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
     const actionElement = interactive.elements.find((element) => element.tag === "action");
     expect(actionElement).toMatchObject({ actions: expect.any(Array) });
-    expect(actionElement?.tag === "action" ? actionElement.actions.length : 0).toBeLessThanOrEqual(
-      3
-    );
+    expect(actionElement?.tag === "action" ? actionElement.actions.length : 0).toBe(4);
     if (actionElement?.tag !== "action") {
       throw new Error("Expected action element");
     }
@@ -138,25 +139,28 @@ describe("larkIm.sendCard", () => {
     const serialized = JSON.stringify(interactive);
     const actionElement = interactive.elements.find((element) => element.tag === "action");
 
-    expect(serialized).toContain("会议未识别明确负责人");
-    expect(serialized).toContain("我的个人待办");
-    expect(serialized).not.toContain('"name":"owner"');
+    expect(serialized).toContain("负责人待补充");
+    expect(serialized).toContain('"name":"owner"');
     expect(serialized).not.toContain('"tag":"select_person"');
     expect(serialized).not.toContain("补全负责人");
+    expect(serialized).not.toContain("我的个人待办");
     expect(serialized).not.toContain('"action":"complete_owner"');
-    expect(serialized).toContain('"action":"confirm"');
-    expect(serialized).not.toContain('"action":"confirm_with_edits"');
+    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).toContain('"action":"confirm_with_edits"');
+    expect(serialized).toContain('"action":"not_mine"');
     expect(actionElement).toMatchObject({
       actions: [
         {
-          text: { content: "添加到我的待办" },
+          text: { content: "补全后添加待办" },
           value: {
-            action_key: "confirm",
-            action: "confirm",
+            action_key: "confirm_with_edits",
+            action: "confirm_with_edits",
             confirmation_id: "conf_missing_owner",
-            request_id: "conf_missing_owner"
+            request_id: "conf_missing_owner",
+            edited_payload: "$editable_fields"
           }
         },
+        { text: { content: "不是我的" } },
         { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
@@ -189,26 +193,29 @@ describe("larkIm.sendCard", () => {
     const serialized = JSON.stringify(interactive);
     const actionElement = interactive.elements.find((element) => element.tag === "action");
 
-    expect(serialized).toContain("会议未识别明确负责人");
-    expect(serialized).toContain("我的个人待办");
+    expect(serialized).toContain("负责人待补充");
+    expect(serialized).not.toContain("我的个人待办");
     expect(serialized).not.toContain('"tag":"select_person"');
-    expect(serialized).not.toContain('"name":"owner"');
+    expect(serialized).toContain('"name":"owner"');
     expect(serialized).not.toContain("补全负责人");
     expect(serialized).not.toContain("@确认待办");
-    expect(serialized).toContain('"action":"confirm"');
-    expect(serialized).not.toContain('"action":"confirm_with_edits"');
+    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).toContain('"action":"confirm_with_edits"');
+    expect(serialized).toContain('"action":"not_mine"');
     expect(serialized).not.toContain('"action":"complete_owner"');
     expect(actionElement).toMatchObject({
       actions: [
         {
-          text: { content: "添加到我的待办" },
+          text: { content: "补全后添加待办" },
           value: {
-            action_key: "confirm",
-            action: "confirm",
+            action_key: "confirm_with_edits",
+            action: "confirm_with_edits",
             confirmation_id: "conf_personal_todo",
-            request_id: "conf_personal_todo"
+            request_id: "conf_personal_todo",
+            edited_payload: "$editable_fields"
           }
         },
+        { text: { content: "不是我的" } },
         { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
@@ -252,6 +259,8 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain("[转写记录](https://example.feishu.cn/minutes/transcript_001)");
     expect(serialized).toContain("开始时间");
     expect(serialized).toContain("参会人");
+    expect(serialized).toContain("原文片段");
+    expect(serialized).toContain("置信度");
     expect(serialized).not.toContain('"name":"agenda"');
     expect(serialized).not.toContain("安全说明");
     expect(serialized).not.toContain("可修改信息");
@@ -259,7 +268,7 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
     expect(serialized).toContain('"action":"convert_to_task"');
-    expect(serialized).not.toContain('"action":"remind_later"');
+    expect(serialized).toContain('"action":"remind_later"');
     expect(serialized).not.toContain("mtg_001");
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
@@ -279,6 +288,7 @@ describe("larkIm.sendCard", () => {
           ]
         },
         { text: { content: "转待办" } },
+        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -332,6 +342,7 @@ describe("larkIm.sendCard", () => {
           ]
         },
         { text: { content: "转待办" } },
+        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -391,6 +402,7 @@ describe("larkIm.sendCard", () => {
           ]
         },
         { text: { content: "转待办" } },
+        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -439,7 +451,7 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain('"action":"create_kb"');
     expect(serialized).not.toContain('"action":"edit_and_create"');
     expect(serialized).toContain('"action":"append_current_only"');
-    expect(serialized).not.toContain('"action":"never_remind_topic"');
+    expect(serialized).toContain('"action":"never_remind_topic"');
     expect(serialized).not.toContain("匹配分");
     expect(serialized).not.toContain("match_reasons");
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
@@ -460,6 +472,7 @@ describe("larkIm.sendCard", () => {
           ]
         },
         { text: { content: "仅归档本次" } },
+        { text: { content: "不再提醒" } },
         { text: { content: "不创建" } }
       ]
     });
@@ -471,6 +484,7 @@ describe("larkIm.sendCard", () => {
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
         { text: { content: "预览添加待办" } },
+        { text: { content: "不是我的" } },
         { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]

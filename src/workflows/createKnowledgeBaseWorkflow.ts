@@ -95,14 +95,8 @@ export async function createKnowledgeBaseWorkflow(input: {
     .map((meetingId) => input.repos.getMeeting(meetingId))
     .filter((meeting): meeting is NonNullable<typeof meeting> => meeting !== null);
 
-  const explicitCreateRequest = payload.match_reasons.some((reason) => reason.includes("显式提出"));
   if (meetings.length < 1) {
     throw new Error("create_kb requires at least one existing meeting");
-  }
-  if (meetings.length < 2 && !explicitCreateRequest) {
-    throw new Error(
-      "create_kb requires at least two existing meetings unless the user explicitly requested a knowledge base"
-    );
   }
 
   const meetingIds = new Set(meetings.map((meeting) => meeting.id));

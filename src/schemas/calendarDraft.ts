@@ -1,7 +1,23 @@
 import { z } from "zod";
 
-const CalendarIntentWords = ["会议", "访谈", "评审", "同步", "沟通"];
 export const IsoDateTimeSchema = z.string().datetime({ offset: true });
+
+function cleanCalendarMissingFields(draft: {
+  end_time: string | null;
+  duration_minutes: number | null;
+  missing_fields: string[];
+}): string[] {
+  const filledFields = new Set<string>();
+  if (draft.end_time !== null && draft.end_time.trim().length > 0) {
+    filledFields.add("end_time");
+  }
+  if (draft.duration_minutes !== null) {
+    filledFields.add("duration_minutes");
+    filledFields.add("duration");
+  }
+
+  return draft.missing_fields.filter((field) => !filledFields.has(field));
+}
 
 export const CalendarEventDraftSchema = z
   .object({
@@ -16,25 +32,9 @@ export const CalendarEventDraftSchema = z
     confidence: z.number().min(0).max(1),
     missing_fields: z.array(z.string())
   })
-  .superRefine((draft, ctx) => {
-    const haystack = [draft.title, draft.agenda ?? "", draft.evidence].join(" ");
-    const hasCalendarIntent = CalendarIntentWords.some((word) => haystack.includes(word));
-    if (!hasCalendarIntent) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "calendar draft requires explicit meeting/interview/review/sync/communication intent",
-        path: ["title"]
-      });
-    }
-
-    if (draft.start_time === null && !draft.missing_fields.includes("start_time")) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "missing_fields must include start_time when start_time is null",
-        path: ["missing_fields"]
-      });
-    }
-  });
+  .transform((draft) => ({
+    ...draft,
+    missing_fields: cleanCalendarMissingFields(draft)
+  }));
 
 export type CalendarEventDraft = z.infer<typeof CalendarEventDraftSchema>;

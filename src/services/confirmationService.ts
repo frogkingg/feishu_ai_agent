@@ -49,6 +49,27 @@ function parseJsonArray(value: string): unknown[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
+function parseStringArrayValue(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.trim() !== "");
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return [];
+    }
+
+    try {
+      return parseStringArrayValue(JSON.parse(trimmed) as unknown);
+    } catch {
+      return [trimmed];
+    }
+  }
+
+  return [];
+}
+
 function editedDraftPatch(value: unknown): Record<string, unknown> {
   const payload = asObject(value);
   return {
@@ -63,6 +84,71 @@ function parseJsonObject(value: string | null): Record<string, unknown> {
   }
 
   return asObject(JSON.parse(value) as unknown);
+}
+
+function stringFromValue(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function numberFromValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function addMinutesIso(minutes: number): string {
+  return new Date(Date.now() + minutes * 60 * 1000).toISOString();
+}
+
+function dateOnlyFromIso(value: string | null): string | null {
+  return value?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ?? null;
+}
+
+function missingActionFields(input: { owner: string | null; dueDate: string | null }): string[] {
+  const fields: string[] = [];
+  if (!hasText(input.owner)) fields.push("owner");
+  if (!hasText(input.dueDate)) fields.push("due_date");
+  return fields;
+}
+
+function currentMeetingIdFromCreateKbPayload(payload: Record<string, unknown>): string | null {
+  const direct =
+    stringFromValue(payload.current_meeting_id) ??
+    stringFromValue(payload.meeting_id) ??
+    stringFromValue(payload.source_meeting_id);
+  if (direct !== null) {
+    return direct;
+  }
+
+  const meetingIds = [
+    ...parseStringArrayValue(payload.candidate_meeting_ids),
+    ...parseStringArrayValue(payload.meeting_ids)
+  ];
+  return meetingIds.at(-1) ?? null;
+}
+
+function createKbNameFromPayload(input: {
+  payload: Record<string, unknown>;
+  meetingTitle: string;
+}): string {
+  return (
+    stringFromValue(input.payload.kb_name) ??
+    stringFromValue(input.payload.topic_name) ??
+    `${input.meetingTitle}知识库`
+  );
+}
+
+function sourcePayloadFromOriginal(original: Record<string, unknown>): Record<string, unknown> {
+  return {
+    meeting_reference: original.meeting_reference,
+    meeting_title: original.meeting_title,
+    minutes_url: original.minutes_url,
+    transcript_url: original.transcript_url,
+    external_meeting_id: original.external_meeting_id
+  };
 }
 
 function mergeEditedPayload(input: {
@@ -305,6 +391,247 @@ export function createConfirmationRequest(input: {
     executed_at: null,
     error: null
   });
+}
+
+export function snoozeConfirmation(input: {
+  repos: Repositories;
+  id: string;
+  minutes?: number;
+  reminder?: unknown;
+}): {
+  confirmation: ConfirmationRequestRow;
+  snooze: {
+    snoozed_at: string;
+    snooze_until: string;
+    minutes: number;
+    reminder: unknown | null;
+  };
+} {
+  const request = input.repos.getConfirmationRequest(input.id);
+  if (!request) {
+    throw new Error(`Confirmation request not found: ${input.id}`);
+  }
+  if (request.status === "executed" || request.status === "rejected") {
+    throw new Error(`Cannot snooze processed request: ${input.id}`);
+  }
+
+  const minutes = input.minutes ?? 30;
+  const snoozedAt = nowIso();
+  const snooze = {
+    snoozed_at: snoozedAt,
+    snooze_until: addMinutesIso(minutes),
+    minutes,
+    reminder: input.reminder ?? null
+  };
+  const editedPayload = {
+    ...parseJsonObject(request.edited_payload_json),
+    card_action: "remind_later",
+    snooze
+  };
+
+  input.repos.updateConfirmationRequest({
+    id: request.id,
+    status: "snoozed",
+    edited_payload_json: JSON.stringify(editedPayload),
+    error: null
+  });
+
+  return {
+    confirmation: input.repos.getConfirmationRequest(request.id) ?? {
+      ...request,
+      status: "snoozed",
+      edited_payload_json: JSON.stringify(editedPayload),
+      error: null,
+      updated_at: snoozedAt
+    },
+    snooze
+  };
+}
+
+export function convertCalendarConfirmationToActionConfirmation(input: {
+  repos: Repositories;
+  id: string;
+}): {
+  source_confirmation: ConfirmationRequestRow;
+  action_item_id: string;
+  confirmation: ConfirmationRequestRow;
+} {
+  const request = input.repos.getConfirmationRequest(input.id);
+  if (!request) {
+    throw new Error(`Confirmation request not found: ${input.id}`);
+  }
+  if (request.request_type !== "calendar") {
+    throw new Error(`convert_to_task requires a calendar confirmation: ${input.id}`);
+  }
+
+  const calendar = input.repos.getCalendarDraft(request.target_id);
+  if (!calendar) {
+    throw new Error(`Calendar draft not found: ${request.target_id}`);
+  }
+
+  const originalPayload = parseJsonObject(request.original_payload_json);
+  const participants = parseStringArrayValue(calendar.participants_json);
+  const owner = participants[0] ?? null;
+  const dueDate = dateOnlyFromIso(calendar.start_time);
+  const draft = ActionItemDraftSchema.parse({
+    title: `跟进：${calendar.title}`,
+    description: calendar.agenda,
+    owner,
+    collaborators: participants.slice(1),
+    due_date: dueDate,
+    priority: null,
+    evidence: calendar.evidence,
+    confidence: calendar.confidence,
+    suggested_reason: `用户选择将日程草案转为待办。原日程：${calendar.title}`,
+    missing_fields: missingActionFields({ owner, dueDate })
+  });
+  const action = input.repos.createActionItem({
+    id: createId("act"),
+    meeting_id: calendar.meeting_id,
+    kb_id: calendar.kb_id,
+    title: draft.title,
+    description: draft.description,
+    owner: draft.owner,
+    collaborators_json: JSON.stringify(draft.collaborators),
+    due_date: draft.due_date,
+    priority: draft.priority,
+    evidence: draft.evidence,
+    confidence: draft.confidence,
+    suggested_reason: draft.suggested_reason,
+    missing_fields_json: JSON.stringify(draft.missing_fields),
+    confirmation_status: "sent",
+    feishu_task_guid: null,
+    task_url: null,
+    rejection_reason: null
+  });
+  const confirmation = createConfirmationRequest({
+    repos: input.repos,
+    requestType: "action",
+    targetId: action.id,
+    recipient: draft.owner ?? request.recipient,
+    originalPayload: {
+      draft,
+      source_calendar_confirmation_id: request.id,
+      calendar_draft_id: calendar.id,
+      meeting_id: calendar.meeting_id,
+      ...sourcePayloadFromOriginal(originalPayload)
+    }
+  });
+
+  input.repos.updateCalendarDraftRejection(calendar.id);
+  input.repos.updateConfirmationRequest({
+    id: request.id,
+    status: "rejected",
+    error: "converted_to_task"
+  });
+
+  return {
+    source_confirmation: input.repos.getConfirmationRequest(request.id) ?? {
+      ...request,
+      status: "rejected",
+      error: "converted_to_task"
+    },
+    action_item_id: action.id,
+    confirmation
+  };
+}
+
+export function appendCurrentOnlyConfirmation(input: {
+  repos: Repositories;
+  id: string;
+}): {
+  source_confirmation: ConfirmationRequestRow;
+  knowledge_base_id: string;
+  meeting_id: string;
+  confirmation: ConfirmationRequestRow;
+} {
+  const request = input.repos.getConfirmationRequest(input.id);
+  if (!request) {
+    throw new Error(`Confirmation request not found: ${input.id}`);
+  }
+  if (request.request_type !== "create_kb") {
+    throw new Error(`append_current_only requires a create_kb confirmation: ${input.id}`);
+  }
+
+  const payload = parseJsonObject(request.original_payload_json);
+  const meetingId = currentMeetingIdFromCreateKbPayload(payload);
+  if (meetingId === null) {
+    throw new Error(`Cannot append current meeting without meeting_id: ${input.id}`);
+  }
+
+  const meeting = input.repos.getMeeting(meetingId);
+  if (!meeting) {
+    throw new Error(`Meeting not found: ${meetingId}`);
+  }
+
+  const existingCandidate =
+    request.target_id.startsWith("kb_") ? input.repos.getKnowledgeBase(request.target_id) : null;
+  const knowledgeBase =
+    existingCandidate ??
+    input.repos.createKnowledgeBase({
+      id: request.target_id.startsWith("kb_") ? request.target_id : createId("kb"),
+      name: createKbNameFromPayload({ payload, meetingTitle: meeting.title }),
+      goal: stringFromValue(payload.suggested_goal) ?? stringFromValue(payload.goal),
+      description: stringFromValue(payload.reason),
+      owner: request.recipient,
+      status: "candidate",
+      confidence_origin: numberFromValue(payload.score) ?? 0,
+      wiki_url: null,
+      homepage_url: null,
+      related_keywords_json: JSON.stringify(parseStringArrayValue(payload.topic_keywords)),
+      created_from_meetings_json: JSON.stringify([meeting.id]),
+      auto_append_policy: "manual_confirm"
+    });
+  const appendConfirmation = createConfirmationRequest({
+    repos: input.repos,
+    requestType: "append_meeting",
+    targetId: meeting.id,
+    recipient: request.recipient ?? meeting.organizer,
+    originalPayload: {
+      kb_id: knowledgeBase.id,
+      kb_name: knowledgeBase.name,
+      meeting_id: meeting.id,
+      meeting_title: meeting.title,
+      meeting_reference:
+        stringFromValue(payload.meeting_reference) ??
+        stringFromValue(payload.current_meeting_reference) ??
+        meeting.title,
+      minutes_url: meeting.minutes_url,
+      transcript_url: meeting.transcript_url,
+      external_meeting_id: meeting.external_meeting_id,
+      meeting_summary:
+        stringFromValue(payload.meeting_summary) ?? meeting.summary ?? "当前会议待追加。",
+      key_decisions: parseStringArrayValue(payload.key_decisions).map((decision) => ({
+        decision,
+        evidence: "来自创建知识库候选卡。"
+      })),
+      risks: parseStringArrayValue(payload.risks).map((risk) => ({
+        risk,
+        evidence: "来自创建知识库候选卡。"
+      })),
+      topic_keywords: parseStringArrayValue(payload.topic_keywords),
+      match_reasons: parseStringArrayValue(payload.match_reasons),
+      score: numberFromValue(payload.score) ?? 0,
+      reason: "用户选择只归档当前会议，转入追加会议确认流程。"
+    }
+  });
+
+  input.repos.updateConfirmationRequest({
+    id: request.id,
+    status: "rejected",
+    error: "append_current_only"
+  });
+
+  return {
+    source_confirmation: input.repos.getConfirmationRequest(request.id) ?? {
+      ...request,
+      status: "rejected",
+      error: "append_current_only"
+    },
+    knowledge_base_id: knowledgeBase.id,
+    meeting_id: meeting.id,
+    confirmation: appendConfirmation
+  };
 }
 
 export function completeActionOwner(input: {
@@ -565,9 +892,24 @@ export async function confirmRequest(input: {
         llm: input.llm,
         runner: input.runner
       });
+      const editedPayload = {
+        ...parseJsonObject(result.confirmation.edited_payload_json ?? request.edited_payload_json),
+        result_links: {
+          knowledge_base_id: result.knowledge_base.id,
+          wiki_url: result.knowledge_base.wiki_url,
+          homepage_url: result.knowledge_base.homepage_url
+        }
+      };
+      input.repos.updateConfirmationRequest({
+        id: request.id,
+        status: result.confirmation.status,
+        edited_payload_json: JSON.stringify(editedPayload),
+        executed_at: result.confirmation.executed_at,
+        error: result.confirmation.error
+      });
 
       return {
-        confirmation: result.confirmation,
+        confirmation: input.repos.getConfirmationRequest(request.id) ?? result.confirmation,
         result
       };
     } catch (error) {

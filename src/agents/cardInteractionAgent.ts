@@ -13,10 +13,15 @@ import {
   DryRunConfirmationCard,
   DryRunConfirmationCardSchema
 } from "../schemas";
-import { ConfirmationRequestRow } from "../services/store/repositories";
+import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
 import { formatOpenIdsInText } from "../utils/display";
 
 type CardInput = ReturnType<typeof CardConfirmationInputSchema.parse>;
+type ResultLinkRepos = Pick<Repositories, "getActionItem" | "getCalendarDraft" | "getKnowledgeBase">;
+
+interface BuildConfirmationCardFromRequestOptions {
+  repos?: ResultLinkRepos;
+}
 
 function sanitizeText(value: string): string {
   const redacted = value
@@ -219,6 +224,27 @@ function displayField(key: string, label: string, value: unknown): CardDisplayFi
   };
 }
 
+function optionalDisplayField(
+  key: string,
+  label: string,
+  value: unknown
+): CardDisplayField | null {
+  const text = asString(value);
+  return text === null ? null : displayField(key, label, text);
+}
+
+function resultSections(fields: Array<CardDisplayField | null>): CardSection[] {
+  const visibleFields = fields.filter((field): field is CardDisplayField => field !== null);
+  return visibleFields.length > 0
+    ? [
+        section({
+          title: "执行结果",
+          fields: visibleFields
+        })
+      ]
+    : [];
+}
+
 function publicTargetId(targetId: string): string {
   return targetId.startsWith("mtg_") ? "current_meeting" : targetId;
 }
@@ -251,6 +277,66 @@ function section(input: {
     fields: input.fields,
     help_text: input.helpText
   };
+}
+
+function resultLinksFromPayload(value: unknown): Record<string, unknown> {
+  const payload = asObject(value);
+  return {
+    ...asObject(payload.result),
+    ...asObject(payload.result_links)
+  };
+}
+
+function payloadWithResultLinks(input: {
+  request: ConfirmationRequestRow;
+  originalPayload: Record<string, unknown>;
+  editedPayload: unknown | null;
+  repos?: ResultLinkRepos;
+}): Record<string, unknown> {
+  const resultLinks = resultLinksFromPayload(input.editedPayload);
+
+  if (input.request.request_type === "action") {
+    const action = input.repos?.getActionItem(input.request.target_id);
+    return {
+      ...input.originalPayload,
+      task_url: action?.task_url ?? resultLinks.task_url ?? input.originalPayload.task_url,
+      feishu_task_guid:
+        action?.feishu_task_guid ??
+        resultLinks.feishu_task_guid ??
+        input.originalPayload.feishu_task_guid
+    };
+  }
+
+  if (input.request.request_type === "calendar") {
+    const calendar = input.repos?.getCalendarDraft(input.request.target_id);
+    return {
+      ...input.originalPayload,
+      event_url: calendar?.event_url ?? resultLinks.event_url ?? input.originalPayload.event_url,
+      calendar_event_id:
+        calendar?.calendar_event_id ??
+        resultLinks.calendar_event_id ??
+        input.originalPayload.calendar_event_id
+    };
+  }
+
+  if (input.request.request_type === "create_kb") {
+    const knowledgeBaseId =
+      asString(resultLinks.knowledge_base_id) ??
+      asString(resultLinks.kb_id) ??
+      asString(input.originalPayload.knowledge_base_id) ??
+      asString(input.originalPayload.kb_id) ??
+      input.request.target_id;
+    const knowledgeBase = input.repos?.getKnowledgeBase(knowledgeBaseId);
+    return {
+      ...input.originalPayload,
+      knowledge_base_id: knowledgeBase?.id ?? knowledgeBaseId,
+      wiki_url: knowledgeBase?.wiki_url ?? resultLinks.wiki_url ?? input.originalPayload.wiki_url,
+      homepage_url:
+        knowledgeBase?.homepage_url ?? resultLinks.homepage_url ?? input.originalPayload.homepage_url
+    };
+  }
+
+  return input.originalPayload;
 }
 
 function basicActions(requestId: string, confirmLabel: string): CardAction[] {
@@ -326,39 +412,6 @@ function actionConfirmationActions(requestId: string): CardAction[] {
       endpoint: `/dev/confirmations/${requestId}/remind-later`,
       payload_template: {
         reminder: "$remind_later"
-      }
-    }
-  ];
-}
-
-function personalTodoFallbackActions(requestId: string): CardAction[] {
-  return [
-    {
-      key: "confirm",
-      label: "添加到我的待办",
-      style: "primary",
-      action_type: "http_post",
-      endpoint: `/dev/confirmations/${requestId}/confirm`,
-      payload_template: {}
-    },
-    {
-      key: "remind_later",
-      label: "稍后处理",
-      style: "default",
-      action_type: "http_post",
-      endpoint: `/dev/confirmations/${requestId}/remind-later`,
-      payload_template: {
-        reminder: "$remind_later"
-      }
-    },
-    {
-      key: "reject",
-      label: "不添加",
-      style: "danger",
-      action_type: "http_post",
-      endpoint: `/dev/confirmations/${requestId}/reject`,
-      payload_template: {
-        reason: "$reason"
       }
     }
   ];
@@ -612,15 +665,13 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   const meetingReference = meetingReferenceFromPayload(payload);
   const cardType = "action_confirmation" as const;
   const ownerMissing = draft.owner === null || draft.missing_fields.includes("owner");
-  const actions = ownerMissing
-    ? personalTodoFallbackActions(parsed.id)
-    : actionConfirmationActions(parsed.id);
-  const ownerText = ownerMissing ? "我的个人待办" : (draft.owner ?? "待确认");
-  const ownerLabel = ownerMissing ? "添加到" : "建议负责人";
+  const actions = actionConfirmationActions(parsed.id);
+  const ownerText = draft.owner ?? "待确认";
+  const ownerLabel = ownerMissing ? "负责人" : "建议负责人";
   const summary = ownerMissing
     ? [
-        "会议未识别明确负责人",
-        "点击后会添加到我的个人待办",
+        "负责人待补充",
+        "可在卡片中填写负责人后添加",
         draft.due_date ? `截止：${draft.due_date}` : "截止时间待补充",
         draft.priority ? `优先级：${draft.priority}` : "优先级待补充"
       ].join("；")
@@ -642,8 +693,9 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
     editableField({
       key: "owner",
       label: ownerLabel,
-      inputType: ownerMissing ? "readonly" : "text",
-      value: draft.owner
+      inputType: "text",
+      value: draft.owner,
+      required: ownerMissing
     }),
     editableField({
       key: "due_date",
@@ -674,7 +726,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
     status: parsed.status,
     status_text:
       ownerMissing && (parsed.status === "sent" || parsed.status === "edited")
-        ? "会议未识别明确负责人，可添加到我的个人待办"
+        ? "负责人待补充，请在卡片中填写后添加待办"
         : statusText({ status: parsed.status, cardType }),
     ...statusFields(parsed),
     title: `确认待办：${draft.title}`,
@@ -686,28 +738,33 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
           displayField("title", "任务标题", draft.title),
           displayField("recommended_owner", ownerLabel, ownerText),
           displayField("due_date", "截止时间", draft.due_date),
-          displayField("priority", "优先级", draft.priority)
+          displayField("priority", "优先级", draft.priority),
+          displayField("suggested_reason", "建议原因", draft.suggested_reason),
+          displayField("evidence", "原文片段", draft.evidence),
+          displayField("confidence", "置信度", draft.confidence)
         ]
       }),
-      section({
-        title: "会议依据",
-        fields: [
-          ...(meetingReference !== null
-            ? [displayField("meeting_reference", "会议", meetingReference)]
-            : []),
-          displayField("evidence", "依据", draft.evidence)
-        ]
-      }),
+      ...(meetingReference !== null
+        ? [
+            section({
+              title: "会议来源",
+              fields: [displayField("meeting_reference", "会议", meetingReference)]
+            })
+          ]
+        : []),
       ...(ownerMissing
         ? [
             section({
-              title: "个人待办",
-              helpText:
-                "当前会议未识别明确负责人。点击添加后，会创建到当前卡片接收人或操作用户的个人待办。",
-              fields: [displayField("personal_task_fallback", "添加方式", "添加到我的个人待办")]
+              title: "待补字段",
+              helpText: "当前会议未识别明确负责人。请在卡片中填写负责人后再添加待办。",
+              fields: [displayField("missing_fields", "待补字段", draft.missing_fields)]
             })
           ]
-        : [])
+        : []),
+      ...resultSections([
+        optionalDisplayField("task_url", "飞书任务", payload.task_url),
+        optionalDisplayField("feishu_task_guid", "任务 ID", payload.feishu_task_guid)
+      ])
     ],
     editable_fields: editableFields,
     actions: actionsForStatus({ status: parsed.status, actions }),
@@ -755,18 +812,24 @@ export function buildCalendarConfirmationCard(
           displayField("duration_minutes", "时长", draft.duration_minutes),
           displayField("participants", "参会人", draft.participants),
           displayField("location", "地点", draft.location),
-          displayField("agenda", "议程", draft.agenda)
+          displayField("agenda", "议程", draft.agenda),
+          displayField("missing_fields", "待补字段", draft.missing_fields),
+          displayField("evidence", "原文片段", draft.evidence),
+          displayField("confidence", "置信度", draft.confidence)
         ]
       }),
-      section({
-        title: "会议依据",
-        fields: [
-          ...(meetingReference !== null
-            ? [displayField("meeting_reference", "会议", meetingReference)]
-            : []),
-          displayField("evidence", "依据", draft.evidence)
-        ]
-      })
+      ...(meetingReference !== null
+        ? [
+            section({
+              title: "会议来源",
+              fields: [displayField("meeting_reference", "会议", meetingReference)]
+            })
+          ]
+        : []),
+      ...resultSections([
+        optionalDisplayField("event_url", "飞书日程", payload.event_url),
+        optionalDisplayField("calendar_event_id", "日程 ID", payload.calendar_event_id)
+      ])
     ],
     editable_fields: [
       editableField({
@@ -873,7 +936,11 @@ export function buildCreateKbConfirmationCard(
             structurePreview
           )
         ]
-      })
+      }),
+      ...resultSections([
+        optionalDisplayField("wiki_url", "知识库", payload.wiki_url),
+        optionalDisplayField("homepage_url", "首页", payload.homepage_url)
+      ])
     ],
     editable_fields: [
       editableField({
@@ -1018,16 +1085,24 @@ export function buildConfirmationCard(input: CardConfirmationInput): DryRunConfi
 }
 
 export function buildConfirmationCardFromRequest(
-  request: ConfirmationRequestRow
+  request: ConfirmationRequestRow,
+  options: BuildConfirmationCardFromRequestOptions = {}
 ): DryRunConfirmationCard {
+  const originalPayload = asObject(withoutCardPreview(parseJson(request.original_payload_json)));
+  const editedPayload = parseJsonOrNull(request.edited_payload_json);
   const input: CardConfirmationInput = {
     id: request.id,
     request_type: request.request_type,
     target_id: request.target_id,
     recipient: request.recipient,
     status: request.status,
-    original_payload: withoutCardPreview(parseJson(request.original_payload_json)),
-    edited_payload: parseJsonOrNull(request.edited_payload_json),
+    original_payload: payloadWithResultLinks({
+      request,
+      originalPayload,
+      editedPayload,
+      repos: options.repos
+    }),
+    edited_payload: editedPayload,
     error: request.error,
     created_at: request.created_at
   };

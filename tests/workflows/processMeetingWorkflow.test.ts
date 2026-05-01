@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MeetingExtractionResult } from "../../src/schemas";
-import { LlmClient } from "../../src/services/llm/llmClient";
+import { MeetingExtractionResult, TopicMatchResult } from "../../src/schemas";
+import { GenerateJsonInput, LlmClient } from "../../src/services/llm/llmClient";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
@@ -10,13 +10,71 @@ import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkfl
 class QueueLlmClient implements LlmClient {
   constructor(private readonly results: MeetingExtractionResult[]) {}
 
-  async generateJson<T>(): Promise<T> {
+  async generateJson<T>(input: GenerateJsonInput): Promise<T> {
+    if (input.schemaName === "TopicMatchResult") {
+      return topicDecision(input) as T;
+    }
     const result = this.results.shift();
     if (!result) {
       throw new Error("QueueLlmClient has no remaining results");
     }
     return result as T;
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null && !Array.isArray(item)
+      )
+    : [];
+}
+
+function stringValue(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function topicDecision(input: GenerateJsonInput): TopicMatchResult {
+  const marker = "topic_clustering_context:";
+  const start = input.userPrompt.lastIndexOf(marker);
+  const context =
+    start >= 0
+      ? asRecord(JSON.parse(input.userPrompt.slice(start + marker.length).trim()) as unknown)
+      : {};
+  const current = asRecord(context.current_meeting);
+  const currentMeetingId = stringValue(current.id, "mtg_current");
+  const candidateIds = recordArray(context.candidate_meetings)
+    .map((meeting) => stringValue(meeting.id, ""))
+    .filter(Boolean);
+
+  if (candidateIds.length > 0) {
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: null,
+      matched_kb_name: null,
+      score: 0.84,
+      match_reasons: ["Mock LLM 判断两场会议应创建知识库"],
+      suggested_action: "ask_create",
+      candidate_meeting_ids: [...candidateIds, currentMeetingId]
+    };
+  }
+
+  return {
+    current_meeting_id: currentMeetingId,
+    matched_kb_id: null,
+    matched_kb_name: null,
+    score: 0.62,
+    match_reasons: ["Mock LLM 判断首场会议先观察"],
+    suggested_action: "observe",
+    candidate_meeting_ids: [currentMeetingId]
+  };
 }
 
 function readExpectedExtraction(name: string): MeetingExtractionResult {

@@ -10,11 +10,12 @@ import {
   MeetingExtractionResult,
   MeetingExtractionResultSchema,
   ManualMeetingInput,
-  RiskDraft
+  RiskDraft,
+  TopicMatchResult
 } from "../src/schemas";
 import { loadConfig } from "../src/config";
 import { createLlmClient } from "../src/services/llm/createLlmClient";
-import { LlmClient } from "../src/services/llm/llmClient";
+import { GenerateJsonInput, LlmClient } from "../src/services/llm/llmClient";
 import { createMemoryDatabase } from "../src/services/store/db";
 import {
   ActionItemRow,
@@ -248,10 +249,18 @@ export interface RunEffectivenessEvaluationOptions {
 
 class FixtureEvaluationLlmClient implements LlmClient {
   private index = 0;
+  private lastExtractionIndex: number | null = null;
 
-  constructor(private readonly results: MeetingExtractionResult[]) {}
+  constructor(
+    private readonly results: MeetingExtractionResult[],
+    private readonly labels: EvaluationLabel[]
+  ) {}
 
-  async generateJson<T>(input: { schemaName: string }): Promise<T> {
+  async generateJson<T>(input: GenerateJsonInput): Promise<T> {
+    if (input.schemaName === "TopicMatchResult") {
+      return this.topicMatchForPrompt(input) as T;
+    }
+
     if (input.schemaName !== "MeetingExtractionResult") {
       throw new Error(`Evaluation fixture LLM does not support schema: ${input.schemaName}`);
     }
@@ -261,8 +270,79 @@ class FixtureEvaluationLlmClient implements LlmClient {
       throw new Error("Evaluation fixture LLM has no remaining extraction result");
     }
 
+    this.lastExtractionIndex = this.index;
     this.index += 1;
     return result as T;
+  }
+
+  private topicMatchForPrompt(input: GenerateJsonInput): TopicMatchResult {
+    const context = topicContext(input);
+    const currentMeeting = asRecord(context.current_meeting);
+    const currentMeetingId = stringValue(currentMeeting.id, "mtg_current");
+    const candidateIds = recordArray(context.candidate_meetings)
+      .map((meeting) => stringValue(meeting.id))
+      .filter(Boolean);
+    const label =
+      this.lastExtractionIndex === null ? undefined : this.labels[this.lastExtractionIndex];
+
+    if (label?.expected_should_create_kb === true) {
+      return {
+        current_meeting_id: currentMeetingId,
+        matched_kb_id: null,
+        matched_kb_name: null,
+        score: 0.95,
+        match_reasons: [`Fixture label expects create_kb: ${label.notes}`],
+        suggested_action: "ask_create",
+        candidate_meeting_ids: [...candidateIds, currentMeetingId]
+      };
+    }
+
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: null,
+      matched_kb_name: null,
+      score: 0.62,
+      match_reasons: [
+        label
+          ? `Fixture label does not expect create_kb: ${label.notes}`
+          : "Fixture label unavailable; observe without creating knowledge base"
+      ],
+      suggested_action: "observe",
+      candidate_meeting_ids: [currentMeetingId]
+    };
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null && !Array.isArray(item)
+      )
+    : [];
+}
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function topicContext(input: GenerateJsonInput): Record<string, unknown> {
+  const marker = "topic_clustering_context:";
+  const start = input.userPrompt.lastIndexOf(marker);
+  if (start < 0) {
+    return {};
+  }
+
+  try {
+    return asRecord(JSON.parse(input.userPrompt.slice(start + marker.length).trim()) as unknown);
+  } catch {
+    return {};
   }
 }
 
@@ -303,10 +383,11 @@ function parseEvaluationLlmProvider(value: string | undefined): EvaluationLlmPro
 function createEvaluationLlmClient(input: {
   provider: EvaluationLlmProvider;
   fixtureExtractions: MeetingExtractionResult[];
+  labels: EvaluationLabel[];
 }): { llm: LlmClient; context: EvaluationRunContext } {
   if (input.provider === "mock") {
     return {
-      llm: new FixtureEvaluationLlmClient(input.fixtureExtractions),
+      llm: new FixtureEvaluationLlmClient(input.fixtureExtractions, input.labels),
       context: {
         evaluation_type: "mock_fixture_pipeline",
         provider: "mock",
@@ -954,7 +1035,8 @@ export async function runEffectivenessEvaluation(
   const repos = createRepositories(createMemoryDatabase());
   const { llm, context } = createEvaluationLlmClient({
     provider: llmProvider,
-    fixtureExtractions: extractions
+    fixtureExtractions: extractions,
+    labels
   });
   const samples: SampleEvaluation[] = [];
 

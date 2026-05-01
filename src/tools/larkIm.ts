@@ -268,7 +268,14 @@ function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
       typeLabel: "待办",
       headerTemplate: "turquoise",
       primaryFieldKeys: ["recommended_owner", "due_date", "priority"],
-      detailFieldKeys: ["meeting_reference", "suggested_reason", "evidence"]
+      detailFieldKeys: [
+        "task_url",
+        "feishu_task_guid",
+        "meeting_reference",
+        "suggested_reason",
+        "evidence",
+        "confidence"
+      ]
     };
   }
 
@@ -278,7 +285,15 @@ function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
       typeLabel: "日程",
       headerTemplate: "orange",
       primaryFieldKeys: ["start_time", "duration_minutes", "participants", "location"],
-      detailFieldKeys: ["meeting_reference", "agenda", "evidence"]
+      detailFieldKeys: [
+        "event_url",
+        "calendar_event_id",
+        "meeting_reference",
+        "agenda",
+        "missing_fields",
+        "evidence",
+        "confidence"
+      ]
     };
   }
 
@@ -292,6 +307,8 @@ function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
       headerTemplate: "green",
       primaryFieldKeys: ["topic_name", "kb_name", "meeting_reference", "candidate_meetings"],
       detailFieldKeys: [
+        "wiki_url",
+        "homepage_url",
         "suggested_goal",
         "curation_guidance",
         "default_structure",
@@ -500,10 +517,6 @@ function requiredEditableKeys(card: DryRunConfirmationCard): string[] {
 }
 
 function requiredEditableFields(card: DryRunConfirmationCard) {
-  if (card.card_type === "action_confirmation" && hasMissingEditableField(card, "owner")) {
-    return [];
-  }
-
   const requiredKeys = new Set(requiredEditableKeys(card));
   return card.editable_fields
     .filter((field) => requiredKeys.has(field.key))
@@ -520,25 +533,21 @@ function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
   const hasRequiredEdits = requiredEditableFields(card).length > 0;
 
   if (card.card_type === "action_confirmation") {
-    if (hasMissingEditableField(card, "owner")) {
-      return ["confirm", "remind_later", "reject"];
-    }
-
     return hasRequiredEdits
-      ? ["confirm_with_edits", "remind_later", "reject"]
-      : ["confirm", "remind_later", "reject"];
+      ? ["confirm_with_edits", "not_mine", "remind_later", "reject"]
+      : ["confirm", "not_mine", "remind_later", "reject"];
   }
 
   if (card.card_type === "calendar_confirmation") {
     return hasRequiredEdits
-      ? ["confirm_with_edits", "convert_to_task", "reject"]
-      : ["confirm", "convert_to_task", "reject"];
+      ? ["confirm_with_edits", "convert_to_task", "remind_later", "reject"]
+      : ["confirm", "convert_to_task", "remind_later", "reject"];
   }
 
   if (card.card_type === "create_kb_confirmation") {
     return hasRequiredEdits
-      ? ["edit_and_create", "append_current_only", "reject"]
-      : ["create_kb", "append_current_only", "reject"];
+      ? ["edit_and_create", "append_current_only", "never_remind_topic", "reject"]
+      : ["create_kb", "append_current_only", "never_remind_topic", "reject"];
   }
 
   return ["confirm", "reject"];
@@ -569,16 +578,17 @@ function buttonLabel(
   const retryPrefix = card.status === "failed" ? "重试" : "";
 
   if (key === "confirm_with_edits") {
+    const editLabel = requiredEditableFields(card).length > 0 ? "补全后" : "修改后";
     if (card.card_type === "action_confirmation") {
-      return `${prefix}${retryPrefix}补全后添加待办`;
+      return `${prefix}${retryPrefix}${editLabel}添加待办`;
     }
     if (card.card_type === "calendar_confirmation") {
-      return `${prefix}${retryPrefix}补全后添加日程`;
+      return `${prefix}${retryPrefix}${editLabel}添加日程`;
     }
     if (card.card_type === "append_meeting_confirmation") {
-      return `${prefix}${retryPrefix}补全后追加到知识库`;
+      return `${prefix}${retryPrefix}${editLabel}追加到知识库`;
     }
-    return `${prefix}${retryPrefix}补全后确认`;
+    return `${prefix}${retryPrefix}${editLabel}确认`;
   }
 
   if (key === "complete_owner") {
@@ -600,7 +610,10 @@ function buttonLabel(
     }
     return `${prefix}${retryPrefix}确认`;
   }
-  if (key === "edit_and_create" || key === "create_kb") {
+  if (key === "edit_and_create") {
+    return `${prefix}${retryPrefix}修改后创建`;
+  }
+  if (key === "create_kb") {
     return `${prefix}${retryPrefix}创建知识库`;
   }
   if (key === "append_current_only") {
@@ -612,7 +625,13 @@ function buttonLabel(
   if (key === "remind_later") {
     return "稍后处理";
   }
-  if (key === "reject" || key === "not_mine") {
+  if (key === "never_remind_topic") {
+    return "不再提醒";
+  }
+  if (key === "not_mine") {
+    return "不是我的";
+  }
+  if (key === "reject") {
     return card.card_type === "create_kb_confirmation" ? "不创建" : "不添加";
   }
   return fallback;

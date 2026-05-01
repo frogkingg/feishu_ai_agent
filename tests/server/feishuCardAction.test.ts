@@ -178,6 +178,60 @@ function createMissingOwnerActionConfirmation(
   });
 }
 
+function createDirectCreateKbConfirmation(repos: ReturnType<typeof createRepositories>) {
+  const meeting = repos.createMeeting({
+    id: "mtg_create_kb_card_action",
+    external_meeting_id: null,
+    title: "客户访谈知识沉淀",
+    started_at: "2026-05-02T10:00:00+08:00",
+    ended_at: "2026-05-02T11:00:00+08:00",
+    organizer: "ou_owner",
+    participants_json: JSON.stringify(["ou_owner"]),
+    minutes_url: "https://example.feishu.cn/minutes/min_create_kb",
+    transcript_url: null,
+    transcript_text: "这两次客户访谈需要沉淀成知识库。",
+    summary: "会议确认客户访谈资料需要沉淀。",
+    keywords_json: JSON.stringify(["客户访谈"]),
+    matched_kb_id: null,
+    match_score: null,
+    archive_status: "suggested",
+    action_count: 0,
+    calendar_count: 0
+  });
+
+  return repos.createConfirmationRequest({
+    id: "conf_create_kb_card_action",
+    request_type: "create_kb",
+    target_id: "kb_candidate_card_action",
+    recipient: "ou_owner",
+    card_message_id: null,
+    status: "sent",
+    original_payload_json: JSON.stringify({
+      topic_name: "客户访谈知识库",
+      suggested_goal: "沉淀客户访谈结论。",
+      candidate_meeting_ids: [meeting.id],
+      meeting_ids: [meeting.id],
+      meeting_summary: meeting.summary,
+      score: 0.86,
+      match_reasons: ["用户显式提出创建知识库"],
+      topic_match: {
+        current_meeting_id: meeting.id,
+        matched_kb_id: null,
+        matched_kb_name: null,
+        score: 0.86,
+        match_reasons: ["用户显式提出创建知识库"],
+        suggested_action: "ask_create",
+        candidate_meeting_ids: [meeting.id]
+      },
+      reason: "检测到相关会议，建议创建主题知识库。"
+    }),
+    edited_payload_json: null,
+    confirmed_at: null,
+    executed_at: null,
+    error: null
+  });
+}
+
 async function createAppWithConfirmations(larkVerificationToken: string | null = null) {
   const repos = createRepositories(createMemoryDatabase());
   const app = buildServer({
@@ -211,12 +265,14 @@ async function createAppWithConfirmations(larkVerificationToken: string | null =
   const calendar = repos
     .listConfirmationRequests()
     .find((item) => item.request_type === "calendar");
+  const createKb = createDirectCreateKbConfirmation(repos);
 
   return {
     app,
     repos,
     action: action as ConfirmationRequestRow,
-    calendar: calendar as ConfirmationRequestRow
+    calendar: calendar as ConfirmationRequestRow,
+    createKb
   };
 }
 
@@ -781,12 +837,104 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(updateData.token).toBe("card_action_update_token");
     expect(updateData.card.config).toMatchObject({ update_multi: true });
     expect(JSON.stringify(updateData.card)).toContain("已添加待办");
+    expect(JSON.stringify(updateData.card)).toContain("飞书任务");
+    expect(JSON.stringify(updateData.card)).toContain(`mock://feishu/task/${confirmation.target_id}`);
     expect(JSON.stringify(updateData.card)).not.toContain("disabled");
     expect(updateData.card.elements.some((element) => element.tag === "action")).toBe(false);
     expect(updateCalls[0]).not.toContain("--params");
     expect(
       repos.listCliRuns().some((run) => run.tool === "lark.im.send_card_status_fallback")
     ).toBe(false);
+  });
+
+  it("updates executed create_kb cards with wiki result links", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const updateCalls: string[][] = [];
+    const verificationToken = "verification-token";
+    const runner: LarkCliRunner = async (_bin, args) => {
+      updateCalls.push(args);
+      return { stdout: JSON.stringify({ ok: true }), stderr: "" };
+    };
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCardSendDryRun: false,
+        larkVerificationToken: verificationToken,
+        larkCliBin: "fake-lark",
+        sqlitePath: ":memory:"
+      }),
+      repos,
+      llm: new MockLlmClient(),
+      larkCliRunner: runner
+    });
+    const confirmation = createDirectCreateKbConfirmation(repos);
+    const payload = {
+      event: {
+        token: "card_action_update_token",
+        context: {
+          open_message_id: "om_create_kb_card",
+          open_chat_id: "oc_card_chat"
+        },
+        action: {
+          value: {
+            confirmation_id: confirmation.id,
+            action_key: "create_kb"
+          }
+        }
+      }
+    };
+    const timestamp = "1777574292";
+    const nonce = "create-kb-card-status-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "info",
+        content: "已收到请求，正在添加到飞书…"
+      },
+      card: expect.any(Object)
+    });
+    await flushAsyncWork();
+
+    const executed = repos.getConfirmationRequest(confirmation.id);
+    expect(executed).toMatchObject({
+      status: "executed",
+      card_message_id: "om_create_kb_card"
+    });
+    expect(JSON.parse(executed?.edited_payload_json ?? "{}")).toMatchObject({
+      result_links: {
+        wiki_url: expect.stringContaining("mock://feishu/wiki/"),
+        homepage_url: expect.stringContaining("mock://feishu/wiki/")
+      }
+    });
+    expect(updateCalls).toHaveLength(1);
+    const updateData = JSON.parse(dataArg(updateCalls[0])) as {
+      token: string;
+      card: { config: unknown; elements: Array<{ tag: string }> };
+    };
+    const updatedCardJson = JSON.stringify(updateData.card);
+    expect(updateData.token).toBe("card_action_update_token");
+    expect(updatedCardJson).toContain("已创建知识库");
+    expect(updatedCardJson).toContain("知识库");
+    expect(updatedCardJson).toContain("首页");
+    expect(updatedCardJson).toContain("mock://feishu/wiki/");
+    expect(updateData.card.elements.some((element) => element.tag === "action")).toBe(false);
   });
 
   it("falls back to a valid result card when final card update fails after execution failure", async () => {
@@ -980,60 +1128,112 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(repos.listCliRuns()).toHaveLength(failedRunsBeforeClick);
   });
 
-  it("keeps preview-only card actions side-effect free before later confirmation", async () => {
-    const { app, repos, action } = await createAppWithConfirmations();
+  it("turns card helper actions into local confirmation state", async () => {
+    const { app, repos, action, calendar, createKb } = await createAppWithConfirmations();
     expect(repos.getConfirmationRequest(action.id)?.status).toBe("sent");
 
-    for (const callbackAction of ["remind_later", "convert_to_task", "append_current_only"]) {
-      const response = await app.inject({
-        method: "POST",
-        url: "/webhooks/feishu/card-action",
-        payload: {
-          open_id: "ou_test",
-          action: {
-            value: {
-              confirmation_id: action.id,
-              action: callbackAction
-            }
+    const remindResponse = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        open_id: "ou_test",
+        action: {
+          value: {
+            confirmation_id: action.id,
+            action: "remind_later"
           }
         }
-      });
-
-      expect(response.statusCode).toBe(200);
-      expect(response.json()).toMatchObject({
-        toast: {
-          type: "info",
-          content: "此操作暂未实现，将在 PR-2 中完成"
+      }
+    });
+    expect(remindResponse.statusCode).toBe(200);
+    expect(remindResponse.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "已收到，稍后再提醒"
+      },
+      card: expect.any(Object)
+    });
+    expect(JSON.stringify(remindResponse.json().card)).toContain("已收到，稍后再提醒");
+    expect(repos.getConfirmationRequest(action.id)).toMatchObject({
+      status: "snoozed"
+    });
+    expect(JSON.parse(repos.getConfirmationRequest(action.id)?.edited_payload_json ?? "{}"))
+      .toMatchObject({
+        card_action: "remind_later",
+        snooze: {
+          minutes: 30
         },
-        card: expect.any(Object)
       });
-      expect(JSON.stringify(response.json().card)).toContain("已收到，稍后处理");
-    }
 
-    const unchangedConfirmation = repos.getConfirmationRequest(action.id);
-    expect(unchangedConfirmation?.status).toBe("sent");
-    expect(unchangedConfirmation?.edited_payload_json).toBeNull();
-    expect(
-      repos.listCliRuns().filter((run) => run.tool.startsWith("lark.card_action."))
-    ).toHaveLength(0);
-
-    const confirmResponse = await app.inject({
+    const actionConfirmationsBeforeConvert = repos
+      .listConfirmationRequests()
+      .filter((request) => request.request_type === "action").length;
+    const convertResponse = await app.inject({
       method: "POST",
       url: "/webhooks/feishu/card-action",
       payload: {
         action: {
           value: {
-            confirmation_id: action.id,
-            action: "confirm"
+            confirmation_id: calendar.id,
+            action: "convert_to_task"
           }
         }
       }
     });
+    expect(convertResponse.statusCode).toBe(200);
+    expect(convertResponse.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "已转成待办确认卡"
+      },
+      card: expect.any(Object)
+    });
+    expect(JSON.stringify(convertResponse.json().card)).toContain("确认待办");
+    expect(repos.getConfirmationRequest(calendar.id)).toMatchObject({
+      status: "rejected",
+      error: "converted_to_task"
+    });
+    const actionConfirmationsAfterConvert = repos
+      .listConfirmationRequests()
+      .filter((request) => request.request_type === "action");
+    expect(actionConfirmationsAfterConvert).toHaveLength(actionConfirmationsBeforeConvert + 1);
+    const convertedAction = repos.listActionItems().find((item) => item.title.startsWith("跟进："));
+    expect(convertedAction).toMatchObject({
+      meeting_id: repos.getCalendarDraft(calendar.target_id)?.meeting_id,
+      confirmation_status: "sent"
+    });
 
-    expect(confirmResponse.statusCode).toBe(200);
-    await flushAsyncWork();
-    const confirmed = repos.getConfirmationRequest(action.id);
-    expect(confirmed?.status).toBe("executed");
-    expect(confirmed?.edited_payload_json).toBeNull();
+    const appendResponse = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        action: {
+          value: {
+            confirmation_id: createKb.id,
+            action: "append_current_only"
+          }
+        }
+      }
+    });
+    expect(appendResponse.statusCode).toBe(200);
+    expect(appendResponse.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "已转为仅归档当前会议确认"
+      },
+      card: expect.any(Object)
+    });
+    expect(JSON.stringify(appendResponse.json().card)).toContain("确认追加会议");
+    expect(repos.getConfirmationRequest(createKb.id)).toMatchObject({
+      status: "rejected",
+      error: "append_current_only"
+    });
+    expect(
+      repos.listConfirmationRequests().some((request) => request.request_type === "append_meeting")
+    ).toBe(true);
+    expect(repos.listKnowledgeBases().some((kb) => kb.status === "candidate")).toBe(true);
+    expect(JSON.stringify(remindResponse.json())).not.toContain("暂未实现");
+    expect(JSON.stringify(convertResponse.json())).not.toContain("暂未实现");
+    expect(JSON.stringify(appendResponse.json())).not.toContain("暂未实现");
   });
 });

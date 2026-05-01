@@ -105,7 +105,15 @@ export interface ConfirmationRequestRow {
   target_id: string;
   recipient: string | null;
   card_message_id: string | null;
-  status: "draft" | "sent" | "edited" | "confirmed" | "rejected" | "executed" | "failed";
+  status:
+    | "draft"
+    | "sent"
+    | "edited"
+    | "snoozed"
+    | "confirmed"
+    | "rejected"
+    | "executed"
+    | "failed";
   original_payload_json: string;
   edited_payload_json: string | null;
   confirmed_at: string | null;

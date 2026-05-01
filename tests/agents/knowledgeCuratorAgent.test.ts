@@ -97,7 +97,17 @@ function calendar(overrides: Partial<CalendarDraftRow> = {}): CalendarDraftRow {
 }
 
 describe("knowledgeCuratorAgent", () => {
-  it("asks the LLM to curate from compact digest instead of transcript rules", async () => {
+  it("asks the LLM to curate from rich bounded digest instead of transcript rules", async () => {
+    const longSummary = [
+      "本次会议同步项目背景、目标读者、SOP 草案和待确认风险。",
+      "会议进一步说明当前状态是资料已收集但统一口径待确认。",
+      "后续要把行动项、评审日程和来源资料组织成可继续深化的知识库。"
+    ].join("");
+    const longTranscript = [
+      "摘录开头：张三说明 SOP 草案需要和风险清单一起沉淀。",
+      "过程记录。".repeat(260),
+      "完整转写尾部不应进入 curator prompt。"
+    ].join("");
     const llm = new QueueLlmClient([
       {
         name: "LLM 策展知识库",
@@ -108,22 +118,24 @@ describe("knowledgeCuratorAgent", () => {
         related_keywords: ["项目背景", "读者任务"],
         pages: [
           {
-            title: "00 Dashboard",
+            title: "00 首页 / 总览",
             page_type: "home",
             source_signals: ["always"],
-            markdown: "# 00 Dashboard\n\n## Dashboard / Overview\nLLM 自行选择首页结构。"
+            markdown:
+              "# 00 首页 / 总览\n\n## 当前状态\nLLM 自行判断当前状态。\n\n## 下一步\n- 确认 SOP\n\n## 关键结论\n- 需要沉淀项目背景\n\n## 未解决问题\n- 风险待确认"
           },
           {
-            title: "01 Reader Tasks",
-            page_type: "index",
+            title: "01 整体目标",
+            page_type: "goal",
             source_signals: ["actions"],
-            markdown: "# 01 Reader Tasks\n\n## 读者任务\n- 先理解项目背景\n- 再确认 SOP 草案"
+            markdown: "# 01 整体目标\n\n## 目标\n帮助读者理解项目背景。"
           },
           {
-            title: "02 Archive",
+            title: "02 来源与转写引用",
             page_type: "sources",
             source_signals: ["sources"],
-            markdown: "# 02 Archive\n\n## 来源\n- https://example.feishu.cn/minutes/min_001"
+            markdown:
+              "# 02 来源与转写引用\n\n## 来源\n- https://example.feishu.cn/minutes/min_001\n\n## 转写引用\n- https://example.feishu.cn/minutes/transcript_001"
           }
         ]
       }
@@ -132,33 +144,98 @@ describe("knowledgeCuratorAgent", () => {
     const draft = await runKnowledgeCuratorAgent({
       topicName: "项目背景主题知识库",
       owner: null,
-      meetings: [meeting()],
+      meetings: [
+        meeting({
+          summary: longSummary,
+          transcript_text: longTranscript
+        })
+      ],
       actions: [action()],
-      calendars: [],
+      calendars: [calendar()],
       confidenceOrigin: 0.7,
       llm
     });
 
     expect(llm.calls).toHaveLength(1);
     expect(llm.calls[0].schemaName).toBe("KnowledgeBaseDraft");
-    expect(llm.calls[0].systemPrompt).toContain("像一个会使用 Skill 的策展人");
-    expect(llm.calls[0].userPrompt).toContain("本次会议同步项目背景");
+    expect(llm.calls[0].systemPrompt).toContain("像 Claude 自己读完会议");
+    expect(llm.calls[0].systemPrompt).toContain("00 首页 / 总览");
+    expect(llm.calls[0].systemPrompt).toContain("当前状态");
+    expect(llm.calls[0].userPrompt).toContain("会议进一步说明当前状态");
+    expect(llm.calls[0].userPrompt).toContain("transcript_excerpt");
+    expect(llm.calls[0].userPrompt).toContain("摘录开头：张三说明 SOP 草案");
+    expect(llm.calls[0].userPrompt).not.toContain("完整转写尾部不应进入 curator prompt");
+    expect(llm.calls[0].userPrompt).toContain("张三负责整理 SOP 草案");
+    expect(llm.calls[0].userPrompt).toContain("SOP 评审会");
+    expect(llm.calls[0].userPrompt).toContain("source_mapping");
+    expect(llm.calls[0].userPrompt).toContain("prd_page_structure");
     expect(llm.calls[0].userPrompt).toContain("https://example.feishu.cn/minutes/min_001");
-    expect(llm.calls[0].userPrompt).not.toContain("这是一段完整转写");
     expect(draft).toMatchObject({
       name: "LLM 策展知识库",
       status: "active",
       created_from_meetings: ["mtg_1"]
     });
     expect(draft.pages.map((page) => page.title)).toEqual([
-      "00 Dashboard",
-      "01 Reader Tasks",
-      "02 Archive"
+      "00 首页 / 总览",
+      "01 整体目标",
+      "02 来源与转写引用"
     ]);
-    expect(renderKnowledgeBaseMarkdown(draft)).toContain("LLM 自行选择首页结构");
+    expect(renderKnowledgeBaseMarkdown(draft)).toContain("LLM 自行判断当前状态");
   });
 
-  it("keeps a thin deterministic fallback for mock or exhausted LLM paths", async () => {
+  it("repairs an invalid LLM draft once before using the final result", async () => {
+    const llm = new QueueLlmClient([
+      {
+        name: "空页面草案",
+        pages: []
+      },
+      {
+        name: "修复后的知识库",
+        goal: "帮助团队理解单会结论和下一步。",
+        description: "已修复为可写入的知识库草案。",
+        owner: null,
+        confidence_origin: 0.91,
+        related_keywords: ["SOP"],
+        pages: [
+          {
+            title: "00 首页 / 总览",
+            page_type: "home",
+            source_signals: ["always"],
+            markdown:
+              "# 00 首页 / 总览\n\n## 当前状态\n已形成可用首页。\n\n## 下一步\n- 继续确认 SOP\n\n## 关键结论\n- 单会材料可以先沉淀\n\n## 未解决问题\n- 风险待补充"
+          }
+        ]
+      }
+    ]);
+
+    const draft = await runKnowledgeCuratorAgent({
+      topicName: "无人机 SOP 主题知识库",
+      owner: "张三",
+      meetings: [meeting()],
+      actions: [action()],
+      calendars: [calendar()],
+      confidenceOrigin: 0.88,
+      llm
+    });
+
+    expect(llm.calls).toHaveLength(2);
+    expect(llm.calls[1].schemaName).toBe("KnowledgeBaseDraft");
+    expect(llm.calls[1].userPrompt).toContain("schema repair");
+    expect(llm.calls[1].userPrompt).toContain("Knowledge curator LLM returned no pages");
+    expect(draft).toMatchObject({
+      name: "修复后的知识库",
+      status: "active",
+      created_from_meetings: ["mtg_1"]
+    });
+    expect(renderKnowledgeBaseMarkdown(draft)).toContain("单会材料可以先沉淀");
+  });
+
+  it("keeps a polished fallback for mock or exhausted LLM paths", async () => {
+    const longTranscript = [
+      "必要摘录：会议明确需要建立统一 SOP。",
+      "详细逐字稿内容。".repeat(260),
+      "完整转写仍然不应进入知识库正文。"
+    ].join("");
     const draft = await runKnowledgeCuratorAgent({
       topicName: "无人机 SOP 主题知识库",
       owner: "张三",
@@ -166,7 +243,7 @@ describe("knowledgeCuratorAgent", () => {
         meeting({
           title: "无人机 SOP 评审",
           summary: "本次会议明确需要建立统一 SOP，并指出试飞权限未确认会影响排期。",
-          transcript_text: "完整转写仍然不应进入知识库正文。",
+          transcript_text: longTranscript,
           keywords_json: JSON.stringify(["无人机", "SOP"])
         })
       ],
@@ -178,21 +255,33 @@ describe("knowledgeCuratorAgent", () => {
 
     const markdown = renderKnowledgeBaseMarkdown(draft);
 
-    expect(draft.pages.map((page) => page.page_type)).toEqual([
-      "home",
-      "index",
-      "analysis",
-      "sources",
-      "board",
-      "timeline",
-      "calendar"
-    ]);
-    expect(markdown).toContain("deterministic fallback");
-    expect(markdown).toContain("不做代码分类");
+    expect(draft.pages.map((page) => page.page_type)).toEqual(
+      expect.arrayContaining([
+        "home",
+        "goal",
+        "analysis",
+        "progress",
+        "decisions",
+        "board",
+        "meetings",
+        "meeting_summary",
+        "transcript",
+        "resources",
+        "risks",
+        "changelog"
+      ])
+    );
+    expect(markdown).not.toMatch(/fallback|等待 LLM|正式结构由 LLM/u);
+    expect(JSON.stringify(draft)).not.toMatch(/fallback|等待 LLM|正式结构由 LLM/u);
+    expect(markdown).toContain("## 当前状态");
+    expect(markdown).toContain("## 下一步");
+    expect(markdown).toContain("## 关键结论");
+    expect(markdown).toContain("## 未解决问题");
     expect(markdown).toContain("https://example.feishu.cn/minutes/min_001");
     expect(markdown).toContain("https://example.feishu.cn/minutes/transcript_001");
     expect(markdown).toContain("整理 SOP 草案");
     expect(markdown).toContain("SOP 评审会");
+    expect(markdown).toContain("必要摘录：会议明确需要建立统一 SOP");
     expect(markdown).not.toContain("完整转写仍然不应进入知识库正文");
   });
 });

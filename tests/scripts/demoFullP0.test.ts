@@ -9,21 +9,105 @@ import {
 } from "../../scripts/demo-full-p0";
 import { loadConfig } from "../../src/config";
 import { buildServer } from "../../src/server";
-import { MeetingExtractionResult } from "../../src/schemas";
-import { LlmClient } from "../../src/services/llm/llmClient";
+import { MeetingExtractionResult, TopicMatchResult } from "../../src/schemas";
+import { GenerateJsonInput, LlmClient } from "../../src/services/llm/llmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
 
 class QueueLlmClient implements LlmClient {
   constructor(private readonly results: MeetingExtractionResult[]) {}
 
-  async generateJson<T>(): Promise<T> {
+  async generateJson<T>(input: GenerateJsonInput): Promise<T> {
+    if (input.schemaName === "TopicMatchResult") {
+      return topicMatchForPrompt(input) as T;
+    }
+
     const result = this.results.shift();
     if (!result) {
       throw new Error("QueueLlmClient has no remaining results");
     }
     return result as T;
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null && !Array.isArray(item)
+      )
+    : [];
+}
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === "string"))]
+    : [];
+}
+
+function topicContext(input: GenerateJsonInput): Record<string, unknown> {
+  const marker = "topic_clustering_context:";
+  const start = input.userPrompt.lastIndexOf(marker);
+  return start >= 0
+    ? asRecord(JSON.parse(input.userPrompt.slice(start + marker.length).trim()) as unknown)
+    : {};
+}
+
+function topicMatchForPrompt(input: GenerateJsonInput): TopicMatchResult {
+  const context = topicContext(input);
+  const currentMeeting = asRecord(context.current_meeting);
+  const currentMeetingId = stringValue(currentMeeting.id, "mtg_current");
+  const candidateIds = recordArray(context.candidate_meetings)
+    .map((meeting) => stringValue(meeting.id))
+    .filter(Boolean);
+  const matchedKb = recordArray(context.existing_knowledge_bases)[0];
+
+  if (matchedKb) {
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: stringValue(matchedKb.id, "kb_mock"),
+      matched_kb_name: stringValue(matchedKb.name, "已有知识库"),
+      score: 0.92,
+      match_reasons: ["Mock LLM 判断当前会议应追加到已有知识库"],
+      suggested_action: "ask_append",
+      candidate_meeting_ids: [
+        ...stringArray(matchedKb.created_from_meetings),
+        currentMeetingId
+      ]
+    };
+  }
+
+  if (candidateIds.length > 0) {
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: null,
+      matched_kb_name: null,
+      score: 0.95,
+      match_reasons: ["Mock LLM 判断第二场相关会议应创建知识库"],
+      suggested_action: "ask_create",
+      candidate_meeting_ids: [...candidateIds, currentMeetingId]
+    };
+  }
+
+  return {
+    current_meeting_id: currentMeetingId,
+    matched_kb_id: null,
+    matched_kb_name: null,
+    score: 0.62,
+    match_reasons: ["Mock LLM 判断首场会议先观察"],
+    suggested_action: "observe",
+    candidate_meeting_ids: [currentMeetingId]
+  };
 }
 
 async function readExpectedExtraction(name: string): Promise<MeetingExtractionResult> {

@@ -92,7 +92,7 @@ SourceMention 格式：
 8. 每个 calendar draft 必须有 evidence。
 9. start_time 和 end_time 如果不确定，必须为 null。
 10. start_time 为 null 时，missing_fields 必须包含 "start_time"。
-11. 日程 title、agenda 或 evidence 中必须体现会议、访谈、评审、同步或沟通意图。
+11. 日程是否成立由你根据会议语义判断；代码只校验结构，不会再用关键词替你判断。
 12. “周五前完成方案”是任务截止时间，不是日程。
 13. “周五 10 点开评审会”是日程。
 14. “下周二上午 10 点再约用户访谈”是日程。
@@ -107,10 +107,11 @@ SourceMention 格式：
 
 - 只有会议明确形成“谁要做什么”时，才写入 action_items。
 - 一个 action item 至少需要有明确责任人或明确动作主体，并且有可交付物或可完成动作。
-- owner 只能来自会议证据中的明确点名分配、发言人主动承诺，或可追溯到发言人的“我负责/我来做”；接收人、会议组织者、卡片接收者、当前用户都不等于 owner。
+- owner 可以来自会议证据中的明确点名分配、发言人主动承诺、或会议上下文中可追溯的模块/话题负责关系；接收人、会议组织者、卡片接收者、当前用户都不等于 owner。
 - 如果 evidence 中没有直接支撑 owner 的原话，不要为了补全字段推断 owner；owner = null，并在 missing_fields 中加入 "owner"。
 - suggested_reason 只能解释会议证据如何支持该 action，不要写“用户据此认领/承诺完成”“组织者默认负责”“已发送给某人所以负责”等无会议证据的话术。
 - 明确截止时间会增强 action 判断；如果有截止时间，必须写入 due_date。
+- “周五前完成方案”“下周五前交付方案”“月底前补齐清单”这类只有交付物和截止时间的表达，应生成 action item 的 due_date，不要生成 calendar_drafts。
 - 如果只有“需要建立 SOP”“需要关注风险”“可以后续整理”“可以看看”“有机会研究”，但没有 owner、动作主体、交付物或截止时间，不要生成 action item。
 - “建立 SOP”这类团队共识，如果没有 owner 和 due_date，优先作为 key_decisions，不要强行变成 action item。
 - “风险/阻塞/不确定/权限分散/流程不统一/可能影响/担心/缺少……”优先进入 risks，不要为了补 action 而把风险改写成待办。
@@ -121,6 +122,7 @@ SourceMention 格式：
 
 - 如果会议中出现“找时间”“约一下”“沟通”“同步”“对齐”“访谈”“评审”等明确沟通意图，应生成 calendar_drafts。
 - 如果有沟通/同步/对齐/访谈意图，但没有具体日期或时间，start_time = null，end_time = null，并且 missing_fields 必须包含 "start_time"。
+- 如果只有“前、之前、以内、截止、交付、完成、提交、改完”等截止交付语义，且没有多人沟通或占用日历的安排，不要生成 calendar_drafts。
 - “下周找个时间做一次接口对齐沟通”是缺少 start_time 的 calendar draft，不是 action item。
 - “周五前完成方案”“5 月 6 日前改线框图”是任务截止时间，不是日程。
 

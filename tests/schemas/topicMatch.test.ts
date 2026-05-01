@@ -1,7 +1,7 @@
 import { TopicMatchResultSchema } from "../../src/schemas";
 
 describe("TopicMatchResultSchema", () => {
-  it("enforces score thresholds", () => {
+  it("validates structure without enforcing score thresholds", () => {
     expect(
       TopicMatchResultSchema.parse({
         current_meeting_id: "m_001",
@@ -14,7 +14,7 @@ describe("TopicMatchResultSchema", () => {
       }).suggested_action
     ).toBe("no_action");
 
-    expect(() =>
+    expect(
       TopicMatchResultSchema.parse({
         current_meeting_id: "m_001",
         matched_kb_id: null,
@@ -23,8 +23,8 @@ describe("TopicMatchResultSchema", () => {
         match_reasons: ["弱相关"],
         suggested_action: "ask_append",
         candidate_meeting_ids: ["m_001"]
-      })
-    ).toThrow(/observe/);
+      }).suggested_action
+    ).toBe("ask_append");
   });
 
   it("allows ask_create for high-confidence create suggestions", () => {

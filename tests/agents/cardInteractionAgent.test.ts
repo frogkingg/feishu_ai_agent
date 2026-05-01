@@ -7,7 +7,8 @@ import {
   buildGenericConfirmationCard
 } from "../../src/agents/cardInteractionAgent";
 import { DryRunConfirmationCardSchema } from "../../src/schemas";
-import { ConfirmationRequestRow } from "../../src/services/store/repositories";
+import { createMemoryDatabase } from "../../src/services/store/db";
+import { ConfirmationRequestRow, createRepositories } from "../../src/services/store/repositories";
 
 const actionDraft = {
   title: "整理无人机操作流程",
@@ -72,10 +73,13 @@ describe("CardInteractionAgent", () => {
       "recommended_owner",
       "due_date",
       "priority",
-      "evidence"
+      "suggested_reason",
+      "evidence",
+      "confidence"
     ]);
-    expect(JSON.stringify(card)).not.toContain("confidence");
-    expect(JSON.stringify(card)).not.toContain("missing_fields");
+    expect(JSON.stringify(card)).toContain("会议中明确了负责人和截止时间。");
+    expect(JSON.stringify(card)).toContain("张三：我可以整理现有操作流程");
+    expect(JSON.stringify(card)).toContain("0.91");
     expect(JSON.stringify(card)).not.toContain("meeting_id");
     expect(card.actions.map((action) => action.key)).toEqual([
       "confirm",
@@ -118,30 +122,36 @@ describe("CardInteractionAgent", () => {
       sections: card.sections,
       editable_fields: card.editable_fields
     });
-    expect(card.summary).toContain("会议未识别明确负责人");
-    expect(card.summary).toContain("点击后会添加到我的个人待办");
+    expect(card.summary).toContain("负责人待补充");
+    expect(card.summary).toContain("可在卡片中填写负责人后添加");
     expect(
       card.sections[0]?.fields.find((field) => field.key === "recommended_owner")
     ).toMatchObject({
-      label: "添加到",
-      value: "我的个人待办"
+      label: "负责人",
+      value: "待确认"
     });
     expect(visibleText).not.toContain("ou_recipient");
     expect(visibleText).not.toContain("Henry");
     expect(visibleText).not.toContain("补全负责人");
     expect(visibleText).not.toContain("select_person");
-    expect(visibleText).not.toContain("认领");
-    expect(visibleText).not.toContain("承诺");
-    expect(card.actions.map((action) => action.key)).toEqual(["confirm", "remind_later", "reject"]);
-    expect(card.actions.map((action) => action.label)).toEqual([
-      "添加到我的待办",
-      "稍后处理",
-      "不添加"
+    expect(visibleText).not.toContain("我的个人待办");
+    expect(card.editable_fields.find((field) => field.key === "owner")).toMatchObject({
+      label: "负责人",
+      input_type: "text",
+      value: null,
+      required: true
+    });
+    expect(card.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject",
+      "not_mine",
+      "remind_later"
     ]);
-    expect(card.status_text).toBe("会议未识别明确负责人，可添加到我的个人待办");
+    expect(card.status_text).toBe("负责人待补充，请在卡片中填写后添加待办");
   });
 
-  it("keeps edited missing-owner cards in the personal todo flow", () => {
+  it("keeps edited missing-owner cards editable", () => {
     const card = expectValidCard(
       buildActionConfirmationCard({
         id: "conf_personal_todo",
@@ -163,17 +173,25 @@ describe("CardInteractionAgent", () => {
     expect(card).toMatchObject({
       card_type: "action_confirmation",
       title: "确认待办：整理无人机操作流程",
-      status_text: "会议未识别明确负责人，可添加到我的个人待办"
+      status_text: "负责人待补充，请在卡片中填写后添加待办"
     });
-    expect(JSON.stringify(card)).toContain("添加到我的个人待办");
+    expect(JSON.stringify(card)).toContain("待补字段");
+    expect(JSON.stringify(card)).not.toContain("我的个人待办");
     expect(JSON.stringify(card)).not.toContain("补全负责人");
     expect(JSON.stringify(card)).not.toContain("select_person");
     expect(card.editable_fields.find((field) => field.key === "owner")).toMatchObject({
-      label: "添加到",
-      input_type: "readonly",
-      value: null
+      label: "负责人",
+      input_type: "text",
+      value: null,
+      required: true
     });
-    expect(card.actions.map((action) => action.key)).toEqual(["confirm", "remind_later", "reject"]);
+    expect(card.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject",
+      "not_mine",
+      "remind_later"
+    ]);
     expect(JSON.stringify(card)).not.toContain("@确认待办");
     expect(JSON.stringify(card)).not.toContain("Henry");
   });
@@ -205,20 +223,14 @@ describe("CardInteractionAgent", () => {
       "participants",
       "location",
       "agenda",
-      "evidence"
+      "missing_fields",
+      "evidence",
+      "confidence"
     ]);
-    expect(JSON.stringify(card)).not.toContain("confidence");
-    expect(JSON.stringify(card)).not.toContain("missing_fields");
+    expect(JSON.stringify(card)).toContain("confidence");
+    expect(JSON.stringify(card)).toContain("location");
+    expect(JSON.stringify(card)).toContain("下周二上午 10 点我们再约操作员访谈。");
     expect(JSON.stringify(card)).not.toContain("meeting_id");
-    expect(card.editable_fields.map((field) => field.key)).toEqual([
-      "title",
-      "start_time",
-      "end_time",
-      "duration_minutes",
-      "participants",
-      "location",
-      "agenda"
-    ]);
     expect(card.actions.map((action) => action.key)).toEqual([
       "confirm",
       "confirm_with_edits",
@@ -226,6 +238,39 @@ describe("CardInteractionAgent", () => {
       "convert_to_task",
       "remind_later"
     ]);
+    expect(card.actions.find((action) => action.key === "confirm")?.payload_template).toEqual({});
+    expect(
+      card.actions.find((action) => action.key === "confirm_with_edits")?.payload_template
+    ).toEqual({
+      edited_payload: "$editable_fields"
+    });
+  });
+
+  it("cleans filled calendar end time and duration before rendering missing fields", () => {
+    const card = expectValidCard(
+      buildCalendarConfirmationCard({
+        id: "conf_calendar_clean_missing",
+        target_id: "cal_clean_missing",
+        recipient: "张三",
+        status: "sent",
+        original_payload: {
+          draft: {
+            ...calendarDraft,
+            end_time: "2026-05-05T11:00:00+08:00",
+            duration_minutes: 60,
+            missing_fields: ["end_time", "duration_minutes", "location"]
+          }
+        }
+      })
+    );
+
+    const missingField = card.sections
+      .flatMap((section) => section.fields)
+      .find((field) => field.key === "missing_fields");
+    expect(missingField).toMatchObject({
+      value: ["location"],
+      value_text: "location"
+    });
   });
 
   it("builds create_kb confirmation dry-run card JSON", () => {
@@ -516,5 +561,176 @@ describe("CardInteractionAgent", () => {
 
     expect(card.card_type).toBe("action_confirmation");
     expect(card.request_id).toBe("conf_from_row");
+  });
+
+  it("adds execution result links from store rows to stored confirmation cards", () => {
+    const repos = createRepositories(createMemoryDatabase());
+    repos.createMeeting({
+      id: "mtg_result_link",
+      external_meeting_id: null,
+      title: "客户访谈复盘",
+      started_at: "2026-05-01T09:00:00+08:00",
+      ended_at: "2026-05-01T10:00:00+08:00",
+      organizer: "ou_owner",
+      participants_json: JSON.stringify(["ou_owner"]),
+      minutes_url: null,
+      transcript_url: null,
+      transcript_text: "会议确认客户访谈资料需要沉淀并跟进。",
+      summary: "客户访谈资料沉淀。",
+      keywords_json: JSON.stringify(["客户访谈"]),
+      matched_kb_id: null,
+      match_score: null,
+      archive_status: "archived",
+      action_count: 1,
+      calendar_count: 1
+    });
+    repos.createActionItem({
+      id: "act_result_link",
+      meeting_id: "mtg_result_link",
+      kb_id: null,
+      title: actionDraft.title,
+      description: actionDraft.description,
+      owner: actionDraft.owner,
+      collaborators_json: JSON.stringify(actionDraft.collaborators),
+      due_date: actionDraft.due_date,
+      priority: actionDraft.priority,
+      evidence: actionDraft.evidence,
+      confidence: actionDraft.confidence,
+      suggested_reason: actionDraft.suggested_reason,
+      missing_fields_json: JSON.stringify(actionDraft.missing_fields),
+      confirmation_status: "created",
+      feishu_task_guid: "dry_task_act_result_link",
+      task_url: "mock://feishu/task/act_result_link",
+      rejection_reason: null
+    });
+    repos.createCalendarDraft({
+      id: "cal_result_link",
+      meeting_id: "mtg_result_link",
+      kb_id: null,
+      title: calendarDraft.title,
+      start_time: calendarDraft.start_time,
+      end_time: calendarDraft.end_time,
+      duration_minutes: calendarDraft.duration_minutes,
+      participants_json: JSON.stringify(calendarDraft.participants),
+      agenda: calendarDraft.agenda,
+      location: calendarDraft.location,
+      evidence: calendarDraft.evidence,
+      confidence: calendarDraft.confidence,
+      missing_fields_json: JSON.stringify(calendarDraft.missing_fields),
+      confirmation_status: "created",
+      calendar_event_id: "dry_event_cal_result_link",
+      event_url: "mock://feishu/calendar/cal_result_link"
+    });
+    repos.createKnowledgeBase({
+      id: "kb_result_link",
+      name: "客户访谈知识库",
+      goal: "沉淀客户访谈结论。",
+      description: "客户访谈资料沉淀。",
+      owner: "ou_owner",
+      status: "active",
+      confidence_origin: 0.86,
+      wiki_url: "mock://feishu/wiki/kb_result_link",
+      homepage_url: "mock://feishu/wiki/kb_result_link/00-home",
+      related_keywords_json: JSON.stringify(["客户访谈"]),
+      created_from_meetings_json: JSON.stringify(["mtg_result_link"]),
+      auto_append_policy: "ask_every_time"
+    });
+
+    const baseRequest = {
+      recipient: "ou_owner",
+      card_message_id: null,
+      status: "executed" as const,
+      confirmed_at: null,
+      executed_at: "2026-05-01T10:00:00.000Z",
+      error: null,
+      created_at: "2026-05-01T09:00:00.000Z",
+      updated_at: "2026-05-01T10:00:00.000Z"
+    };
+
+    const actionCard = expectValidCard(
+      buildConfirmationCardFromRequest(
+        {
+          ...baseRequest,
+          id: "conf_action_result_link",
+          request_type: "action",
+          target_id: "act_result_link",
+          original_payload_json: JSON.stringify({ draft: actionDraft }),
+          edited_payload_json: null
+        },
+        { repos }
+      )
+    );
+    const calendarCard = expectValidCard(
+      buildConfirmationCardFromRequest(
+        {
+          ...baseRequest,
+          id: "conf_calendar_result_link",
+          request_type: "calendar",
+          target_id: "cal_result_link",
+          original_payload_json: JSON.stringify({ draft: calendarDraft }),
+          edited_payload_json: null
+        },
+        { repos }
+      )
+    );
+    const createKbCard = expectValidCard(
+      buildConfirmationCardFromRequest(
+        {
+          ...baseRequest,
+          id: "conf_kb_result_link",
+          request_type: "create_kb",
+          target_id: "kb_candidate_result_link",
+          original_payload_json: JSON.stringify({
+            topic_name: "客户访谈知识库",
+            suggested_goal: "沉淀客户访谈结论。",
+            candidate_meeting_ids: ["mtg_result_link"],
+            reason: "检测到相关会议，建议创建主题知识库。"
+          }),
+          edited_payload_json: JSON.stringify({
+            result_links: {
+              knowledge_base_id: "kb_result_link"
+            }
+          })
+        },
+        { repos }
+      )
+    );
+
+    const actionFields = actionCard.sections.flatMap((section) => section.fields);
+    const calendarFields = calendarCard.sections.flatMap((section) => section.fields);
+    const createKbFields = createKbCard.sections.flatMap((section) => section.fields);
+
+    expect(actionFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "task_url",
+          label: "飞书任务",
+          value: "mock://feishu/task/act_result_link"
+        })
+      ])
+    );
+    expect(calendarFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "event_url",
+          label: "飞书日程",
+          value: "mock://feishu/calendar/cal_result_link"
+        })
+      ])
+    );
+    expect(createKbFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "wiki_url",
+          label: "知识库",
+          value: "mock://feishu/wiki/kb_result_link"
+        }),
+        expect.objectContaining({
+          key: "homepage_url",
+          label: "首页",
+          value: "mock://feishu/wiki/kb_result_link/00-home"
+        })
+      ])
+    );
   });
 });

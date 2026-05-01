@@ -192,7 +192,8 @@ export async function processMeetingWorkflow(input: {
   const topicMatch = await runTopicClusteringAgent({
     repos: input.repos,
     meeting: refreshedMeeting,
-    extraction
+    extraction,
+    llm: input.llm
   });
   input.repos.updateMeetingTopic({
     id: meeting.id,

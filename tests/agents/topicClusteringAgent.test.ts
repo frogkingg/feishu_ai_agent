@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config";
-import { MeetingExtractionResult } from "../../src/schemas";
+import { runTopicClusteringAgent } from "../../src/agents/topicClusteringAgent";
+import { MeetingExtractionResult, TopicMatchResult } from "../../src/schemas";
 import { confirmRequest } from "../../src/services/confirmationService";
-import { LlmClient } from "../../src/services/llm/llmClient";
+import { GenerateJsonInput, LlmClient } from "../../src/services/llm/llmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
 import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkflow";
@@ -29,15 +30,202 @@ function readEvaluationExtraction(name: string): MeetingExtractionResult {
 }
 
 class QueueLlmClient implements LlmClient {
+  readonly calls: GenerateJsonInput[] = [];
+
   constructor(private readonly results: MeetingExtractionResult[]) {}
 
-  async generateJson<T>(): Promise<T> {
+  async generateJson<T>(input: GenerateJsonInput): Promise<T> {
+    this.calls.push(input);
+    if (input.schemaName === "TopicMatchResult") {
+      return defaultTopicDecision(input) as T;
+    }
+    if (input.schemaName !== "MeetingExtractionResult") {
+      throw new Error(`QueueLlmClient does not support schema: ${input.schemaName}`);
+    }
     const result = this.results.shift();
     if (!result) {
       throw new Error("QueueLlmClient has no remaining results");
     }
     return result as T;
   }
+}
+
+class TopicDecisionLlmClient implements LlmClient {
+  readonly calls: GenerateJsonInput[] = [];
+
+  constructor(private readonly decide: (input: GenerateJsonInput) => TopicMatchResult) {}
+
+  async generateJson<T>(input: GenerateJsonInput): Promise<T> {
+    this.calls.push(input);
+    return this.decide(input) as T;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringValue(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === "string"))]
+    : [];
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null && !Array.isArray(item)
+      )
+    : [];
+}
+
+function extractTopicContext(input: GenerateJsonInput): Record<string, unknown> {
+  const marker = "topic_clustering_context:";
+  const start = input.userPrompt.lastIndexOf(marker);
+  if (start < 0) {
+    return {};
+  }
+  return asRecord(JSON.parse(input.userPrompt.slice(start + marker.length).trim()) as unknown);
+}
+
+function shared(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right);
+  return left.filter((item) => rightSet.has(item));
+}
+
+function hasExplicitKnowledgeBaseRequest(context: Record<string, unknown>): boolean {
+  const current = asRecord(context.current_meeting);
+  const extraction = asRecord(context.extraction);
+  const text = [current.title, current.transcript_excerpt, extraction.meeting_summary].join(" ");
+  return (
+    /(?:整理|创建|新建|建立|搭建|沉淀|归档|做成).{0,20}(?:知识库|调研档案|项目资料)/.test(
+      text
+    ) ||
+    /(?:知识库|调研档案|项目资料).{0,20}(?:整理|创建|新建|建立|搭建|沉淀|归档)/.test(
+      text
+    )
+  );
+}
+
+function hasTopicEvidence(context: Record<string, unknown>): boolean {
+  const extraction = asRecord(context.extraction);
+  return (
+    stringArray(extraction.topic_keywords).length > 0 ||
+    recordArray(extraction.key_decisions).length > 0 ||
+    recordArray(extraction.risks).length > 0 ||
+    recordArray(extraction.action_items).length > 0 ||
+    recordArray(extraction.calendar_drafts).length > 0 ||
+    recordArray(extraction.source_mentions).length > 0
+  );
+}
+
+function defaultTopicDecision(input: GenerateJsonInput): TopicMatchResult {
+  const context = extractTopicContext(input);
+  const current = asRecord(context.current_meeting);
+  const extraction = asRecord(context.extraction);
+  const currentMeetingId = stringValue(current.id, "mtg_current");
+  const currentKeywords = [
+    ...stringArray(current.keywords),
+    ...stringArray(extraction.topic_keywords)
+  ];
+  const currentText = [
+    current.title,
+    current.summary,
+    current.transcript_excerpt,
+    extraction.meeting_summary
+  ].join(" ");
+  const knowledgeBases = recordArray(context.existing_knowledge_bases);
+  const matchedKnowledgeBase = knowledgeBases.find(
+    (knowledgeBase) =>
+      shared(currentKeywords, stringArray(knowledgeBase.related_keywords)).length > 0
+  );
+
+  if (matchedKnowledgeBase) {
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: stringValue(matchedKnowledgeBase.id, "kb_current"),
+      matched_kb_name: stringValue(matchedKnowledgeBase.name, "已有知识库"),
+      score: 0.86,
+      match_reasons: ["Mock LLM 判断当前会议应追加到已有知识库"],
+      suggested_action: "ask_append",
+      candidate_meeting_ids: [
+        ...stringArray(matchedKnowledgeBase.created_from_meetings),
+        currentMeetingId
+      ]
+    };
+  }
+
+  const candidateMeetings = recordArray(context.candidate_meetings);
+  const relatedCandidates = candidateMeetings.filter((candidate) => {
+    const candidateKeywords = stringArray(candidate.keywords);
+    const candidateText = [candidate.title, candidate.summary, candidate.transcript_excerpt].join(
+      " "
+    );
+    return (
+      shared(currentKeywords, candidateKeywords).length > 0 ||
+      candidateKeywords.some((keyword) => currentText.includes(keyword)) ||
+      currentKeywords.some((keyword) => candidateText.includes(keyword))
+    );
+  });
+
+  if (hasExplicitKnowledgeBaseRequest(context)) {
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: null,
+      matched_kb_name: null,
+      score: 0.92,
+      match_reasons: ["当前会议显式提出整理成知识库"],
+      suggested_action: "ask_create",
+      candidate_meeting_ids: [
+        ...relatedCandidates.map((meeting) => stringValue(meeting.id, "")).filter(Boolean),
+        currentMeetingId
+      ]
+    };
+  }
+
+  if (relatedCandidates.length > 0) {
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: null,
+      matched_kb_name: null,
+      score: 0.84,
+      match_reasons: ["发现至少一场强相关历史会议"],
+      suggested_action: "ask_create",
+      candidate_meeting_ids: [
+        ...relatedCandidates.map((meeting) => stringValue(meeting.id, "")).filter(Boolean),
+        currentMeetingId
+      ]
+    };
+  }
+
+  if (hasTopicEvidence(context)) {
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: null,
+      matched_kb_name: null,
+      score: 0.62,
+      match_reasons: ["Mock LLM 判断当前会议有主题信号，先观察"],
+      suggested_action: "observe",
+      candidate_meeting_ids: [currentMeetingId]
+    };
+  }
+
+  return {
+    current_meeting_id: currentMeetingId,
+    matched_kb_id: null,
+    matched_kb_name: null,
+    score: 0.4,
+    match_reasons: ["Mock LLM 判断当前会议不需要知识库处理"],
+    suggested_action: "no_action",
+    candidate_meeting_ids: [currentMeetingId]
+  };
 }
 
 function firstDroneExtraction(): MeetingExtractionResult {
@@ -254,7 +442,132 @@ async function processManualTopicMeeting(input: {
   });
 }
 
+function createStoredMeeting(
+  repos: ReturnType<typeof createRepositories>,
+  overrides: {
+    id: string;
+    title: string;
+    summary?: string | null;
+    keywords?: string[];
+    transcriptText?: string;
+    archiveStatus?: "not_archived" | "suggested" | "archived" | "rejected";
+    matchedKbId?: string | null;
+  }
+) {
+  return repos.createMeeting({
+    id: overrides.id,
+    external_meeting_id: null,
+    title: overrides.title,
+    started_at: "2026-05-06T10:00:00+08:00",
+    ended_at: "2026-05-06T11:00:00+08:00",
+    organizer: "Henry",
+    participants_json: JSON.stringify(["Henry", "刘敏"]),
+    minutes_url: null,
+    transcript_url: null,
+    transcript_text: overrides.transcriptText ?? "会议内容由测试 LLM 判断语义关系。",
+    summary: overrides.summary ?? "会议摘要由测试 LLM 判断语义关系。",
+    keywords_json: JSON.stringify(overrides.keywords ?? []),
+    matched_kb_id: overrides.matchedKbId ?? null,
+    match_score: null,
+    archive_status: overrides.archiveStatus ?? "not_archived",
+    action_count: 0,
+    calendar_count: 0
+  });
+}
+
 describe("TopicClusteringAgent", () => {
+  it("uses LLM ask_create even when title and keyword overlap are weak", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const historical = createStoredMeeting(repos, {
+      id: "mtg_history_weak_signal",
+      title: "周会记录",
+      keywords: ["完全不同"],
+      summary: "这场会讨论了访谈样本、用户路径和材料沉淀，但标题没有暴露主题。"
+    });
+    const current = createStoredMeeting(repos, {
+      id: "mtg_current_weak_signal",
+      title: "例行同步",
+      keywords: ["零散标签"],
+      summary: "这场会继续讨论同一批访谈样本和用户路径整理。"
+    });
+    const llm = new TopicDecisionLlmClient((input) => {
+      const context = extractTopicContext(input);
+      expect(recordArray(context.candidate_meetings).map((meeting) => meeting.id)).toContain(
+        historical.id
+      );
+      return {
+        current_meeting_id: current.id,
+        matched_kb_id: null,
+        matched_kb_name: null,
+        score: 0.88,
+        match_reasons: ["LLM 根据会议摘要判断两场弱标题会议属于同一访谈沉淀主题"],
+        suggested_action: "ask_create",
+        candidate_meeting_ids: [historical.id, current.id]
+      };
+    });
+
+    const result = await runTopicClusteringAgent({
+      repos,
+      meeting: current,
+      extraction: productReviewExtractionWithKeywords(["零散标签"]),
+      llm
+    });
+
+    expect(result.suggested_action).toBe("ask_create");
+    expect(result.candidate_meeting_ids).toEqual([historical.id, current.id]);
+    expect(llm.calls[0].userPrompt).toContain("topic_clustering_context");
+  });
+
+  it("uses LLM ask_append even when the existing KB has no keyword match", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const source = createStoredMeeting(repos, {
+      id: "mtg_existing_source",
+      title: "访谈资料整理",
+      keywords: ["旧标签"],
+      archiveStatus: "archived"
+    });
+    const current = createStoredMeeting(repos, {
+      id: "mtg_append_weak_signal",
+      title: "复盘会",
+      keywords: ["新标签"],
+      summary: "这场会补充了同一知识库的后续事实，但没有复用旧关键词。"
+    });
+    const knowledgeBase = repos.createKnowledgeBase({
+      id: "kb_existing_weak_signal",
+      name: "用户访谈沉淀",
+      goal: "沉淀访谈事实和后续分析。",
+      description: "测试已有知识库。",
+      owner: "Henry",
+      status: "active",
+      confidence_origin: 0.9,
+      wiki_url: "mock://feishu/wiki/kb_existing_weak_signal",
+      homepage_url: "mock://feishu/wiki/kb_existing_weak_signal/00-home",
+      related_keywords_json: JSON.stringify(["旧标签"]),
+      created_from_meetings_json: JSON.stringify([source.id]),
+      auto_append_policy: "ask_every_time"
+    });
+    const llm = new TopicDecisionLlmClient(() => ({
+      current_meeting_id: current.id,
+      matched_kb_id: knowledgeBase.id,
+      matched_kb_name: knowledgeBase.name,
+      score: 0.87,
+      match_reasons: ["LLM 根据摘要判断这场复盘应追加到已有访谈知识库"],
+      suggested_action: "ask_append",
+      candidate_meeting_ids: [source.id, current.id]
+    }));
+
+    const result = await runTopicClusteringAgent({
+      repos,
+      meeting: current,
+      extraction: productReviewExtractionWithKeywords(["新标签"]),
+      llm
+    });
+
+    expect(result.suggested_action).toBe("ask_append");
+    expect(result.matched_kb_id).toBe(knowledgeBase.id);
+    expect(result.candidate_meeting_ids).toEqual([source.id, current.id]);
+  });
+
   it("observes the first drone meeting and creates a KB confirmation after the second related meeting", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const llm = new QueueLlmClient([firstDroneExtraction(), secondDroneExtraction()]);
@@ -538,6 +851,13 @@ describe("TopicClusteringAgent", () => {
     expect(source).not.toContain('currentText.includes("无人机")');
     expect(source).not.toContain("hasCoreDroneTopic");
     expect(source).not.toContain("CoreTopicSignals");
+    expect(source).not.toContain("titleScore");
+    expect(source).not.toContain("keywordScore");
+    expect(source).not.toContain("participantScore");
+    expect(source).not.toContain("sourceScore");
+    expect(source).not.toContain("weighted");
+    expect(source).not.toContain("overlapRatio");
+    expect(source).not.toContain("GenericTopicSignals");
   });
 
   it.each([

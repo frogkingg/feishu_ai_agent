@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config";
-import { MeetingExtractionResult } from "../../src/schemas";
+import { MeetingExtractionResult, TopicMatchResult } from "../../src/schemas";
 import { buildServer } from "../../src/server";
-import { LlmClient } from "../../src/services/llm/llmClient";
+import { GenerateJsonInput, LlmClient } from "../../src/services/llm/llmClient";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
@@ -12,7 +12,11 @@ import { type LarkCliRunner } from "../../src/tools/larkCli";
 class QueueLlmClient implements LlmClient {
   constructor(private readonly results: MeetingExtractionResult[]) {}
 
-  async generateJson<T>(): Promise<T> {
+  async generateJson<T>(input: GenerateJsonInput): Promise<T> {
+    if (input.schemaName === "TopicMatchResult") {
+      return topicMatchForPrompt(input) as T;
+    }
+
     const result = this.results.shift();
     if (!result) {
       throw new Error("QueueLlmClient has no remaining results");
@@ -20,6 +24,103 @@ class QueueLlmClient implements LlmClient {
 
     return result as T;
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null && !Array.isArray(item)
+      )
+    : [];
+}
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === "string"))]
+    : [];
+}
+
+function topicContext(input: GenerateJsonInput): Record<string, unknown> {
+  const marker = "topic_clustering_context:";
+  const start = input.userPrompt.lastIndexOf(marker);
+  return start >= 0
+    ? asRecord(JSON.parse(input.userPrompt.slice(start + marker.length).trim()) as unknown)
+    : {};
+}
+
+function topicMatchForPrompt(input: GenerateJsonInput): TopicMatchResult {
+  const context = topicContext(input);
+  const currentMeeting = asRecord(context.current_meeting);
+  const currentMeetingId = stringValue(currentMeeting.id, "mtg_current");
+  const candidateIds = recordArray(context.candidate_meetings)
+    .map((meeting) => stringValue(meeting.id))
+    .filter(Boolean);
+  const existingKbs = recordArray(context.existing_knowledge_bases);
+  const matchedKb = existingKbs[0];
+  const currentText = [
+    currentMeeting.title,
+    currentMeeting.summary,
+    currentMeeting.transcript_excerpt,
+    asRecord(context.extraction).meeting_summary
+  ].join(" ");
+  const explicitCreate =
+    /(?:整理|创建|新建|建立|搭建|沉淀|归档|做成|生成).{0,30}(?:知识库|onboarding\s*包|新人上手包|上手包)/i.test(
+      currentText
+    ) ||
+    /(?:知识库|onboarding\s*包|新人上手包|上手包).{0,30}(?:整理|创建|新建|建立|搭建|沉淀|归档|生成)/i.test(
+      currentText
+    );
+
+  if (matchedKb) {
+    const matchedKbId = stringValue(matchedKb.id, "kb_mock");
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: matchedKbId,
+      matched_kb_name: stringValue(matchedKb.name, "已有知识库"),
+      score: 0.88,
+      match_reasons: ["Mock LLM 判断当前会议应追加到已有知识库"],
+      suggested_action: "ask_append",
+      candidate_meeting_ids: [
+        ...stringArray(matchedKb.created_from_meetings),
+        currentMeetingId
+      ]
+    };
+  }
+
+  if (candidateIds.length > 0 || explicitCreate) {
+    return {
+      current_meeting_id: currentMeetingId,
+      matched_kb_id: null,
+      matched_kb_name: null,
+      score: explicitCreate ? 0.9 : 0.84,
+      match_reasons: [
+        explicitCreate ? "Mock LLM 判断当前会议显式要求创建知识库" : "Mock LLM 判断历史会议相关"
+      ],
+      suggested_action: "ask_create",
+      candidate_meeting_ids: [...candidateIds, currentMeetingId]
+    };
+  }
+
+  return {
+    current_meeting_id: currentMeetingId,
+    matched_kb_id: null,
+    matched_kb_name: null,
+    score: 0.62,
+    match_reasons: ["Mock LLM 判断首场会议先观察"],
+    suggested_action: "observe",
+    candidate_meeting_ids: [currentMeetingId]
+  };
 }
 
 function readExpectedExtraction(name: string): MeetingExtractionResult {
@@ -217,13 +318,8 @@ describe("confirmation dev APIs", () => {
     expect(state.confirmation_requests.some((request) => request.status === "rejected")).toBe(true);
   });
 
-  it("serves dry-run card preview stub endpoints for non-terminal card actions", async () => {
+  it("serves stateful card action endpoints for non-terminal card actions", async () => {
     const repos = createRepositories(createMemoryDatabase());
-    const firstExtraction = {
-      ...readExpectedExtraction("drone_interview_01.extraction.json"),
-      topic_keywords: ["无人机", "操作流程", "试飞权限", "操作员访谈"]
-    };
-    const secondExtraction = readExpectedExtraction("drone_interview_02.extraction.json");
     const app = buildServer({
       config: loadConfig({
         feishuDryRun: true,
@@ -231,49 +327,109 @@ describe("confirmation dev APIs", () => {
         sqlitePath: ":memory:"
       }),
       repos,
-      llm: new QueueLlmClient([firstExtraction, secondExtraction])
+      llm: new MockLlmClient()
     });
-    const firstTranscript = readFileSync(
-      join(process.cwd(), "fixtures/meetings/drone_interview_01.txt"),
-      "utf8"
-    );
-    const secondTranscript = readFileSync(
-      join(process.cwd(), "fixtures/meetings/drone_interview_02.txt"),
-      "utf8"
-    );
-
-    await app.inject({
-      method: "POST",
-      url: "/dev/meetings/manual",
-      payload: {
-        title: "无人机操作方案真实 LLM 测试",
-        participants: ["张三", "李四"],
-        organizer: "张三",
-        started_at: "2026-04-28T10:00:00+08:00",
-        ended_at: "2026-04-28T11:00:00+08:00",
-        transcript_text: firstTranscript
-      }
+    const meeting = repos.createMeeting({
+      id: "mtg_card_actions",
+      external_meeting_id: null,
+      title: "无人机操作员访谈",
+      started_at: "2026-04-29T10:00:00+08:00",
+      ended_at: "2026-04-29T11:00:00+08:00",
+      organizer: "ou_owner",
+      participants_json: JSON.stringify(["ou_owner", "ou_member"]),
+      minutes_url: "https://example.feishu.cn/minutes/min_card_actions",
+      transcript_url: null,
+      transcript_text: "下周二 10 点再做访谈，后续需要整理结论。",
+      summary: "会议确认后续访谈和资料沉淀。",
+      keywords_json: JSON.stringify(["无人机", "访谈"]),
+      matched_kb_id: null,
+      match_score: null,
+      archive_status: "suggested",
+      action_count: 1,
+      calendar_count: 1
     });
-    await app.inject({
-      method: "POST",
-      url: "/dev/meetings/manual",
-      payload: {
-        title: "无人机操作员访谈",
-        participants: ["张三", "王五"],
-        organizer: "张三",
-        started_at: "2026-04-29T10:00:00+08:00",
-        ended_at: "2026-04-29T11:00:00+08:00",
-        transcript_text: secondTranscript
-      }
+    const actionRow = repos.createActionItem({
+      id: "act_card_actions",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "整理访谈结论",
+      description: null,
+      owner: "ou_owner",
+      collaborators_json: JSON.stringify([]),
+      due_date: "2026-05-06",
+      priority: "P1",
+      evidence: "后续需要整理结论。",
+      confidence: 0.9,
+      suggested_reason: "会议明确提出整理结论。",
+      missing_fields_json: JSON.stringify([]),
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null,
+      rejection_reason: null
     });
-
-    const action = repos.listConfirmationRequests().find((item) => item.request_type === "action");
-    const calendar = repos
-      .listConfirmationRequests()
-      .find((item) => item.request_type === "calendar");
-    const createKb = repos
-      .listConfirmationRequests()
-      .find((item) => item.request_type === "create_kb");
+    const calendarRow = repos.createCalendarDraft({
+      id: "cal_card_actions",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "无人机操作员访谈",
+      start_time: "2026-05-05T10:00:00+08:00",
+      end_time: null,
+      duration_minutes: 60,
+      participants_json: JSON.stringify(["ou_owner", "ou_member"]),
+      agenda: "继续访谈操作流程。",
+      location: null,
+      evidence: "下周二 10 点再做访谈。",
+      confidence: 0.86,
+      missing_fields_json: JSON.stringify([]),
+      confirmation_status: "sent",
+      calendar_event_id: null,
+      event_url: null
+    });
+    const action = repos.createConfirmationRequest({
+      id: "conf_card_action_remind",
+      request_type: "action",
+      target_id: actionRow.id,
+      recipient: "ou_owner",
+      card_message_id: null,
+      status: "sent",
+      original_payload_json: JSON.stringify({ draft: actionRow, meeting_id: meeting.id }),
+      edited_payload_json: null,
+      confirmed_at: null,
+      executed_at: null,
+      error: null
+    });
+    const calendar = repos.createConfirmationRequest({
+      id: "conf_card_action_convert",
+      request_type: "calendar",
+      target_id: calendarRow.id,
+      recipient: "ou_owner",
+      card_message_id: null,
+      status: "sent",
+      original_payload_json: JSON.stringify({ draft: calendarRow, meeting_id: meeting.id }),
+      edited_payload_json: null,
+      confirmed_at: null,
+      executed_at: null,
+      error: null
+    });
+    const createKb = repos.createConfirmationRequest({
+      id: "conf_card_action_append_current",
+      request_type: "create_kb",
+      target_id: "kb_candidate_card_actions",
+      recipient: "ou_owner",
+      card_message_id: null,
+      status: "sent",
+      original_payload_json: JSON.stringify({
+        topic_name: "无人机访谈知识库",
+        suggested_goal: "沉淀无人机访谈资料。",
+        candidate_meeting_ids: [meeting.id],
+        score: 0.88,
+        reason: "检测到相关会议。"
+      }),
+      edited_payload_json: null,
+      confirmed_at: null,
+      executed_at: null,
+      error: null
+    });
 
     const remindLaterResponse = await app.inject({
       method: "POST",
@@ -283,9 +439,27 @@ describe("confirmation dev APIs", () => {
     expect(remindLaterResponse.json()).toMatchObject({
       ok: true,
       dry_run: true,
-      confirmation_id: action!.id,
-      action: "remind_later"
+      action: "remind_later",
+      confirmation: {
+        id: action!.id,
+        status: "snoozed"
+      },
+      snooze: {
+        minutes: 30
+      },
+      dry_run_card: {
+        request_id: action!.id,
+        status_text: "已收到，稍后再提醒",
+        actions: []
+      }
     });
+    expect(JSON.parse(repos.getConfirmationRequest(action!.id)!.edited_payload_json ?? "{}"))
+      .toMatchObject({
+        card_action: "remind_later",
+        snooze: {
+          minutes: 30
+        }
+      });
 
     const convertToTaskResponse = await app.inject({
       method: "POST",
@@ -295,8 +469,31 @@ describe("confirmation dev APIs", () => {
     expect(convertToTaskResponse.json()).toMatchObject({
       ok: true,
       dry_run: true,
-      confirmation_id: calendar!.id,
-      action: "convert_to_task"
+      action: "convert_to_task",
+      source_confirmation: {
+        id: calendar!.id,
+        status: "rejected",
+        error: "converted_to_task"
+      },
+      confirmation: {
+        request_type: "action",
+        status: "sent"
+      },
+      dry_run_card: {
+        card_type: "action_confirmation"
+      }
+    });
+    const convertedActionConfirmationId = (convertToTaskResponse.json() as {
+      confirmation: { id: string };
+    }).confirmation.id;
+    const convertedAction = repos.getActionItem(
+      (convertToTaskResponse.json() as { action_item_id: string }).action_item_id
+    );
+    expect(convertedAction).toMatchObject({
+      meeting_id: repos.getCalendarDraft(calendar!.target_id)?.meeting_id,
+      due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      evidence: expect.any(String),
+      confirmation_status: "sent"
     });
 
     const appendCurrentOnlyResponse = await app.inject({
@@ -307,8 +504,30 @@ describe("confirmation dev APIs", () => {
     expect(appendCurrentOnlyResponse.json()).toMatchObject({
       ok: true,
       dry_run: true,
-      confirmation_id: createKb!.id,
-      action: "append_current_only"
+      action: "append_current_only",
+      source_confirmation: {
+        id: createKb!.id,
+        status: "rejected",
+        error: "append_current_only"
+      },
+      confirmation: {
+        request_type: "append_meeting",
+        status: "sent"
+      },
+      dry_run_card: {
+        card_type: "append_meeting_confirmation"
+      }
+    });
+    const appendConfirmationId = (appendCurrentOnlyResponse.json() as {
+      confirmation: { id: string };
+      knowledge_base_id: string;
+    }).confirmation.id;
+    expect(
+      repos.getKnowledgeBase(
+        (appendCurrentOnlyResponse.json() as { knowledge_base_id: string }).knowledge_base_id
+      )
+    ).toMatchObject({
+      status: "candidate"
     });
 
     for (const endpoint of [
@@ -337,9 +556,8 @@ describe("confirmation dev APIs", () => {
     expect(endpoints.every((endpoint) => supportedEndpointPattern.test(endpoint))).toBe(true);
     expect(endpoints).toEqual(
       expect.arrayContaining([
-        `/dev/confirmations/${action!.id}/remind-later`,
-        `/dev/confirmations/${calendar!.id}/convert-to-task`,
-        `/dev/confirmations/${createKb!.id}/append-current-only`
+        `/dev/confirmations/${convertedActionConfirmationId}/remind-later`,
+        `/dev/confirmations/${appendConfirmationId}/confirm`
       ])
     );
   });

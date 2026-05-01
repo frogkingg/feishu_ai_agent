@@ -11,6 +11,7 @@ export const ConfirmationStatusSchema = z.enum([
   "draft",
   "sent",
   "edited",
+  "snoozed",
   "confirmed",
   "rejected",
   "executed",

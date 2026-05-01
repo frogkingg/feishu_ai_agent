@@ -1,6 +1,6 @@
 # MeetingAtlas P0 Mock Fixture 评测报告
 
-生成时间：2026-04-29T12:43:27.632Z
+生成时间：2026-05-01T18:02:01.622Z
 执行方式：fixture mock extraction + 内存 SQLite；不连接真实飞书，不修改 FEISHU_DRY_RUN。
 
 ## Mock Fixture 流程验证
@@ -161,7 +161,7 @@
 ### no_action_chitchat_01 - PASS
 
 - 会议：午后闲聊
-- 主题路由：no_action；create_kb 期望/实际：false/false
+- 主题路由：observe；create_kb 期望/实际：false/false
 - Action：0/0 expected，预测 0
 - Owner：0/0 expected
 - Due date：0/0 expected

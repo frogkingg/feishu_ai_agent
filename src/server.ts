@@ -4,7 +4,13 @@ import { AppConfig } from "./config";
 import { ManualMeetingInputSchema, ProcessMeetingTextInputSchema } from "./schemas";
 import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
-import { confirmRequest, rejectRequest } from "./services/confirmationService";
+import {
+  appendCurrentOnlyConfirmation,
+  confirmRequest,
+  convertCalendarConfirmationToActionConfirmation,
+  rejectRequest,
+  snoozeConfirmation
+} from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
 import { ConfirmationRequestRow, MeetingRow, Repositories } from "./services/store/repositories";
 import { buildFeishuInteractiveCard, sendCard, syncConfirmationCardStatus } from "./tools/larkIm";
@@ -33,8 +39,8 @@ const SendCardBodySchema = z
 
 const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
 const TranscriptPendingText = "【transcript pending - to be fetched via lark-cli vc +notes】";
-const CardActionPendingMessage = "此操作暂未实现，将在 PR-2 中完成";
 const CardActionAcceptedMessage = "已收到请求，正在添加到飞书…";
+const CardActionSnoozedMessage = "已收到，稍后再提醒";
 const TranscriptFetchTimeoutMs = 3000;
 
 const FeishuRecordingReadyEventSchema = z
@@ -211,7 +217,7 @@ const CONFIRM_CARD_ACTION_KEYS = new Set([
   "complete_owner"
 ]);
 const REJECT_CARD_ACTION_KEYS = new Set(["reject", "not_mine", "never_remind_topic"]);
-const PREVIEW_STUB_CARD_ACTIONS = {
+const STATEFUL_CARD_ACTIONS = {
   remind_later: "remind_later",
   convert_to_task: "convert_to_task",
   append_current_only: "append_current_only"
@@ -503,26 +509,6 @@ function isUnfinishedConfirmation(
   return !["executed", "rejected", "failed"].includes(request.status);
 }
 
-function cardPreviewStubAction(input: {
-  repos: Repositories;
-  id: string;
-  action: "remind_later" | "convert_to_task" | "append_current_only";
-}) {
-  const confirmation = input.repos.getConfirmationRequest(input.id);
-  if (confirmation === null) {
-    return null;
-  }
-
-  return {
-    ok: true,
-    dry_run: true,
-    confirmation_id: input.id,
-    action: input.action,
-    status: "preview_only",
-    message: CardActionPendingMessage
-  };
-}
-
 function alreadyProcessedResponse(input: { confirmation: ConfirmationRequestRow }) {
   return cardCallbackResponse({
     type: "info",
@@ -567,7 +553,7 @@ async function syncCardStatusForRequest(input: {
     repos: input.repos,
     config: input.config,
     confirmation: latest,
-    card: buildConfirmationCardFromRequest(latest),
+    card: buildConfirmationCardFromRequest(latest, { repos: input.repos }),
     updateToken: input.updateToken,
     messageId: input.messageId,
     chatId: input.chatId,
@@ -960,29 +946,23 @@ export function buildServer(input: {
         });
       }
 
-      const previewAction =
-        PREVIEW_STUB_CARD_ACTIONS[parsed.actionKey as keyof typeof PREVIEW_STUB_CARD_ACTIONS];
-      if (previewAction !== undefined) {
-        const result = cardPreviewStubAction({
+      const statefulAction =
+        STATEFUL_CARD_ACTIONS[parsed.actionKey as keyof typeof STATEFUL_CARD_ACTIONS];
+      if (statefulAction === "remind_later") {
+        const result = snoozeConfirmation({
           repos: input.repos,
-          id: requestId,
-          action: previewAction
+          id: requestId
         });
-        if (result === null) {
-          return toast("error", "确认请求不存在");
-        }
-
-        const latest = input.repos.getConfirmationRequest(requestId) ?? confirmation;
-        const pendingCard = {
-          ...buildConfirmationCardFromRequest(latest),
-          status_text: "已收到，稍后处理",
+        const snoozedCard = {
+          ...buildConfirmationCardFromRequest(result.confirmation),
+          status_text: CardActionSnoozedMessage,
           actions: []
         };
         void syncConfirmationCardStatus({
           repos: input.repos,
           config: input.config,
-          confirmation: latest,
-          card: pendingCard,
+          confirmation: result.confirmation,
+          card: snoozedCard,
           updateToken: parsed.updateToken,
           messageId: parsed.messageId,
           chatId: parsed.chatId,
@@ -990,13 +970,69 @@ export function buildServer(input: {
         }).catch((error) => {
           request.log.error(
             { err: error, confirmation_id: requestId, action: parsed.actionKey },
-            "failed to update preview card status"
+            "failed to update snoozed card status"
           );
         });
 
         return {
-          ...toast("info", CardActionPendingMessage),
-          card: buildFeishuInteractiveCard(pendingCard)
+          ...toast("success", CardActionSnoozedMessage),
+          card: buildFeishuInteractiveCard(snoozedCard)
+        };
+      }
+
+      if (statefulAction === "convert_to_task") {
+        const result = convertCalendarConfirmationToActionConfirmation({
+          repos: input.repos,
+          id: requestId
+        });
+        const actionCard = buildConfirmationCardFromRequest(result.confirmation);
+        void syncConfirmationCardStatus({
+          repos: input.repos,
+          config: input.config,
+          confirmation: result.confirmation,
+          card: actionCard,
+          updateToken: parsed.updateToken,
+          messageId: parsed.messageId,
+          chatId: parsed.chatId,
+          runner: input.larkCliRunner
+        }).catch((error) => {
+          request.log.error(
+            { err: error, confirmation_id: requestId, action: parsed.actionKey },
+            "failed to update converted action card"
+          );
+        });
+
+        return {
+          ...toast("success", "已转成待办确认卡"),
+          card: buildFeishuInteractiveCard(actionCard)
+        };
+      }
+
+      if (statefulAction === "append_current_only") {
+        const result = appendCurrentOnlyConfirmation({
+          repos: input.repos,
+          id: requestId
+        });
+        const appendCard = buildConfirmationCardFromRequest(result.confirmation);
+        void syncConfirmationCardStatus({
+          repos: input.repos,
+          config: input.config,
+          confirmation: result.confirmation,
+          card: appendCard,
+          updateToken: parsed.updateToken,
+          messageId: parsed.messageId,
+          chatId: parsed.chatId,
+          runner: input.larkCliRunner
+        }).catch((error) => {
+          request.log.error(
+            { err: error, confirmation_id: requestId, action: parsed.actionKey },
+            "failed to update append-current-only card"
+          );
+        });
+
+        return {
+          ...toast("success", "已转为仅归档当前会议确认"),
+          card: buildFeishuInteractiveCard(appendCard)
         };
       }
 
@@ -1237,47 +1273,81 @@ export function buildServer(input: {
 
   app.post("/dev/confirmations/:id/remind-later", async (request, reply) => {
     const params = request.params as { id: string };
-    const result = cardPreviewStubAction({
-      repos: input.repos,
-      id: params.id,
-      action: "remind_later"
-    });
+    try {
+      const result = snoozeConfirmation({
+        repos: input.repos,
+        id: params.id
+      });
+      return {
+        ok: true,
+        dry_run: true,
+        action: "remind_later",
+        confirmation: result.confirmation,
+        snooze: result.snooze,
+        dry_run_card: {
+          ...buildConfirmationCardFromRequest(result.confirmation),
+          status_text: CardActionSnoozedMessage,
+          actions: []
+        }
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Confirmation request not found")) {
+        return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+      }
 
-    if (result === null) {
-      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+      throw error;
     }
-
-    return result;
   });
 
   app.post("/dev/confirmations/:id/convert-to-task", async (request, reply) => {
     const params = request.params as { id: string };
-    const result = cardPreviewStubAction({
-      repos: input.repos,
-      id: params.id,
-      action: "convert_to_task"
-    });
+    try {
+      const result = convertCalendarConfirmationToActionConfirmation({
+        repos: input.repos,
+        id: params.id
+      });
+      return {
+        ok: true,
+        dry_run: true,
+        action: "convert_to_task",
+        source_confirmation: result.source_confirmation,
+        action_item_id: result.action_item_id,
+        confirmation: result.confirmation,
+        dry_run_card: buildConfirmationCardFromRequest(result.confirmation)
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Confirmation request not found")) {
+        return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+      }
 
-    if (result === null) {
-      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+      throw error;
     }
-
-    return result;
   });
 
   app.post("/dev/confirmations/:id/append-current-only", async (request, reply) => {
     const params = request.params as { id: string };
-    const result = cardPreviewStubAction({
-      repos: input.repos,
-      id: params.id,
-      action: "append_current_only"
-    });
+    try {
+      const result = appendCurrentOnlyConfirmation({
+        repos: input.repos,
+        id: params.id
+      });
+      return {
+        ok: true,
+        dry_run: true,
+        action: "append_current_only",
+        source_confirmation: result.source_confirmation,
+        knowledge_base_id: result.knowledge_base_id,
+        meeting_id: result.meeting_id,
+        confirmation: result.confirmation,
+        dry_run_card: buildConfirmationCardFromRequest(result.confirmation)
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Confirmation request not found")) {
+        return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+      }
 
-    if (result === null) {
-      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+      throw error;
     }
-
-    return result;
   });
 
   app.get("/dev/card-send-runs", async () =>
