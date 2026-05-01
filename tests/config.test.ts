@@ -17,6 +17,7 @@ describe("loadConfig", () => {
   it("parses optional LLM runtime controls", () => {
     const config = loadConfig({
       llmTimeoutMs: 12345,
+      llmMaxInputChars: 54321,
       llmTemperature: 0.3,
       llmMaxTokens: 2048,
       llmDebugRaw: true
@@ -24,6 +25,7 @@ describe("loadConfig", () => {
 
     expect(config).toMatchObject({
       llmTimeoutMs: 12345,
+      llmMaxInputChars: 54321,
       llmTemperature: 0.3,
       llmMaxTokens: 2048,
       llmDebugRaw: true

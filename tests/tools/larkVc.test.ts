@@ -36,17 +36,21 @@ describe("larkVc.fetchTranscript", () => {
       };
     };
 
-    await expect(
-      fetchTranscript({
-        repos,
-        config: loadConfig({
-          feishuDryRun: false,
-          larkCliBin: "fake-lark-cli"
-        }),
-        meetingId: "om_real",
-        runner
-      })
-    ).resolves.toBe("逐字稿内容");
+    const digest = await fetchTranscript({
+      repos,
+      config: loadConfig({
+        feishuDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
+      meetingId: "om_real",
+      title: "真实妙记会议",
+      runner
+    });
+
+    expect(digest).toContain("MeetingAtlas minutes digest input");
+    expect(digest).toContain("title: 真实妙记会议");
+    expect(digest).toContain("逐字稿内容");
+    expect(digest).toContain("full_transcript: omitted_by_design");
 
     expect(calls).toEqual([
       {
@@ -73,17 +77,17 @@ describe("larkVc.fetchTranscript", () => {
       };
     };
 
-    await expect(
-      fetchTranscript({
-        repos,
-        config: loadConfig({
-          feishuDryRun: true,
-          feishuReadDryRun: false
-        }),
-        meetingId: "om_read_canary",
-        runner
-      })
-    ).resolves.toBe("只读 canary 逐字稿");
+    const digest = await fetchTranscript({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuReadDryRun: false
+      }),
+      meetingId: "om_read_canary",
+      runner
+    });
+
+    expect(digest).toContain("只读 canary 逐字稿");
 
     expect(calls).toEqual([
       ["vc", "+notes", "--meeting-ids", "om_read_canary", "--format", "json"]
@@ -93,6 +97,50 @@ describe("larkVc.fetchTranscript", () => {
       dry_run: 0,
       status: "success"
     });
+  });
+
+  it("reads structured notes artifacts instead of returning full transcript text", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const fullTranscript = [
+      "开头证据。".repeat(250),
+      "FULL_TRANSCRIPT_SHOULD_NOT_SURVIVE",
+      "结尾证据。".repeat(600)
+    ].join("\n");
+    const runner: LarkCliRunner = async () => ({
+      stdout: JSON.stringify({
+        data: {
+          notes: [
+            {
+              artifacts: {
+                summary: "妙记 AI 摘要：本次会议确认交付策略。",
+                todos: [{ text: "张三整理交付风险。" }],
+                chapters: [{ title: "交付策略", summary: "讨论范围和节奏。" }],
+                key_points: ["优先处理高风险项"]
+              },
+              url: "https://example.feishu.cn/minutes/min_digest",
+              transcript: fullTranscript
+            }
+          ]
+        }
+      }),
+      stderr: ""
+    });
+
+    const digest = await fetchTranscript({
+      repos,
+      config: loadConfig({ feishuDryRun: false }),
+      meetingId: "om_digest",
+      title: "交付策略会",
+      runner
+    });
+
+    expect(digest).toContain("title: 交付策略会");
+    expect(digest).toContain("妙记 AI 摘要");
+    expect(digest).toContain("张三整理交付风险");
+    expect(digest).toContain("交付策略");
+    expect(digest).toContain("https://example.feishu.cn/minutes/min_digest");
+    expect(digest).not.toContain("FULL_TRANSCRIPT_SHOULD_NOT_SURVIVE");
+    expect(digest.length).toBeLessThanOrEqual(7000);
   });
 
   it("reads notes content from array or root payloads", async () => {
@@ -113,7 +161,7 @@ describe("larkVc.fetchTranscript", () => {
         meetingId: "om_array",
         runner
       })
-    ).resolves.toBe("数组逐字稿");
+    ).resolves.toContain("数组逐字稿");
     await expect(
       fetchTranscript({
         repos,
@@ -121,7 +169,7 @@ describe("larkVc.fetchTranscript", () => {
         meetingId: "om_root",
         runner
       })
-    ).resolves.toBe("根逐字稿");
+    ).resolves.toContain("根逐字稿");
   });
 
   it("falls back to raw stdout text when JSON fields are absent", async () => {
@@ -138,6 +186,6 @@ describe("larkVc.fetchTranscript", () => {
         meetingId: "om_stdout",
         runner
       })
-    ).resolves.toBe("plain transcript from stdout");
+    ).resolves.toContain("plain transcript from stdout");
   });
 });

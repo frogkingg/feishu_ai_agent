@@ -279,7 +279,7 @@ describe("POST /webhooks/feishu/event", () => {
               external_meeting_id: "om_real_transcript",
               title: "真实转写会议",
               organizer: "ou_real",
-              transcript_text: "这是真实拉取到的逐字稿文本。"
+              transcript_text: expect.stringContaining("这是真实拉取到的逐字稿文本。")
             })
           ])
         );

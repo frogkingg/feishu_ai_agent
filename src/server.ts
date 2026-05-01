@@ -719,6 +719,7 @@ export function buildServer(input: {
             repos: input.repos,
             config: input.config,
             meetingId: externalMeetingId,
+            title,
             minuteToken: event.minute_token ?? null,
             runner: input.larkCliRunner
           }).catch((error) => {

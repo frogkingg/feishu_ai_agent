@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readPrompt } from "../../src/utils/prompts";
 
 describe("meetingExtraction prompt", () => {
-  const prompt = readFileSync(join(process.cwd(), "src/prompts/meetingExtraction.md"), "utf8");
+  const prompt = readPrompt("meetingExtraction.md");
 
   it("documents ambiguous interface alignment as a calendar draft instead of an action item", () => {
     expect(prompt).toContain("下周找个时间做一次接口对齐沟通");

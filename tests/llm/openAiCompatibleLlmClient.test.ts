@@ -28,6 +28,7 @@ function createClientWithResponses(contents: string[], baseUrl = "https://llm.ex
       llmApiKey: "test-key",
       llmModel: "test-model",
       llmTimeoutMs: 5000,
+      llmMaxInputChars: 10000,
       llmTemperature: 0.2,
       llmMaxTokens: 1234
     }),
@@ -59,6 +60,7 @@ function createClientWithPayloads(payloads: unknown[], baseUrl = "https://llm.ex
       llmApiKey: "test-key",
       llmModel: "test-model",
       llmTimeoutMs: 5000,
+      llmMaxInputChars: 10000,
       llmTemperature: 0.2,
       llmMaxTokens: 1234
     }),
@@ -185,6 +187,30 @@ describe("OpenAiCompatibleLlmClient", () => {
       "LLM JSON parse failed after repair retry"
     );
     expect(calls).toHaveLength(2);
+  });
+
+  it("fails before the provider call when input exceeds the configured limit", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    const client = new OpenAiCompatibleLlmClient(
+      loadConfig({
+        llmProvider: "openai-compatible",
+        llmBaseUrl: "https://llm.example.com/v1",
+        llmApiKey: "test-key",
+        llmModel: "test-model",
+        llmTimeoutMs: 5000,
+        llmMaxInputChars: 20
+      }),
+      fetchMock
+    );
+
+    await expect(
+      client.generateJson({
+        systemPrompt: "system prompt",
+        userPrompt: "this user prompt is definitely too long",
+        schemaName: "TestSchema"
+      })
+    ).rejects.toThrow("LLM input exceeds LLM_MAX_INPUT_CHARS");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("retries once when the provider returns no message content", async () => {

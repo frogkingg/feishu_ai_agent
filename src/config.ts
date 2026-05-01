@@ -22,6 +22,7 @@ export interface AppConfig {
   llmBaseUrl: string | null;
   llmModel: string | null;
   llmTimeoutMs: number;
+  llmMaxInputChars: number;
   llmTemperature: number;
   llmMaxTokens: number;
   llmDebugRaw: boolean;
@@ -100,7 +101,8 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     llmApiKey: process.env.LLM_API_KEY || null,
     llmBaseUrl: process.env.LLM_BASE_URL || null,
     llmModel: process.env.LLM_MODEL || null,
-    llmTimeoutMs: parseNumber(process.env.LLM_TIMEOUT_MS, 60000),
+    llmTimeoutMs: parseNumber(process.env.LLM_TIMEOUT_MS, 30000),
+    llmMaxInputChars: parseNumber(process.env.LLM_MAX_INPUT_CHARS, 30000),
     llmTemperature: parseNumber(process.env.LLM_TEMPERATURE, 0),
     llmMaxTokens: parseNumber(process.env.LLM_MAX_TOKENS, 4096),
     llmDebugRaw: parseBoolean(process.env.LLM_DEBUG_RAW, false),

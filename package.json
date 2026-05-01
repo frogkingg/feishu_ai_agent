@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "npm run build --silent && node dist/src/index.js",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-prompts.cjs",
     "start": "node dist/src/index.js",
     "demo:full-p0": "tsx scripts/demo-full-p0.ts",
     "evaluate": "tsx scripts/evaluate-fixtures.ts",

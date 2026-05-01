@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { ZodError } from "zod";
 import { MeetingExtractionResult, MeetingExtractionResultSchema } from "../schemas";
 import { LlmClient } from "../services/llm/llmClient";
@@ -11,6 +9,7 @@ import {
   resolveDateExpression,
   resolveDateTimeExpression
 } from "../utils/dates";
+import { readPrompt } from "../utils/prompts";
 
 const CalendarIntentWords = ["会议", "访谈", "评审", "同步", "沟通"];
 const CalendarSignalWords = ["截止", "评审", "分享", "演示", "发布", "复盘", "会面", "里程碑"];
@@ -27,10 +26,6 @@ const UnsupportedOwnershipReasonPatterns = [
   /默认/
 ];
 const UnsupportedCommitmentPhrases = [/用户据此.{0,12}(认领|承诺)/, /据此.{0,12}(认领|承诺)/];
-
-function readPrompt(name: string): string {
-  return readFileSync(join(process.cwd(), "src/prompts", name), "utf8");
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

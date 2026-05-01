@@ -141,6 +141,7 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly timeoutMs: number;
+  private readonly maxInputChars: number;
   private readonly temperature: number;
   private readonly maxTokens: number;
   private readonly debugRaw: boolean;
@@ -161,6 +162,7 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
     this.apiKey = config.llmApiKey;
     this.model = config.llmModel;
     this.timeoutMs = config.llmTimeoutMs;
+    this.maxInputChars = config.llmMaxInputChars;
     this.temperature = config.llmTemperature;
     this.maxTokens = config.llmMaxTokens;
     this.debugRaw = config.llmDebugRaw;
@@ -168,6 +170,7 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
   }
 
   private async completeOnce(messages: ChatMessage[]): Promise<CompletionContent> {
+    this.assertInputWithinLimit(messages);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -208,6 +211,21 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private assertInputWithinLimit(messages: ChatMessage[]): void {
+    if (this.maxInputChars <= 0) {
+      return;
+    }
+
+    const inputChars = messages.reduce((total, message) => total + message.content.length, 0);
+    if (inputChars <= this.maxInputChars) {
+      return;
+    }
+
+    throw new Error(
+      `LLM input exceeds LLM_MAX_INPUT_CHARS (${inputChars} > ${this.maxInputChars}). Use a compact minutes digest instead of full transcript text.`
+    );
   }
 
   private async complete(messages: ChatMessage[]): Promise<string> {
