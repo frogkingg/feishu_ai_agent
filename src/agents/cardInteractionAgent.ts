@@ -224,6 +224,40 @@ function displayField(key: string, label: string, value: unknown): CardDisplayFi
   };
 }
 
+function confidencePercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function actionExplanationFields(rawDraft: Record<string, unknown>): {
+  reason: CardDisplayField | null;
+  confidence: CardDisplayField | null;
+} {
+  const reason = asString(rawDraft.suggested_reason);
+  const confidence = asNumber(rawDraft.confidence);
+  if (reason === null || confidence === null || confidence < 0 || confidence > 1) {
+    return {
+      reason: null,
+      confidence: null
+    };
+  }
+
+  const percent = confidencePercent(confidence);
+  return {
+    reason: {
+      key: "suggested_reason",
+      label: "建议原因",
+      value: reason,
+      value_text: `**为什么 Agent 认为这是我的任务**\n> ${reason}\n\n_可信度 ${percent}_`
+    },
+    confidence: {
+      key: "confidence",
+      label: "置信度",
+      value: confidence,
+      value_text: percent
+    }
+  };
+}
+
 function optionalDisplayField(
   key: string,
   label: string,
@@ -660,7 +694,7 @@ function normalizeCalendarDraft(input: CardInput): CalendarEventDraft {
 
 export function buildActionConfirmationCard(input: CardConfirmationInput): DryRunConfirmationCard {
   const parsed = CardConfirmationInputSchema.parse(input);
-  const { payload } = payloadAndDraft(parsed);
+  const { payload, draft: rawDraft } = payloadAndDraft(parsed);
   const draft = normalizeActionDraft(parsed);
   const meetingReference = meetingReferenceFromPayload(payload);
   const cardType = "action_confirmation" as const;
@@ -716,6 +750,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
       value: draft.collaborators
     })
   ];
+  const explanation = actionExplanationFields(rawDraft);
 
   return buildCard({
     card_type: cardType,
@@ -738,9 +773,9 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
           displayField("recommended_owner", ownerLabel, ownerText),
           displayField("due_date", "截止时间", draft.due_date),
           displayField("priority", "优先级", draft.priority),
-          displayField("suggested_reason", "建议原因", draft.suggested_reason),
+          ...(explanation.reason !== null ? [explanation.reason] : []),
           displayField("evidence", "原文片段", draft.evidence),
-          displayField("confidence", "置信度", draft.confidence)
+          ...(explanation.confidence !== null ? [explanation.confidence] : [])
         ]
       }),
       ...(meetingReference !== null
