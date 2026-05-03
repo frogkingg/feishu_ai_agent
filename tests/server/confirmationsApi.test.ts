@@ -500,10 +500,16 @@ describe("confirmation dev APIs", () => {
     );
     expect(convertedAction).toMatchObject({
       meeting_id: repos.getCalendarDraft(calendar!.target_id)?.meeting_id,
-      due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      title: expect.stringContaining("准备事项"),
+      owner: null,
+      due_date: null,
       evidence: expect.any(String),
+      suggested_reason: expect.stringContaining("Mock LLM"),
       confirmation_status: "sent"
     });
+    expect(JSON.parse(convertedAction!.missing_fields_json)).toEqual(
+      expect.arrayContaining(["owner", "due_date"])
+    );
 
     const appendCurrentOnlyResponse = await app.inject({
       method: "POST",

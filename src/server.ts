@@ -1070,9 +1070,10 @@ export function buildServer(input: {
       }
 
       if (statefulAction === "convert_to_task") {
-        const result = convertCalendarConfirmationToActionConfirmation({
+        const result = await convertCalendarConfirmationToActionConfirmation({
           repos: input.repos,
-          id: requestId
+          id: requestId,
+          llm: input.llm
         });
         const actionCard = buildConfirmationCardFromRequest(result.confirmation);
         void syncConfirmationCardStatus({
@@ -1411,9 +1412,10 @@ export function buildServer(input: {
   app.post("/dev/confirmations/:id/convert-to-task", async (request, reply) => {
     const params = request.params as { id: string };
     try {
-      const result = convertCalendarConfirmationToActionConfirmation({
+      const result = await convertCalendarConfirmationToActionConfirmation({
         repos: input.repos,
-        id: params.id
+        id: params.id,
+        llm: input.llm
       });
       return {
         ok: true,

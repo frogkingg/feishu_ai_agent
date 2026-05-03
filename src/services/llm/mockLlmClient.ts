@@ -98,6 +98,33 @@ function extractPromptObject(userPrompt: string, marker: string): Record<string,
   }
 }
 
+function extractPromptLine(userPrompt: string, label: string): string | null {
+  const line = userPrompt
+    .split("\n")
+    .find((item) => item.startsWith(label));
+  if (!line) {
+    return null;
+  }
+
+  const value = line.slice(label.length).trim();
+  return value.length > 0 && value !== "未知" && value !== "无" ? value : null;
+}
+
+function mockCalendarToActionDraft(input: GenerateJsonInput): unknown {
+  const title = extractPromptLine(input.userPrompt, "日程标题：") ?? "待办任务";
+  const agenda = extractPromptLine(input.userPrompt, "议程：");
+
+  return {
+    title: `${title}准备事项`,
+    description: agenda,
+    owner: null,
+    collaborators: [],
+    due_date: null,
+    priority: null,
+    suggested_reason: `Mock LLM 根据日程「${title}」生成待办草案；未看到明确负责人或可靠截止日期。`
+  };
+}
+
 function extractCuratorDigest(userPrompt: string): Record<string, unknown> {
   return extractPromptObject(userPrompt, "digest:");
 }
@@ -498,6 +525,10 @@ export class MockLlmClient implements LlmClient {
 
     if (input.schemaName === "TopicMatchResult") {
       return mockTopicMatch(input) as T;
+    }
+
+    if (input.schemaName === "CalendarToActionDraft") {
+      return mockCalendarToActionDraft(input) as T;
     }
 
     if (input.schemaName !== "MeetingExtractionResult") {

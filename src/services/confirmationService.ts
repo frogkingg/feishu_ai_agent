@@ -11,6 +11,7 @@ import { appendMeetingToKnowledgeBaseWorkflow } from "../workflows/appendMeeting
 import { ActionItemDraftSchema, CalendarEventDraftSchema } from "../schemas";
 import { LlmClient } from "./llm/llmClient";
 import { type LarkCliRunner } from "../tools/larkCli";
+import { readPrompt } from "../utils/prompts";
 
 function asObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -101,10 +102,6 @@ function numberFromValue(value: unknown): number | null {
 
 function addMinutesIso(minutes: number): string {
   return new Date(Date.now() + minutes * 60 * 1000).toISOString();
-}
-
-function dateOnlyFromIso(value: string | null): string | null {
-  return value?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ?? null;
 }
 
 function missingActionFields(input: { owner: string | null; dueDate: string | null }): string[] {
@@ -448,14 +445,15 @@ export function snoozeConfirmation(input: {
   };
 }
 
-export function convertCalendarConfirmationToActionConfirmation(input: {
+export async function convertCalendarConfirmationToActionConfirmation(input: {
   repos: Repositories;
   id: string;
-}): {
+  llm: LlmClient;
+}): Promise<{
   source_confirmation: ConfirmationRequestRow;
   action_item_id: string;
   confirmation: ConfirmationRequestRow;
-} {
+}> {
   const request = input.repos.getConfirmationRequest(input.id);
   if (!request) {
     throw new Error(`Confirmation request not found: ${input.id}`);
@@ -471,19 +469,44 @@ export function convertCalendarConfirmationToActionConfirmation(input: {
 
   const originalPayload = parseJsonObject(request.original_payload_json);
   const participants = parseStringArrayValue(calendar.participants_json);
-  const owner = participants[0] ?? null;
-  const dueDate = dateOnlyFromIso(calendar.start_time);
+  const calendarPrompt = readPrompt("calendar.md");
+  const today = new Date().toISOString().split("T")[0];
+  const llmOutput = await input.llm.generateJson<{
+    title: string;
+    description: string | null;
+    owner: string | null;
+    collaborators: string[];
+    due_date: string | null;
+    priority: "P0" | "P1" | "P2" | null;
+    suggested_reason: string;
+  }>({
+    schemaName: "CalendarToActionDraft",
+    systemPrompt: calendarPrompt,
+    userPrompt: [
+      `今天日期：${today}`,
+      `日程标题：${calendar.title}`,
+      `日程时间：${calendar.start_time ?? "未知"}`,
+      `参与者：${participants.join("、") || "未知"}`,
+      `议程：${calendar.agenda ?? "无"}`,
+      `来源原文：${calendar.evidence}`,
+      "",
+      "用户已选择把这个日程草案转换为一个待办任务。请按照“第二部分：日程转待办”的规则，生成 ActionItemDraft JSON。"
+    ].join("\n")
+  });
   const draft = ActionItemDraftSchema.parse({
-    title: `跟进：${calendar.title}`,
-    description: calendar.agenda,
-    owner,
-    collaborators: participants.slice(1),
-    due_date: dueDate,
-    priority: null,
+    title: llmOutput.title,
+    description: llmOutput.description,
+    owner: llmOutput.owner,
+    collaborators: llmOutput.collaborators ?? [],
+    due_date: llmOutput.due_date,
+    priority: llmOutput.priority,
     evidence: calendar.evidence,
     confidence: calendar.confidence,
-    suggested_reason: `用户选择将日程草案转为待办。原日程：${calendar.title}`,
-    missing_fields: missingActionFields({ owner, dueDate })
+    suggested_reason: llmOutput.suggested_reason,
+    missing_fields: missingActionFields({
+      owner: llmOutput.owner,
+      dueDate: llmOutput.due_date
+    })
   });
   const action = input.repos.createActionItem({
     id: createId("act"),

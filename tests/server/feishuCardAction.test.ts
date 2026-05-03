@@ -1189,7 +1189,9 @@ describe("POST /webhooks/feishu/card-action", () => {
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(convertResponse.json().card)).toContain("跟进：无人机操作员访谈");
+    const convertCardJson = JSON.stringify(convertResponse.json().card);
+    expect(convertCardJson).toContain("无人机操作员访谈准备事项");
+    expect(convertCardJson).not.toContain("跟进：无人机操作员访谈");
     expect(repos.getConfirmationRequest(calendar.id)).toMatchObject({
       status: "rejected",
       error: "converted_to_task"
@@ -1198,11 +1200,19 @@ describe("POST /webhooks/feishu/card-action", () => {
       .listConfirmationRequests()
       .filter((request) => request.request_type === "action");
     expect(actionConfirmationsAfterConvert).toHaveLength(actionConfirmationsBeforeConvert + 1);
-    const convertedAction = repos.listActionItems().find((item) => item.title.startsWith("跟进："));
+    const convertedAction = repos
+      .listActionItems()
+      .find((item) => item.title === "无人机操作员访谈准备事项");
     expect(convertedAction).toMatchObject({
       meeting_id: repos.getCalendarDraft(calendar.target_id)?.meeting_id,
+      owner: null,
+      due_date: null,
+      suggested_reason: expect.stringContaining("Mock LLM"),
       confirmation_status: "sent"
     });
+    expect(JSON.parse(convertedAction!.missing_fields_json)).toEqual(
+      expect.arrayContaining(["owner", "due_date"])
+    );
 
     const appendResponse = await app.inject({
       method: "POST",
