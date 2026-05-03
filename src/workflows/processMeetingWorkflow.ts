@@ -8,6 +8,7 @@ import { runCalendarAgent } from "../agents/calendarAgent";
 import { buildConfirmationCardFromRequest } from "../agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "../agents/meetingExtractionAgent";
 import { runPersonalActionAgent } from "../agents/personalActionAgent";
+import { runSourceRetrievalAgent } from "../agents/sourceRetrievalAgent";
 import { runTopicClusteringAgent } from "../agents/topicClusteringAgent";
 import { LlmClient } from "../services/llm/llmClient";
 import { createConfirmationRequest } from "../services/confirmationService";
@@ -148,6 +149,7 @@ export async function processMeetingWorkflow(input: {
   repos: Repositories;
   llm: LlmClient;
   meeting: ManualMeetingInput;
+  sourceRetrievalEnabled?: boolean;
 }): Promise<ProcessMeetingResult> {
   const meeting = input.repos.createMeeting({
     id: createId("mtg"),
@@ -301,6 +303,38 @@ export async function processMeetingWorkflow(input: {
     );
   }
 
+  if (input.sourceRetrievalEnabled === true) {
+    const sourceResult = await runSourceRetrievalAgent({
+      repos: input.repos,
+      meeting,
+      extraction,
+      llm: input.llm
+    }).catch(() => ({
+      sources: [],
+      should_prompt_archival: false
+    }));
+
+    if (sourceResult.should_prompt_archival) {
+      for (const source of sourceResult.sources) {
+        confirmations.push(
+          createConfirmationRequest({
+            repos: input.repos,
+            requestType: "archive_source",
+            targetId: createId("source_candidate"),
+            recipient: input.meeting.organizer,
+            originalPayload: {
+              source,
+              meeting_id: meeting.id,
+              ...meetingSourcePayload(meeting),
+              kb_id: source.kb_id ?? topicMatch.matched_kb_id,
+              reason: source.reason
+            }
+          })
+        );
+      }
+    }
+  }
+
   return {
     meeting_id: meeting.id,
     extraction,
@@ -314,6 +348,7 @@ export async function processMeetingTextToConfirmationsWorkflow(input: {
   llm: LlmClient;
   meeting: ManualMeetingInput;
   personalWorkspaceName?: string;
+  sourceRetrievalEnabled?: boolean;
 }): Promise<ProcessMeetingTextResult> {
   const result = await processMeetingWorkflow(input);
   const confirmations = result.confirmation_requests

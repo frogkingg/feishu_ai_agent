@@ -13,6 +13,7 @@ import {
   DryRunConfirmationCard,
   DryRunConfirmationCardSchema
 } from "../schemas";
+import { SourceDraft } from "./sourceRetrievalAgent";
 import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
 import { formatOpenIdsInText } from "../utils/display";
 
@@ -21,6 +22,21 @@ type ResultLinkRepos = Pick<Repositories, "getActionItem" | "getCalendarDraft" |
 
 interface BuildConfirmationCardFromRequestOptions {
   repos?: ResultLinkRepos;
+}
+
+interface SourceArchivalCardInput {
+  source: SourceDraft;
+  meeting: {
+    id: string;
+    title: string;
+    minutes_url?: string | null;
+    transcript_url?: string | null;
+  };
+  requestId?: string;
+  targetId?: string;
+  recipient?: string | null;
+  status?: CardInput["status"];
+  error?: string | null;
 }
 
 function sanitizeText(value: string): string {
@@ -557,6 +573,34 @@ function createKbConfirmationActions(requestId: string): CardAction[] {
   ];
 }
 
+function sourceArchivalActions(requestId: string): CardAction[] {
+  return [
+    {
+      key: "confirm",
+      label: "确认归档",
+      style: "primary",
+      action_type: "http_post",
+      endpoint: `/dev/confirmations/${requestId}/confirm-archive`,
+      payload_template: {
+        action: "confirm_archive",
+        action_key: "confirm_archive"
+      }
+    },
+    {
+      key: "reject",
+      label: "跳过",
+      style: "default",
+      action_type: "http_post",
+      endpoint: `/dev/confirmations/${requestId}/skip-archive`,
+      payload_template: {
+        action: "skip_archive",
+        action_key: "skip_archive",
+        reason: "skip_archive"
+      }
+    }
+  ];
+}
+
 function payloadAndDraft(input: CardInput): {
   payload: Record<string, unknown>;
   draft: Record<string, unknown>;
@@ -1060,6 +1104,97 @@ export function buildAppendMeetingConfirmationCard(
   });
 }
 
+function sourceArchivalCardInput(input: CardConfirmationInput | SourceArchivalCardInput) {
+  if ("source" in input) {
+    return CardConfirmationInputSchema.parse({
+      id: input.requestId ?? "source_archival_preview",
+      request_type: "archive_source",
+      target_id: input.targetId ?? input.source.title,
+      recipient: input.recipient ?? null,
+      status: input.status ?? "sent",
+      original_payload: {
+        source: input.source,
+        meeting_id: input.meeting.id,
+        meeting_title: input.meeting.title,
+        minutes_url: input.meeting.minutes_url ?? null,
+        transcript_url: input.meeting.transcript_url ?? null,
+        reason: input.source.reason
+      },
+      error: input.error ?? null
+    });
+  }
+
+  return CardConfirmationInputSchema.parse(input);
+}
+
+export function buildSourceArchivalCard(
+  input: CardConfirmationInput | SourceArchivalCardInput
+): DryRunConfirmationCard {
+  const parsed = sourceArchivalCardInput(input);
+  const payload = asObject(parsed.original_payload);
+  const source = asObject(payload.source);
+  const cardType = "generic_confirmation" as const;
+  const title = firstString([source.title, payload.title], "外部资料");
+  const sourceType = firstString([source.source_type, payload.source_type], "external");
+  const url = asString(source.url) ?? asString(payload.url) ?? asString(payload.source_url);
+  const reason = firstString([source.reason, payload.reason], "这份资料和当前会议知识库相关。");
+  const confidence = asNumber(source.confidence) ?? asNumber(payload.confidence);
+  const meetingReference = firstString(
+    [
+      payload.meeting_reference,
+      payload.minutes_url,
+      payload.transcript_url,
+      payload.meeting_title,
+      payload.meeting_id
+    ],
+    "当前会议"
+  );
+  const actions = sourceArchivalActions(parsed.id);
+  const summary = [
+    `来源类型：${sourceType}`,
+    url === null ? null : `URL：${url}`,
+    confidence === null ? null : `置信度：${confidencePercent(confidence)}`
+  ]
+    .filter((item): item is string => item !== null)
+    .join("；");
+
+  return buildCard({
+    card_type: cardType,
+    request_id: parsed.id,
+    target_id: publicTargetId(parsed.target_id),
+    recipient: parsed.recipient,
+    status: parsed.status,
+    status_text: statusText({ status: parsed.status, cardType }),
+    ...statusFields(parsed),
+    title: `资料归档建议：${title}`,
+    summary: summary || "请确认是否归档这份外部资料。",
+    sections: [
+      section({
+        title: "建议",
+        fields: [
+          displayField("title", "资料标题", title),
+          displayField("source_type", "来源类型", sourceType),
+          displayField("url", "URL", url),
+          displayField("reason", "归档建议原因", reason),
+          displayField(
+            "confidence",
+            "置信度",
+            confidence === null ? null : confidencePercent(confidence)
+          )
+        ]
+      }),
+      section({
+        title: "来源会议",
+        fields: [displayField("meeting_reference", "会议", meetingReference)]
+      })
+    ],
+    editable_fields: [],
+    actions: actionsForStatus({ status: parsed.status, actions }),
+    dry_run: true,
+    version: "dry_run_v1"
+  });
+}
+
 export function buildGenericConfirmationCard(input: CardConfirmationInput): DryRunConfirmationCard {
   const parsed = CardConfirmationInputSchema.parse(input);
   const requestType = parsed.request_type ?? "confirmation";
@@ -1113,6 +1248,10 @@ export function buildConfirmationCard(input: CardConfirmationInput): DryRunConfi
 
   if (parsed.request_type === "append_meeting") {
     return buildAppendMeetingConfirmationCard(parsed);
+  }
+
+  if (parsed.request_type === "archive_source") {
+    return buildSourceArchivalCard(parsed);
   }
 
   return buildGenericConfirmationCard(parsed);

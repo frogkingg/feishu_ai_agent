@@ -13,6 +13,7 @@ import {
   snoozeConfirmation
 } from "./services/confirmationService";
 import { LlmClient } from "./services/llm/llmClient";
+import { createDatabase } from "./services/store/db";
 import { ConfirmationRequestRow, MeetingRow, Repositories } from "./services/store/repositories";
 import { buildFeishuInteractiveCard, sendCard, syncConfirmationCardStatus } from "./tools/larkIm";
 import { type LarkCliRunner } from "./tools/larkCli";
@@ -236,6 +237,84 @@ function topicKeyFromConfirmation(request: ConfirmationRequestRow): string | nul
   ]);
 }
 
+function createSourceFromArchiveAction(input: {
+  repos: Repositories;
+  config: AppConfig;
+  confirmation: ConfirmationRequestRow;
+  archiveStatus: "confirmed" | "skipped";
+}) {
+  const payload = confirmationPayload(input.confirmation);
+  const source = asRecord(payload.source) ?? {};
+  const title = firstString([source.title, payload.title]) ?? "外部资料";
+  const sourceType = firstString([source.source_type, payload.source_type]) ?? "external";
+  const sourceUrl = firstString([source.url, payload.url, payload.source_url]);
+  const reason = firstString([source.reason, payload.reason]);
+  const evidence = firstString([source.evidence, payload.evidence]);
+  const kbId = firstString([source.kb_id, payload.kb_id]);
+  const meetingId = firstString([payload.meeting_id, source.meeting_id]);
+
+  const sourceId = createId("source");
+  const row = input.repos.createSource({
+    id: sourceId,
+    kb_id: kbId,
+    meeting_id: meetingId,
+    source_type: sourceType,
+    title,
+    url: sourceUrl,
+    source_url: sourceUrl,
+    summary: evidence,
+    why_related: reason,
+    archive_section: input.archiveStatus === "confirmed" ? "resources" : null,
+    archive_status: input.archiveStatus,
+    confirmation_status: input.archiveStatus,
+    permission_status: "visible",
+    added_from:
+      firstString([payload.meeting_reference, payload.meeting_title, meetingId]) ??
+      input.confirmation.target_id
+  } as Parameters<Repositories["createSource"]>[0] & {
+    archive_status: "confirmed" | "skipped";
+    meeting_id: string | null;
+    url: string | null;
+  });
+
+  if (input.config.sqlitePath !== ":memory:") {
+    const db = createDatabase(input.config.sqlitePath) as ReturnType<typeof createDatabase> & {
+      close?: () => void;
+    };
+    try {
+      db.prepare("UPDATE sources SET meeting_id = ?, url = ?, archive_status = ? WHERE id = ?").run(
+        meetingId,
+        sourceUrl,
+        input.archiveStatus,
+        sourceId
+      );
+    } finally {
+      db.close?.();
+    }
+  }
+
+  return row;
+}
+
+function applySourceArchiveAction(input: {
+  repos: Repositories;
+  config: AppConfig;
+  confirmation: ConfirmationRequestRow;
+  archiveStatus: "confirmed" | "skipped";
+}): ConfirmationRequestRow {
+  createSourceFromArchiveAction(input);
+  const now = nowIso();
+  input.repos.updateConfirmationRequest({
+    id: input.confirmation.id,
+    status: input.archiveStatus === "confirmed" ? "executed" : "rejected",
+    confirmed_at: input.archiveStatus === "confirmed" ? now : null,
+    executed_at: input.archiveStatus === "confirmed" ? now : null,
+    error: input.archiveStatus === "confirmed" ? null : "skip_archive"
+  });
+
+  return input.repos.getConfirmationRequest(input.confirmation.id) ?? input.confirmation;
+}
+
 const CONFIRM_CARD_ACTION_KEYS = new Set([
   "confirm",
   "confirm_with_edits",
@@ -244,6 +323,7 @@ const CONFIRM_CARD_ACTION_KEYS = new Set([
   "complete_owner"
 ]);
 const REJECT_CARD_ACTION_KEYS = new Set(["reject", "not_mine", "never_remind_topic"]);
+const SOURCE_ARCHIVE_CARD_ACTION_KEYS = new Set(["confirm_archive", "skip_archive"]);
 const STATEFUL_CARD_ACTIONS = {
   remind_later: "remind_later",
   convert_to_task: "convert_to_task",
@@ -851,6 +931,7 @@ export function buildServer(input: {
         const result = await processMeetingWorkflow({
           repos: input.repos,
           llm: input.llm,
+          sourceRetrievalEnabled: input.config.llmProvider !== "mock",
           meeting: {
             external_meeting_id: externalMeetingId,
             title,
@@ -951,6 +1032,37 @@ export function buildServer(input: {
     }
 
     try {
+      if (SOURCE_ARCHIVE_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        const archiveStatus = parsed.actionKey === "confirm_archive" ? "confirmed" : "skipped";
+        const archived = applySourceArchiveAction({
+          repos: input.repos,
+          config: input.config,
+          confirmation,
+          archiveStatus
+        });
+
+        void syncCardStatusForRequest({
+          repos: input.repos,
+          config: input.config,
+          request: archived,
+          updateToken: parsed.updateToken,
+          messageId: parsed.messageId,
+          chatId: parsed.chatId,
+          runner: input.larkCliRunner
+        }).catch((error) => {
+          request.log.error(
+            { err: error, confirmation_id: requestId, action: parsed.actionKey },
+            "failed to update source archival card status"
+          );
+        });
+
+        return cardCallbackResponse({
+          type: "success",
+          content: archiveStatus === "confirmed" ? "已确认归档" : "已跳过归档",
+          confirmation: archived
+        });
+      }
+
       if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
         input.repos.updateConfirmationRequest({
           id: requestId,
@@ -1238,6 +1350,7 @@ export function buildServer(input: {
     const result = await processMeetingWorkflow({
       repos: input.repos,
       llm: input.llm,
+      sourceRetrievalEnabled: input.config.llmProvider !== "mock",
       meeting
     });
     await sendGeneratedConfirmationCards({
@@ -1258,6 +1371,7 @@ export function buildServer(input: {
       repos: input.repos,
       llm: input.llm,
       meeting: body.meeting,
+      sourceRetrievalEnabled: input.config.llmProvider !== "mock",
       personalWorkspaceName: body.personal_workspace_name
     });
   });
@@ -1509,6 +1623,52 @@ export function buildServer(input: {
 
       throw error;
     }
+  });
+
+  app.post("/dev/confirmations/:id/confirm-archive", async (request, reply) => {
+    const params = request.params as { id: string };
+    const confirmation = input.repos.getConfirmationRequest(params.id);
+    if (confirmation === null) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    const archived = applySourceArchiveAction({
+      repos: input.repos,
+      config: input.config,
+      confirmation,
+      archiveStatus: "confirmed"
+    });
+
+    return {
+      ok: true,
+      dry_run: true,
+      action: "confirm_archive",
+      confirmation: archived,
+      dry_run_card: buildConfirmationCardFromRequest(archived)
+    };
+  });
+
+  app.post("/dev/confirmations/:id/skip-archive", async (request, reply) => {
+    const params = request.params as { id: string };
+    const confirmation = input.repos.getConfirmationRequest(params.id);
+    if (confirmation === null) {
+      return reply.code(404).send({ error: `Confirmation request not found: ${params.id}` });
+    }
+
+    const archived = applySourceArchiveAction({
+      repos: input.repos,
+      config: input.config,
+      confirmation,
+      archiveStatus: "skipped"
+    });
+
+    return {
+      ok: true,
+      dry_run: true,
+      action: "skip_archive",
+      confirmation: archived,
+      dry_run_card: buildConfirmationCardFromRequest(archived)
+    };
   });
 
   app.get("/dev/card-send-runs", async () =>
