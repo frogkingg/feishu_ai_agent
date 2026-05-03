@@ -186,6 +186,55 @@ function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, un
   };
 }
 
+function allowsLocalSecurityBypass(config: Pick<AppConfig, "nodeEnv">): boolean {
+  return config.nodeEnv === "development" || config.nodeEnv === "test";
+}
+
+function getSecurityMode(config: AppConfig): "dry-run" | "card-real" | "fully-real" {
+  if (
+    !config.feishuDryRun &&
+    !config.feishuCardSendDryRun &&
+    !config.feishuTaskCreateDryRun &&
+    !config.feishuCalendarCreateDryRun &&
+    !config.feishuKnowledgeWriteDryRun
+  ) {
+    return "fully-real";
+  }
+
+  return config.feishuCardSendDryRun ? "dry-run" : "card-real";
+}
+
+function logSecurityMode(app: FastifyInstance, config: AppConfig) {
+  const missingConfig = [
+    config.devApiKey ? null : "DEV_API_KEY",
+    config.larkVerificationToken ? null : "LARK_VERIFICATION_TOKEN"
+  ].filter((name): name is string => name !== null);
+
+  app.log.info(
+    {
+      node_env: config.nodeEnv,
+      security_mode: getSecurityMode(config),
+      dry_run: config.feishuDryRun,
+      card_send_dry_run: config.feishuCardSendDryRun,
+      task_create_dry_run: config.feishuTaskCreateDryRun,
+      calendar_create_dry_run: config.feishuCalendarCreateDryRun,
+      knowledge_write_dry_run: config.feishuKnowledgeWriteDryRun
+    },
+    "meetingatlas security mode"
+  );
+
+  if (missingConfig.length > 0) {
+    app.log.warn(
+      {
+        node_env: config.nodeEnv,
+        missing_config: missingConfig,
+        local_bypass_enabled: allowsLocalSecurityBypass(config)
+      },
+      "meetingatlas security configuration missing"
+    );
+  }
+}
+
 function getFeishuEventType(payload: FeishuEventWebhookPayload): string | null {
   if (typeof payload.event_type === "string") {
     return payload.event_type;
@@ -828,6 +877,7 @@ export function buildServer(input: {
     logger: true
   });
   configureJsonBodyParser(app);
+  logSecurityMode(app, input.config);
 
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/dev")) {
@@ -836,7 +886,15 @@ export function buildServer(input: {
 
     const devApiKey = input.config.devApiKey;
     if (!devApiKey) {
-      return;
+      if (allowsLocalSecurityBypass(input.config)) {
+        request.log.warn(
+          { path: request.url },
+          "DEV_API_KEY not configured; allowing /dev request in local environment"
+        );
+        return;
+      }
+
+      return reply.code(503).send({ error: "DEV_API_KEY not configured" });
     }
 
     if (request.headers["x-dev-api-key"] !== devApiKey) {
@@ -877,6 +935,16 @@ export function buildServer(input: {
   });
 
   app.post("/webhooks/feishu/event", async (request, reply) => {
+    if (!input.config.larkVerificationToken) {
+      if (allowsLocalSecurityBypass(input.config)) {
+        request.log.warn(
+          "LARK_VERIFICATION_TOKEN not configured; allowing event webhook request in local environment"
+        );
+      } else {
+        return reply.code(503).send({ error: "LARK_VERIFICATION_TOKEN not configured" });
+      }
+    }
+
     const rawBody = getRawBody(request);
     const payload = (request.body ?? {}) as FeishuEventWebhookPayload;
     if (typeof payload.challenge === "string") {
@@ -979,6 +1047,16 @@ export function buildServer(input: {
   });
 
   app.post("/webhooks/feishu/card-action", async (request, reply) => {
+    if (!input.config.larkVerificationToken) {
+      if (allowsLocalSecurityBypass(input.config)) {
+        request.log.warn(
+          "LARK_VERIFICATION_TOKEN not configured; allowing card-action request in local environment"
+        );
+      } else {
+        return reply.code(503).send({ error: "LARK_VERIFICATION_TOKEN not configured" });
+      }
+    }
+
     const rawBody = getRawBody(request);
     const bodyRecord = asRecord(request.body ?? {});
     if (bodyRecord !== null && typeof bodyRecord.challenge === "string") {

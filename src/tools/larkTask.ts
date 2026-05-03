@@ -7,6 +7,7 @@ export interface CreateTaskResult {
   task_url: string;
   dry_run: boolean;
   cli_run_id: string;
+  owner_resolved: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -27,19 +28,28 @@ export async function createTask(input: {
   draft: ActionItemRow;
   runner?: LarkCliRunner;
 }): Promise<CreateTaskResult> {
+  const owner = input.draft.owner;
+  const ownerResolved = owner !== null && owner.startsWith("ou_");
+  const pendingOwner = !ownerResolved && owner?.trim() ? owner.trim() : null;
+  const description = [
+    input.draft.description ?? "",
+    pendingOwner === null ? "" : `负责人（待认领）：${pendingOwner}`
+  ]
+    .filter((part) => part.length > 0)
+    .join("\n");
   const args = [
     "task",
     "+create",
     "--summary",
     input.draft.title,
     "--description",
-    input.draft.description ?? ""
+    description
   ];
   if (input.draft.due_date) {
     args.push("--due", input.draft.due_date);
   }
-  if (input.draft.owner?.startsWith("ou_")) {
-    args.push("--assignee", input.draft.owner);
+  if (owner !== null && owner.startsWith("ou_")) {
+    args.push("--assignee", owner);
   }
   args.push("--as", "user");
 
@@ -57,7 +67,8 @@ export async function createTask(input: {
       feishu_task_guid: `dry_task_${input.draft.id}`,
       task_url: `mock://feishu/task/${input.draft.id}`,
       dry_run: true,
-      cli_run_id: result.id
+      cli_run_id: result.id,
+      owner_resolved: ownerResolved
     };
   }
 
@@ -81,6 +92,7 @@ export async function createTask(input: {
     feishu_task_guid: guid,
     task_url: applink,
     dry_run: false,
-    cli_run_id: result.id
+    cli_run_id: result.id,
+    owner_resolved: ownerResolved
   };
 }
