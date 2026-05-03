@@ -85,18 +85,22 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
 
 CREATE TABLE IF NOT EXISTS sources (
   id TEXT PRIMARY KEY,
+  meeting_id TEXT,
   kb_id TEXT,
   source_type TEXT NOT NULL,
   title TEXT NOT NULL,
+  url TEXT,
   source_url TEXT,
   summary TEXT,
   why_related TEXT,
   archive_section TEXT,
+  archive_status TEXT NOT NULL DEFAULT 'candidate',
   confirmation_status TEXT NOT NULL DEFAULT 'candidate',
   permission_status TEXT NOT NULL DEFAULT 'visible',
   added_from TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  FOREIGN KEY (meeting_id) REFERENCES meetings(id),
   FOREIGN KEY (kb_id) REFERENCES knowledge_bases(id)
 );
 
