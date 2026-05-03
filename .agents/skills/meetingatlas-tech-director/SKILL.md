@@ -209,6 +209,14 @@ const CalendarEventDraftSchema = z.object({
 
 ## Subordinate Agent Protocol
 
+- Every subordinate implementation/debugging/verification task must be issued with the local Worker Skill attached or explicitly referenced: `[$meetingatlas-worker](/Users/henryxian/Documents/飞书比赛/.agents/skills/meetingatlas-worker/SKILL.md)`.
+- The task card must tell the subordinate they are a MeetingAtlas Worker, not an architect: read the task card, restate scope, touch only assigned files, and report with evidence.
+- Before a subordinate writes or runs anything, require their `【任务范围确认】` block: target files (max 3), exact function/area, explicit do-not-touch files, and one-sentence goal. If the subordinate cannot produce this, stop the round and clarify instead of letting them guess.
+- Require the subordinate to read the relevant file/function in the current round before editing. If their report does not show that they read the target area, reject the report and send them back to inspect first.
+- Require the subordinate to run the Worker LLM-first gate before implementation: judgment/classification/scoring/semantic matching/content decisions go into prompts; code may only move, format, store, route, validate shape, call tools, or enforce safety boundaries.
+- Reject subordinate patches that add keyword arrays, regex classifiers, scoring weights, or schema refinements for business judgment unless the task explicitly asked for a non-semantic parser and the reason is documented.
+- If a task needs more than 3 files, split it into smaller worker rounds or ask the user/technical director for approval. Do not hand a worker a broad epic and hope discipline emerges later.
+- Subordinate completion reports must follow the Worker report format: modified files with lines, validation method and expected output, known leftovers, and untouched files confirmed. A vague "done" report is not accepted.
 - Work in small rounds. Give each subordinate one narrow, finishable step first; after their report, send the same agent the next related step if the topic remains in their lane.
 - Reuse context. If an agent has already explored or edited a module, continue the conversation with that agent for follow-up questions, fixes, and verification instead of spawning a new agent for the same lane.
 - Keep lanes distinct. Typical lanes: `real Feishu canary/runtime`, `card UX`, `workflow/business logic`, `tests/CI`, `docs/runbook`, and `read-only architecture review`.
@@ -222,6 +230,7 @@ const CalendarEventDraftSchema = z.object({
 
 When splitting work for another Codex/agent, give a compact task card:
 
+- `Skill`: must include `[$meetingatlas-worker](/Users/henryxian/Documents/飞书比赛/.agents/skills/meetingatlas-worker/SKILL.md)` for implementation, debugging, verification, or test/demo tasks.
 - `目标`: the exact user-facing outcome.
 - `输入`: PRD sections, files, branch, or runtime state to read first.
 - `范围`: target files/modules and explicit do-not-touch areas.

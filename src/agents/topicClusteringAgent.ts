@@ -226,22 +226,18 @@ function normalizeTopicMatch(
 }
 
 function fallbackTopicMatch(
-  context: TopicClusteringContext,
   currentMeetingId: string,
   error: unknown
 ): TopicMatchResult {
-  const hasHistoricalContext =
-    context.candidate_meetings.length > 0 || context.existing_knowledge_bases.length > 0;
-  const action = hasHistoricalContext ? "observe" : "no_action";
   const message = error instanceof Error ? error.message : String(error);
 
   return TopicMatchResultSchema.parse({
     current_meeting_id: currentMeetingId,
     matched_kb_id: null,
     matched_kb_name: null,
-    score: hasHistoricalContext ? 0.6 : 0.4,
-    match_reasons: [`LLM unavailable: topic clustering skipped (${message})`],
-    suggested_action: action,
+    score: 0,
+    match_reasons: [`LLM unavailable: no topic judgment was made (${message})`],
+    suggested_action: "no_action",
     candidate_meeting_ids: [currentMeetingId]
   });
 }
@@ -254,7 +250,7 @@ export async function runTopicClusteringAgent(input: {
 }): Promise<TopicMatchResult> {
   const context = buildTopicClusteringContext(input);
   if (!input.llm) {
-    return fallbackTopicMatch(context, input.meeting.id, new Error("no LLM client provided"));
+    return fallbackTopicMatch(input.meeting.id, new Error("no LLM client provided"));
   }
 
   try {
@@ -266,6 +262,6 @@ export async function runTopicClusteringAgent(input: {
 
     return normalizeTopicMatch(raw, context, input.meeting.id);
   } catch (error) {
-    return fallbackTopicMatch(context, input.meeting.id, error);
+    return fallbackTopicMatch(input.meeting.id, error);
   }
 }
