@@ -40,7 +40,8 @@ const SendCardBodySchema = z
 const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
 const TranscriptPendingText = "【transcript pending - to be fetched via lark-cli vc +notes】";
 const CardActionAcceptedMessage = "已收到请求，正在添加到飞书…";
-const CardActionSnoozedMessage = "已收到，稍后再提醒";
+const CardActionSnoozedMessage = "好的，30 分钟后再提醒你";
+const RemindLaterDelayMinutes = 30;
 const TranscriptFetchTimeoutMs = 3000;
 
 const FeishuRecordingReadyEventSchema = z
@@ -649,6 +650,68 @@ async function sendGeneratedConfirmationCards(input: {
   return results;
 }
 
+function scheduleSnoozedReminder(input: {
+  repos: Repositories;
+  config: AppConfig;
+  confirmationId: string;
+  snoozeUntil: string;
+  chatId?: string | null;
+  runner?: LarkCliRunner;
+  log?: FastifyRequest["log"];
+}) {
+  const delayMs = Math.max(0, new Date(input.snoozeUntil).getTime() - Date.now());
+  const timer = setTimeout(() => {
+    void (async () => {
+      const latest = input.repos.getConfirmationRequest(input.confirmationId);
+      if (
+        latest === null ||
+        latest.status !== "snoozed" ||
+        latest.snooze_until !== input.snoozeUntil
+      ) {
+        return;
+      }
+
+      input.repos.updateConfirmationRequest({
+        id: latest.id,
+        status: "sent",
+        error: null
+      });
+      const reminder = input.repos.getConfirmationRequest(latest.id) ?? {
+        ...latest,
+        status: "sent" as const
+      };
+      const destination = automaticCardDestination({
+        confirmation: reminder,
+        sendToChatId: input.chatId
+      });
+      const result = await sendCard({
+        repos: input.repos,
+        config: input.config,
+        confirmation: reminder,
+        card: buildConfirmationCardFromRequest(reminder),
+        recipient: destination.recipient,
+        chatId: destination.chatId,
+        runner: input.runner
+      });
+      if (!result.ok) {
+        input.log?.warn(
+          {
+            confirmation_id: reminder.id,
+            error: result.error
+          },
+          "failed to resend snoozed confirmation card"
+        );
+      }
+    })().catch((error) => {
+      input.log?.error(
+        { err: error, confirmation_id: input.confirmationId },
+        "snoozed reminder timer failed"
+      );
+    });
+  }, delayMs);
+  timer.unref();
+}
+
 export function buildServer(input: {
   config: AppConfig;
   repos: Repositories;
@@ -957,17 +1020,37 @@ export function buildServer(input: {
       if (statefulAction === "remind_later") {
         const result = snoozeConfirmation({
           repos: input.repos,
-          id: requestId
+          id: requestId,
+          minutes: RemindLaterDelayMinutes
         });
+        input.repos.updateConfirmationRequest({
+          id: requestId,
+          status: "snoozed",
+          error: null,
+          snooze_until: result.snooze.snooze_until
+        });
+        const snoozedConfirmation = input.repos.getConfirmationRequest(requestId) ?? {
+          ...result.confirmation,
+          snooze_until: result.snooze.snooze_until
+        };
         const snoozedCard = {
-          ...buildConfirmationCardFromRequest(result.confirmation),
+          ...buildConfirmationCardFromRequest(snoozedConfirmation),
           status_text: CardActionSnoozedMessage,
           actions: []
         };
+        scheduleSnoozedReminder({
+          repos: input.repos,
+          config: input.config,
+          confirmationId: requestId,
+          snoozeUntil: result.snooze.snooze_until,
+          chatId: parsed.chatId,
+          runner: input.larkCliRunner,
+          log: request.log
+        });
         void syncConfirmationCardStatus({
           repos: input.repos,
           config: input.config,
-          confirmation: result.confirmation,
+          confirmation: snoozedConfirmation,
           card: snoozedCard,
           updateToken: parsed.updateToken,
           messageId: parsed.messageId,
@@ -1282,16 +1365,36 @@ export function buildServer(input: {
     try {
       const result = snoozeConfirmation({
         repos: input.repos,
-        id: params.id
+        id: params.id,
+        minutes: RemindLaterDelayMinutes
+      });
+      input.repos.updateConfirmationRequest({
+        id: params.id,
+        status: "snoozed",
+        error: null,
+        snooze_until: result.snooze.snooze_until
+      });
+      const snoozedConfirmation = input.repos.getConfirmationRequest(params.id) ?? {
+        ...result.confirmation,
+        snooze_until: result.snooze.snooze_until
+      };
+      scheduleSnoozedReminder({
+        repos: input.repos,
+        config: input.config,
+        confirmationId: params.id,
+        snoozeUntil: result.snooze.snooze_until,
+        runner: input.larkCliRunner,
+        log: request.log
       });
       return {
         ok: true,
         dry_run: true,
         action: "remind_later",
-        confirmation: result.confirmation,
+        message: CardActionSnoozedMessage,
+        confirmation: snoozedConfirmation,
         snooze: result.snooze,
         dry_run_card: {
-          ...buildConfirmationCardFromRequest(result.confirmation),
+          ...buildConfirmationCardFromRequest(snoozedConfirmation),
           status_text: CardActionSnoozedMessage,
           actions: []
         }

@@ -114,6 +114,7 @@ export interface ConfirmationRequestRow {
     | "rejected"
     | "executed"
     | "failed";
+  snooze_until?: string | null;
   original_payload_json: string;
   edited_payload_json: string | null;
   confirmed_at: string | null;
@@ -548,13 +549,19 @@ export function createRepositories(db: MeetingAtlasDb) {
       return row;
     },
 
-    createConfirmationRequest(input: NewRow<ConfirmationRequestRow>): ConfirmationRequestRow {
-      const row = withTimestamps(input);
+    createConfirmationRequest(
+      input: Omit<NewRow<ConfirmationRequestRow>, "snooze_until"> &
+        Partial<Pick<ConfirmationRequestRow, "snooze_until">>
+    ): ConfirmationRequestRow {
+      const row = {
+        ...withTimestamps(input),
+        snooze_until: input.snooze_until ?? null
+      };
       db.prepare(
         `INSERT INTO confirmation_requests (
           id, request_type, target_id, recipient, card_message_id, status, original_payload_json,
-          edited_payload_json, confirmed_at, executed_at, error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          edited_payload_json, confirmed_at, executed_at, error, snooze_until, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         row.id,
         row.request_type,
@@ -567,6 +574,7 @@ export function createRepositories(db: MeetingAtlasDb) {
         row.confirmed_at,
         row.executed_at,
         row.error,
+        row.snooze_until,
         row.created_at,
         row.updated_at
       );
@@ -586,6 +594,7 @@ export function createRepositories(db: MeetingAtlasDb) {
       confirmed_at?: string | null;
       executed_at?: string | null;
       error?: string | null;
+      snooze_until?: string | null;
     }): void {
       db.prepare(
         `UPDATE confirmation_requests
@@ -594,6 +603,7 @@ export function createRepositories(db: MeetingAtlasDb) {
             confirmed_at = COALESCE(?, confirmed_at),
             executed_at = COALESCE(?, executed_at),
             error = ?,
+            snooze_until = COALESCE(?, snooze_until),
             updated_at = ?
         WHERE id = ?`
       ).run(
@@ -602,6 +612,7 @@ export function createRepositories(db: MeetingAtlasDb) {
         input.confirmed_at ?? null,
         input.executed_at ?? null,
         input.error ?? null,
+        input.snooze_until ?? null,
         nowIso(),
         input.id
       );

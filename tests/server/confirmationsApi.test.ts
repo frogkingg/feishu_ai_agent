@@ -455,7 +455,7 @@ describe("confirmation dev APIs", () => {
       },
       dry_run_card: {
         request_id: action!.id,
-        status_text: "已收到，稍后再提醒",
+        status_text: "好的，30 分钟后再提醒你",
         actions: []
       }
     });
@@ -466,6 +466,9 @@ describe("confirmation dev APIs", () => {
           minutes: 30
         }
       });
+    expect(repos.getConfirmationRequest(action!.id)?.snooze_until).toEqual(
+      remindLaterResponse.json().snooze.snooze_until
+    );
 
     const convertToTaskResponse = await app.inject({
       method: "POST",

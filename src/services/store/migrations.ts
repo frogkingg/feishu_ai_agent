@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS confirmation_requests (
   recipient TEXT,
   card_message_id TEXT,
   status TEXT NOT NULL,
+  snooze_until TEXT,
   original_payload_json TEXT NOT NULL,
   edited_payload_json TEXT,
   confirmed_at TEXT,

@@ -1149,13 +1149,14 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(remindResponse.json()).toMatchObject({
       toast: {
         type: "success",
-        content: "已收到，稍后再提醒"
+        content: "好的，30 分钟后再提醒你"
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(remindResponse.json().card)).toContain("已收到，稍后再提醒");
+    expect(JSON.stringify(remindResponse.json().card)).toContain("好的，30 分钟后再提醒你");
     expect(repos.getConfirmationRequest(action.id)).toMatchObject({
-      status: "snoozed"
+      status: "snoozed",
+      snooze_until: expect.any(String)
     });
     expect(JSON.parse(repos.getConfirmationRequest(action.id)?.edited_payload_json ?? "{}"))
       .toMatchObject({
