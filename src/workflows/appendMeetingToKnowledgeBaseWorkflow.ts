@@ -1,6 +1,9 @@
 import { z } from "zod";
+import { runKnowledgeCuratorAppendAgent } from "../agents/knowledgeCuratorAgent";
 import { AppConfig } from "../config";
 import { KnowledgeUpdateSchema } from "../schemas";
+import { createLlmClient } from "../services/llm/createLlmClient";
+import { LlmClient } from "../services/llm/llmClient";
 import {
   ActionItemRow,
   CalendarDraftRow,
@@ -17,6 +20,7 @@ import {
   formatUserListForDisplay
 } from "../utils/display";
 import { createId } from "../utils/id";
+import { logger } from "../utils/logger";
 import { createDoc } from "../tools/larkDoc";
 import { type LarkCliRunner } from "../tools/larkCli";
 
@@ -186,6 +190,7 @@ export async function appendMeetingToKnowledgeBaseWorkflow(input: {
   repos: Repositories;
   config?: AppConfig;
   confirmationId: string;
+  llm?: LlmClient;
   runner?: LarkCliRunner;
 }): Promise<AppendMeetingToKnowledgeBaseWorkflowResult> {
   const request = input.repos.getConfirmationRequest(input.confirmationId);
@@ -248,6 +253,53 @@ export async function appendMeetingToKnowledgeBaseWorkflow(input: {
   }
 
   const existingMeetingIds = parseStringArray(knowledgeBase.created_from_meetings_json);
+  const previousKnowledgeUpdate =
+    input.repos
+      .listKnowledgeUpdates()
+      .filter((update) => update.kb_id === knowledgeBase.id)
+      .at(-1) ?? null;
+  let afterText = markdown;
+
+  try {
+    const llm = input.llm ?? (input.config ? createLlmClient(input.config) : undefined);
+    const appendDraft = await runKnowledgeCuratorAppendAgent({
+      knowledgeBase,
+      existingMeetingIds,
+      previousUpdate: previousKnowledgeUpdate,
+      newMeeting: meeting,
+      actions,
+      calendars,
+      keyDecisions: payload.key_decisions ?? [],
+      risks: payload.risks ?? [],
+      topicKeywords: payload.topic_keywords ?? [],
+      matchReasons: payload.match_reasons ?? [],
+      score: payload.score ?? meeting.match_score,
+      llm
+    });
+    afterText = JSON.stringify(appendDraft, null, 2);
+    logger.info(
+      {
+        analysis_update: appendDraft.analysis_update,
+        progress_status_before: appendDraft.progress_status_before,
+        progress_status_after: appendDraft.progress_status_after,
+        new_risks: appendDraft.new_risks,
+        new_decisions: appendDraft.new_decisions,
+        changelog_entry: appendDraft.changelog_entry,
+        confidence: appendDraft.confidence
+      },
+      "🧠 KB Append Draft:"
+    );
+  } catch (error) {
+    logger.warn(
+      {
+        error: error instanceof Error ? error.message : String(error),
+        kb_id: knowledgeBase.id,
+        meeting_id: meeting.id
+      },
+      "Knowledge curator append draft failed; preserving append markdown as after_text"
+    );
+  }
+
   const nextMeetingIds = unique([...existingMeetingIds, meeting.id]);
   const nextKeywords = unique([
     ...parseStringArray(knowledgeBase.related_keywords_json),
@@ -268,7 +320,7 @@ export async function appendMeetingToKnowledgeBaseWorkflow(input: {
     summary: `追加会议到知识库：${meeting.title}`,
     source_ids: [meeting.id],
     before: `已有会议：${existingMeetingIds.join(", ") || "暂无"}`,
-    after: markdown,
+    after: afterText,
     created_by: "agent",
     confirmed_by: request.recipient,
     created_at: nowIso()

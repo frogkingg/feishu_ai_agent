@@ -124,27 +124,38 @@ export async function createKnowledgeBaseWorkflow(input: {
   let wikiUrl = `mock://feishu/wiki/${draft.kb_id}`;
   let homepageUrl = `mock://feishu/wiki/${draft.kb_id}/00-home`;
 
-  if (!dryRun) {
-    const wikiSpace = await createWikiSpace({
+  const wikiSpace = await createWikiSpace({
+    repos: input.repos,
+    config,
+    name: payload.topic_name,
+    description: draft.description ?? "",
+    runner: input.runner
+  });
+  wikiUrl = wikiSpace.wiki_space_url;
+  homepageUrl = wikiSpace.homepage_url;
+
+  const homepagePage = draft.pages[0];
+  if (homepagePage) {
+    const homepageDoc = await createDoc({
       repos: input.repos,
       config,
-      name: payload.topic_name,
-      description: draft.description ?? "",
+      title: homepagePage.title,
+      content: homepagePage.markdown,
+      spaceId: wikiSpace.wiki_space_id,
       runner: input.runner
     });
-    wikiUrl = wikiSpace.wiki_space_url;
-    homepageUrl = wikiSpace.homepage_url;
+    homepageUrl = homepageDoc.doc_url;
+  }
 
-    for (const page of draft.pages.slice(1)) {
-      await createDoc({
-        repos: input.repos,
-        config,
-        title: page.title,
-        content: page.markdown,
-        spaceId: wikiSpace.wiki_space_id,
-        runner: input.runner
-      });
-    }
+  for (const page of draft.pages.slice(1)) {
+    await createDoc({
+      repos: input.repos,
+      config,
+      title: page.title,
+      content: page.markdown,
+      spaceId: wikiSpace.wiki_space_id,
+      runner: input.runner
+    });
   }
 
   const existing = input.repos.getKnowledgeBase(draft.kb_id);

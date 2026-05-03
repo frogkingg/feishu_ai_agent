@@ -101,8 +101,8 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(knowledgeBases[0]).toMatchObject({
       name: "无人机操作流程主题知识库",
       status: "active",
-      wiki_url: `mock://feishu/wiki/${knowledgeBases[0].id}`,
-      homepage_url: `mock://feishu/wiki/${knowledgeBases[0].id}/00-home`
+      wiki_url: "mock://feishu/wiki/dry_wiki_无人机操作流程主题知识库",
+      homepage_url: "mock://feishu/wiki/dry_doc_00 首页 / 总览"
     });
     expect(updates).toHaveLength(1);
     expect(updates[0].update_type).toBe("kb_created");
@@ -264,7 +264,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(repos.listKnowledgeBases()).toHaveLength(1);
     expect(repos.listKnowledgeBases()[0]).toMatchObject({
       wiki_url: "https://www.feishu.cn/wiki/space_1",
-      homepage_url: "https://www.feishu.cn/wiki/space_1"
+      homepage_url: "https://example.feishu.cn/wiki/node_1"
     });
     expect(repos.listKnowledgeUpdates()).toHaveLength(1);
     expect(
@@ -283,8 +283,8 @@ describe("createKnowledgeBaseWorkflow", () => {
     const childPageCount = wikiNodeCreateArgs.length;
     expect(spaceCreateArgs).toHaveLength(1);
     expect(memberCreateArgs).toHaveLength(0);
-    expect(childPageCount).toBe(12);
-    expect(updateArgs).toHaveLength(12);
+    expect(childPageCount).toBe(13);
+    expect(updateArgs).toHaveLength(13);
     expect(spaceCreateArgs[0]).toEqual([
       "wiki",
       "spaces",
@@ -302,13 +302,14 @@ describe("createKnowledgeBaseWorkflow", () => {
       description: "Mock LLM 生成的知识库草案。"
     });
     expect(wikiNodeCreateArgs[0]).toEqual(
-      expect.arrayContaining(["--space-id", "space_1", "--title", "01 整体目标"])
+      expect.arrayContaining(["--space-id", "space_1", "--title", "00 首页 / 总览"])
     );
     expect(wikiNodeCreateArgs[1]).toEqual(
-      expect.arrayContaining(["--space-id", "space_1", "--title", "02 整体分析"])
+      expect.arrayContaining(["--space-id", "space_1", "--title", "01 整体目标"])
     );
     expect(wikiNodeCreateArgs.map((args) => args[args.indexOf("--title") + 1])).toEqual(
       expect.arrayContaining([
+        "02 整体分析",
         "03 当前进度",
         "04 关键结论与决策",
         "05 待办与日程索引",
@@ -337,7 +338,7 @@ describe("createKnowledgeBaseWorkflow", () => {
       ])
     );
     const firstUpdateContent = updateArgs[0][updateArgs[0].indexOf("--content") + 1];
-    expect(firstUpdateContent).toContain("# 01 整体目标");
+    expect(firstUpdateContent).toContain("# 00 首页 / 总览");
     expect(repos.listCliRuns().map((run) => run.status)).toEqual(
       Array(1 + childPageCount * 2).fill("success")
     );

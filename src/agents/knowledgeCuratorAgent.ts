@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   KnowledgeBaseDraft,
   KnowledgeBaseDraftSchema,
@@ -5,7 +6,13 @@ import {
   KnowledgeBasePageSignal
 } from "../schemas";
 import { LlmClient } from "../services/llm/llmClient";
-import { ActionItemRow, CalendarDraftRow, MeetingRow } from "../services/store/repositories";
+import {
+  ActionItemRow,
+  CalendarDraftRow,
+  KnowledgeBaseRow,
+  KnowledgeUpdateRow,
+  MeetingRow
+} from "../services/store/repositories";
 import {
   formatMeetingReference,
   formatOpenIdsInText,
@@ -30,6 +37,28 @@ const CHANGELOG_LABEL = "变更记录";
 const MeetingSummaryLimit = 900;
 const TranscriptExcerptLimit = 1000;
 const EvidenceLimit = 500;
+const PreviousUpdateLimit = 1400;
+
+const KnowledgeBaseAppendProgressStatusSchema = z.enum([
+  "未启动",
+  "调研中",
+  "方案设计中",
+  "执行中",
+  "验证中",
+  "已完成"
+]);
+
+export const KnowledgeBaseAppendDraftSchema = z.object({
+  analysis_update: z.string().min(1),
+  progress_status_before: z.string().min(1),
+  progress_status_after: KnowledgeBaseAppendProgressStatusSchema,
+  new_risks: z.array(z.string().min(1)).default([]),
+  new_decisions: z.array(z.string().min(1)).default([]),
+  changelog_entry: z.string().min(1),
+  confidence: z.number().min(0).max(1)
+});
+
+export type KnowledgeBaseAppendDraft = z.infer<typeof KnowledgeBaseAppendDraftSchema>;
 
 type CuratorContext = {
   topicName: string;
@@ -41,6 +70,20 @@ type CuratorContext = {
   meetings: MeetingRow[];
   actions: ActionItemRow[];
   calendars: CalendarDraftRow[];
+};
+
+type KnowledgeBaseAppendContext = {
+  knowledgeBase: KnowledgeBaseRow;
+  existingMeetingIds: string[];
+  previousUpdate: KnowledgeUpdateRow | null;
+  newMeeting: MeetingRow;
+  actions: ActionItemRow[];
+  calendars: CalendarDraftRow[];
+  keyDecisions: Array<{ decision: string; evidence: string }>;
+  risks: Array<{ risk: string; evidence: string }>;
+  topicKeywords: string[];
+  matchReasons: string[];
+  score: number | null;
 };
 
 function parseStringArray(value: string): string[] {
@@ -354,6 +397,131 @@ function buildCuratorUserPrompt(context: CuratorContext): string {
     ),
     "digest:",
     JSON.stringify(buildCuratorDigest(context), null, 2)
+  ].join("\n\n");
+}
+
+function buildAppendCuratorDigest(context: KnowledgeBaseAppendContext): Record<string, unknown> {
+  const meetingsById = new Map([[context.newMeeting.id, context.newMeeting]]);
+  const previousUpdate =
+    context.previousUpdate === null
+      ? null
+      : {
+          update_type: context.previousUpdate.update_type,
+          summary: context.previousUpdate.summary,
+          source_ids: parseStringArray(context.previousUpdate.source_ids_json),
+          before_text: compactText(context.previousUpdate.before_text, "无", PreviousUpdateLimit),
+          after_text: compactText(context.previousUpdate.after_text, "无", PreviousUpdateLimit),
+          created_at: context.previousUpdate.created_at
+        };
+
+  return {
+    curator_contract: {
+      role: "MeetingAtlas Knowledge Curator",
+      mode: "append_mode",
+      decision_owner:
+        "LLM decides analysis update, progress status change, new risks, new decisions, and changelog wording.",
+      code_boundary:
+        "Code only provides existing KB metadata, previous update summary, new meeting digest, action/calendar signals, payload signals, schema validation, repair, and persistence routing."
+    },
+    existing_knowledge_base: {
+      kb_id: context.knowledgeBase.id,
+      name: context.knowledgeBase.name,
+      goal: context.knowledgeBase.goal,
+      description: context.knowledgeBase.description,
+      owner: context.knowledgeBase.owner,
+      status: context.knowledgeBase.status,
+      confidence_origin: context.knowledgeBase.confidence_origin,
+      wiki_url: context.knowledgeBase.wiki_url,
+      homepage_url: context.knowledgeBase.homepage_url,
+      related_keywords: parseStringArray(context.knowledgeBase.related_keywords_json),
+      existing_meeting_ids: context.existingMeetingIds,
+      existing_meeting_count: context.existingMeetingIds.length,
+      append_sequence_number: context.existingMeetingIds.length + 1,
+      previous_update: previousUpdate
+    },
+    new_meeting: {
+      id: context.newMeeting.id,
+      title: context.newMeeting.title,
+      started_at: context.newMeeting.started_at,
+      ended_at: context.newMeeting.ended_at,
+      organizer: context.newMeeting.organizer,
+      participants: formatUserListForDisplay(parseStringArray(context.newMeeting.participants_json)),
+      summary: meetingSummary(context.newMeeting),
+      keywords: parseStringArray(context.newMeeting.keywords_json),
+      transcript_excerpt: transcriptExcerpt(context.newMeeting),
+      minutes_reference: meetingReference(context.newMeeting, "minutes"),
+      transcript_reference: transcriptReference(context.newMeeting)
+    },
+    append_payload_signals: {
+      key_decisions: context.keyDecisions,
+      risks: context.risks,
+      topic_keywords: context.topicKeywords,
+      match_reasons: context.matchReasons,
+      match_score: context.score
+    },
+    actions: context.actions.map((action) => ({
+      title: action.title,
+      description: action.description,
+      owner: action.owner,
+      collaborators: formatUserListForDisplay(parseStringArray(action.collaborators_json)),
+      due_date: action.due_date,
+      priority: action.priority,
+      evidence: compactText(action.evidence, "暂无证据", EvidenceLimit),
+      suggested_reason: action.suggested_reason,
+      missing_fields: parseStringArray(action.missing_fields_json),
+      confirmation_status: action.confirmation_status,
+      source: sourceMeetingReference(meetingsById, action.meeting_id)
+    })),
+    calendars: context.calendars.map((calendar) => ({
+      title: calendar.title,
+      start_time: calendar.start_time,
+      end_time: calendar.end_time,
+      duration_minutes: calendar.duration_minutes,
+      participants: formatUserListForDisplay(parseStringArray(calendar.participants_json)),
+      agenda: calendar.agenda,
+      location: calendar.location,
+      evidence: compactText(calendar.evidence, "暂无证据", EvidenceLimit),
+      missing_fields: parseStringArray(calendar.missing_fields_json),
+      confirmation_status: calendar.confirmation_status,
+      source: sourceMeetingReference(meetingsById, calendar.meeting_id)
+    })),
+    output_schema: {
+      analysis_update: "string, 2-5 sentences",
+      progress_status_before: "string",
+      progress_status_after: "未启动|调研中|方案设计中|执行中|验证中|已完成",
+      new_risks: "string[]",
+      new_decisions: "string[]",
+      changelog_entry: "YYYY-MM-DD 第N次会议：xxx",
+      confidence: "number 0..1"
+    }
+  };
+}
+
+function buildAppendCuratorUserPrompt(context: KnowledgeBaseAppendContext): string {
+  return [
+    "请按 knowledgeCurator.md 的 append_mode 规则，读取以下 digest，输出一个 KnowledgeBaseAppendDraft JSON。",
+    "这是已有知识库的增量追加，不要重新生成完整 KnowledgeBaseDraft，也不要输出 Markdown fence 或解释文字。",
+    "整体分析、进度状态、新风险、新决策和变更记录由你根据新会议与已有上下文判断；代码不会替你做业务判断。",
+    "digest:",
+    JSON.stringify(buildAppendCuratorDigest(context), null, 2)
+  ].join("\n\n");
+}
+
+function buildAppendRepairUserPrompt(input: {
+  context: KnowledgeBaseAppendContext;
+  previousOutput: unknown;
+  validationError: unknown;
+}): string {
+  return [
+    "你上一次输出没有通过 KnowledgeBaseAppendDraft schema 校验。请进行一次 schema repair。",
+    "只返回完整、可解析的 KnowledgeBaseAppendDraft JSON；不要输出解释文字、Markdown fence 或额外前后缀。",
+    "修复边界：保留你对增量分析、进度变化、风险、决策和变更记录的判断，只补齐缺失字段、修正字段类型或枚举值。",
+    "validation_error:",
+    errorText(input.validationError),
+    "previous_output:",
+    compactJson(input.previousOutput, 3000),
+    "原始 append 任务与 digest:",
+    buildAppendCuratorUserPrompt(input.context)
   ].join("\n\n");
 }
 
@@ -676,5 +844,56 @@ export async function runKnowledgeCuratorAgent(input: {
     } catch {
       return buildFallbackDraft(context);
     }
+  }
+}
+
+export async function runKnowledgeCuratorAppendAgent(input: {
+  knowledgeBase: KnowledgeBaseRow;
+  existingMeetingIds: string[];
+  previousUpdate: KnowledgeUpdateRow | null;
+  newMeeting: MeetingRow;
+  actions: ActionItemRow[];
+  calendars: CalendarDraftRow[];
+  keyDecisions?: Array<{ decision: string; evidence: string }>;
+  risks?: Array<{ risk: string; evidence: string }>;
+  topicKeywords?: string[];
+  matchReasons?: string[];
+  score?: number | null;
+  llm?: LlmClient;
+}): Promise<KnowledgeBaseAppendDraft> {
+  if (!input.llm) {
+    throw new Error("Knowledge curator append mode requires LLM client");
+  }
+
+  const context: KnowledgeBaseAppendContext = {
+    knowledgeBase: input.knowledgeBase,
+    existingMeetingIds: input.existingMeetingIds,
+    previousUpdate: input.previousUpdate,
+    newMeeting: input.newMeeting,
+    actions: input.actions,
+    calendars: input.calendars,
+    keyDecisions: input.keyDecisions ?? [],
+    risks: input.risks ?? [],
+    topicKeywords: input.topicKeywords ?? [],
+    matchReasons: input.matchReasons ?? [],
+    score: input.score ?? null
+  };
+  const systemPrompt = readPrompt("knowledgeCurator.md");
+  let previousOutput: unknown = null;
+
+  try {
+    previousOutput = await input.llm.generateJson<unknown>({
+      systemPrompt,
+      userPrompt: buildAppendCuratorUserPrompt(context),
+      schemaName: "KnowledgeBaseAppendDraft"
+    });
+    return KnowledgeBaseAppendDraftSchema.parse(previousOutput);
+  } catch (validationError) {
+    const repaired = await input.llm.generateJson<unknown>({
+      systemPrompt,
+      userPrompt: buildAppendRepairUserPrompt({ context, previousOutput, validationError }),
+      schemaName: "KnowledgeBaseAppendDraft"
+    });
+    return KnowledgeBaseAppendDraftSchema.parse(repaired);
   }
 }

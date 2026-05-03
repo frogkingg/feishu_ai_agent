@@ -5,7 +5,6 @@ import { runLarkCli, type LarkCliRunner } from "./larkCli";
 export interface CreateWikiResult {
   wiki_space_id: string;
   wiki_space_url: string;
-  homepage_node_token: string;
   homepage_url: string;
   dry_run: boolean;
   cli_run_id: string;
@@ -65,7 +64,6 @@ export async function createWikiSpace(input: {
     return {
       wiki_space_id: spaceId,
       wiki_space_url: `mock://feishu/wiki/${spaceId}`,
-      homepage_node_token: spaceId,
       homepage_url: `mock://feishu/wiki/${spaceId}/00-home`,
       dry_run: true,
       cli_run_id: result.id
@@ -126,7 +124,6 @@ export async function createWikiSpace(input: {
   return {
     wiki_space_id: spaceId,
     wiki_space_url: wikiUrl,
-    homepage_node_token: spaceId,
     homepage_url: wikiUrl,
     dry_run: false,
     cli_run_id: result.id

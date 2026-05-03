@@ -85,13 +85,16 @@ export interface KnowledgeBaseRow {
 
 export interface SourceRow {
   id: string;
+  meeting_id: string | null;
   kb_id: string | null;
   source_type: string;
   title: string;
+  url: string | null;
   source_url: string | null;
   summary: string | null;
   why_related: string | null;
   archive_section: string | null;
+  archive_status: string;
   confirmation_status: string;
   permission_status: string;
   added_from: string | null;
@@ -535,18 +538,22 @@ export function createRepositories(db: MeetingAtlasDb) {
       const row = withTimestamps(input);
       db.prepare(
         `INSERT INTO sources (
-          id, kb_id, source_type, title, source_url, summary, why_related, archive_section,
-          confirmation_status, permission_status, added_from, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          id, meeting_id, kb_id, source_type, title, url, source_url, summary, why_related,
+          archive_section, archive_status, confirmation_status, permission_status, added_from,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         row.id,
+        row.meeting_id,
         row.kb_id,
         row.source_type,
         row.title,
+        row.url,
         row.source_url,
         row.summary,
         row.why_related,
         row.archive_section,
+        row.archive_status ?? "candidate",
         row.confirmation_status,
         row.permission_status,
         row.added_from,

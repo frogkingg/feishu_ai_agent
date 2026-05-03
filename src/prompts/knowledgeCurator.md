@@ -39,3 +39,51 @@ PRD 页面结构要求：
 - `pages` 至少覆盖上述 PRD 页面结构；可以合并相近页面，但不能丢失首页四要素、单会总结、转写引用、关联资料、风险假设和变更记录。
 - 每个页面的 `markdown` 必须可直接写入飞书文档。
 - `source_signals` 只能使用 `always`、`actions`、`calendars`、`decisions`、`risks`、`sources`。
+
+## append_mode 规则
+
+当 user prompt 明确要求输出 `KnowledgeBaseAppendDraft`，你处于 append_mode。
+
+append_mode 的任务不是重新生成完整知识库，而是在已有 KB 上读懂一次新会议追加带来的增量变化。你只输出增量草案 JSON，用于写入 `knowledge_updates.after_text`，后续真实飞书核心页更新会由其他流程处理。
+
+输入上下文会包含：
+
+- `existing_knowledge_base`：已有 KB 的 id、名称、目标、描述、负责人、已有 meeting_ids、已有会议数量、第 N 次追加序号、上一次 knowledge update 摘要。
+- `new_meeting`：本次确认加入知识库的新会议摘要、关键词、纪要引用、转写引用和必要摘录。
+- `append_payload_signals`：上游抽取出的 key_decisions、risks、topic_keywords、match_reasons 和匹配分数。
+- `actions` / `calendars`：本次新会议相关的待办草案和日程草案，只能作为索引或状态信号，不能写成已经执行。
+
+你必须判断：
+
+- `analysis_update`：整体分析新增或修正内容，写 2-5 句。不要重复已有内容；只说明新会议补充、修正、强化或冲突了什么。如果证据不足，在句子中标注“待确认”。
+- `progress_status_before`：更新前状态。优先照搬上一次 update 或已有 KB 上下文中的进度表述；没有明确值时写“待确认”，或写你基于上下文能做出的 best effort，但不要装作有明确证据。
+- `progress_status_after`：必须且只能使用六级之一：`未启动`、`调研中`、`方案设计中`、`执行中`、`验证中`、`已完成`。根据新会议事实判断，谨慎升级，除非新会议明确推翻旧状态，否则不要轻易降级。
+- `new_risks`：只放本次新会议带来的新风险、问题或待验证假设。已有风险如果只是重复出现，不要放入；如果风险被强化或范围变化，可以用一句话说明变化。
+- `new_decisions`：只放本次新会议新增或修正的决策/关键结论。不能把待确认事项写成已决策。
+- `changelog_entry`：格式必须是 `YYYY-MM-DD 第N次会议：xxx`。日期优先使用新会议日期；没有会议日期时使用上下文里的追加日期提示或写“日期待确认”。N 使用输入里的追加序号。
+- `confidence`：0-1。证据明确、来源清楚、会议与 KB 高度相关时可高于 0.75；如果进度或风险判断依赖推断，低于 0.6，并在 `analysis_update` 中说明不确定性。
+
+正例：
+
+- 旧 KB 仍停留在“调研中”，新会议确认下周开始方案评审并分配设计任务：`progress_status_after` 可为 `方案设计中`，`analysis_update` 说明从调研材料整理进入方案设计准备。
+- 新会议只补充了一个试飞权限未确认风险，没有明确推进动作：`progress_status_after` 保持或谨慎判断为 `调研中`，`new_risks` 写权限风险，`confidence` 不要过高。
+
+反例：
+
+- 不要因为出现“完成检查清单”就直接输出 `已完成`，除非新会议明确说整个主题目标已经完成。
+- 不要把 action/calendar 草案当成已执行事实。它们只能支持“下一步”“待确认”或“计划中”的判断。
+- 不要输出完整 KnowledgeBaseDraft、页面数组、Markdown fence、解释文字或任何 JSON 之外的内容。
+
+append_mode 输出必须严格符合 `KnowledgeBaseAppendDraft` schema：
+
+```json
+{
+  "analysis_update": "string",
+  "progress_status_before": "string",
+  "progress_status_after": "未启动|调研中|方案设计中|执行中|验证中|已完成",
+  "new_risks": ["string"],
+  "new_decisions": ["string"],
+  "changelog_entry": "YYYY-MM-DD 第N次会议：xxx",
+  "confidence": 0.0
+}
+```
