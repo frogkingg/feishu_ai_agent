@@ -4,6 +4,7 @@ import { AppConfig, getCardCallbackReadiness } from "./config";
 import { ManualMeetingInputSchema, ProcessMeetingTextInputSchema } from "./schemas";
 import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
+import { runQaAgent } from "./agents/qaAgent";
 import {
   appendCurrentOnlyConfirmation,
   confirmRequest,
@@ -26,6 +27,9 @@ import {
 
 const LlmSmokeTestInputSchema = z.object({
   text: z.string().min(1)
+});
+const KnowledgeBaseAskBodySchema = z.object({
+  question: z.string().trim().min(1)
 });
 
 const SendCardBodySchema = z
@@ -778,6 +782,18 @@ export function buildServer(input: {
       llm_provider: input.config.llmProvider,
       sqlite_path: input.config.sqlitePath
     };
+  });
+
+  app.post("/kb/:kbId/ask", async (request, reply) => {
+    const { kbId } = request.params as { kbId: string };
+    const { question } = KnowledgeBaseAskBodySchema.parse(request.body);
+    const result = await runQaAgent({
+      repos: input.repos,
+      kbId,
+      question,
+      llm: input.llm
+    });
+    return reply.send(result);
   });
 
   app.post("/webhooks/feishu/event", async (request, reply) => {
