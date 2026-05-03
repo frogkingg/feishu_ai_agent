@@ -10,6 +10,7 @@ export interface AppConfig {
   feishuDryRun: boolean;
   feishuReadDryRun: boolean;
   feishuCardSendDryRun: boolean;
+  feishuCardActionsEnabled: boolean;
   feishuTaskCreateDryRun: boolean;
   feishuCalendarCreateDryRun: boolean;
   feishuKnowledgeWriteDryRun: boolean;
@@ -84,6 +85,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     feishuDryRun,
     feishuReadDryRun: parseBoolean(process.env.FEISHU_READ_DRY_RUN, feishuDryRun),
     feishuCardSendDryRun: parseBoolean(process.env.FEISHU_CARD_SEND_DRY_RUN, true),
+    feishuCardActionsEnabled: parseBoolean(process.env.FEISHU_CARD_ACTIONS_ENABLED, false),
     feishuTaskCreateDryRun: parseBoolean(process.env.FEISHU_TASK_CREATE_DRY_RUN, feishuDryRun),
     feishuCalendarCreateDryRun: parseBoolean(
       process.env.FEISHU_CALENDAR_CREATE_DRY_RUN,

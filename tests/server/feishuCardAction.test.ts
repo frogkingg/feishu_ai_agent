@@ -1188,7 +1188,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(convertResponse.json().card)).toContain("确认待办");
+    expect(JSON.stringify(convertResponse.json().card)).toContain("跟进：无人机操作员访谈");
     expect(repos.getConfirmationRequest(calendar.id)).toMatchObject({
       status: "rejected",
       error: "converted_to_task"
@@ -1223,7 +1223,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(appendResponse.json().card)).toContain("确认追加会议");
+    expect(JSON.stringify(appendResponse.json().card)).toContain("客户访谈知识库");
     expect(repos.getConfirmationRequest(createKb.id)).toMatchObject({
       status: "rejected",
       error: "append_current_only"

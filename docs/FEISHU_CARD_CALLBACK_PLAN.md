@@ -10,6 +10,8 @@
 
 飞书回调不能访问 `localhost`。本地开发服务需要一个可被飞书平台访问的公网 URL。
 
+真实发送卡片时，MeetingAtlas 默认保持 `FEISHU_CARD_ACTIONS_ENABLED=false`。在这个默认模式下，真实飞书卡片只展示建议和极短操作提示，不渲染 callback buttons，也不渲染卡片输入控件，避免公网回调未配置时用户点击按钮触发飞书 `200671`。只有公开回调 URL、验签配置和回调验收完成后，才允许显式设置 `FEISHU_CARD_ACTIONS_ENABLED=true`。
+
 开发阶段推荐：
 
 - `ngrok`

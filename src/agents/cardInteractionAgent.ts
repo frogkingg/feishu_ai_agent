@@ -671,7 +671,6 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
   const summary = ownerMissing
     ? [
         "负责人待补充",
-        "可在卡片中填写负责人后添加",
         draft.due_date ? `截止：${draft.due_date}` : "截止时间待补充",
         draft.priority ? `优先级：${draft.priority}` : "优先级待补充"
       ].join("；")
@@ -726,14 +725,14 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
     status: parsed.status,
     status_text:
       ownerMissing && (parsed.status === "sent" || parsed.status === "edited")
-        ? "负责人待补充，请在卡片中填写后添加待办"
+        ? "负责人待补充，可在飞书任务中补齐后添加"
         : statusText({ status: parsed.status, cardType }),
     ...statusFields(parsed),
-    title: `确认待办：${draft.title}`,
+    title: `待办建议：${draft.title}`,
     summary: summary || "请确认是否创建该待办。",
     sections: [
       section({
-        title: "待办确认",
+        title: "建议",
         fields: [
           displayField("title", "任务标题", draft.title),
           displayField("recommended_owner", ownerLabel, ownerText),
@@ -747,7 +746,7 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
       ...(meetingReference !== null
         ? [
             section({
-              title: "会议来源",
+              title: "来源",
               fields: [displayField("meeting_reference", "会议", meetingReference)]
             })
           ]
@@ -755,8 +754,8 @@ export function buildActionConfirmationCard(input: CardConfirmationInput): DryRu
       ...(ownerMissing
         ? [
             section({
-              title: "待补字段",
-              helpText: "当前会议未识别明确负责人。请在卡片中填写负责人后再添加待办。",
+              title: "还缺什么",
+              helpText: "当前会议未识别明确负责人，可在飞书任务中补齐后添加。",
               fields: [displayField("missing_fields", "待补字段", draft.missing_fields)]
             })
           ]
@@ -800,11 +799,11 @@ export function buildCalendarConfirmationCard(
     status: parsed.status,
     status_text: statusText({ status: parsed.status, cardType }),
     ...statusFields(parsed),
-    title: `确认日程：${draft.title}`,
+    title: `日程建议：${draft.title}`,
     summary: summary || "请确认是否创建该日程。",
     sections: [
       section({
-        title: "日程确认",
+        title: "建议",
         fields: [
           displayField("title", "日程标题", draft.title),
           displayField("start_time", "开始时间", draft.start_time),
@@ -821,7 +820,7 @@ export function buildCalendarConfirmationCard(
       ...(meetingReference !== null
         ? [
             section({
-              title: "会议来源",
+              title: "来源",
               fields: [displayField("meeting_reference", "会议", meetingReference)]
             })
           ]
@@ -907,11 +906,11 @@ export function buildCreateKbConfirmationCard(
     status: parsed.status,
     status_text: statusText({ status: parsed.status, cardType }),
     ...statusFields(parsed),
-    title: `确认创建知识库：${topicName}`,
+    title: `知识库建议：${topicName}`,
     summary,
     sections: [
       section({
-        title: "建库建议",
+        title: "建议",
         fields: [
           displayField("topic_name", "主题名称", topicName),
           displayField("meeting_count", "关联会议数", meetingCount),
@@ -922,13 +921,13 @@ export function buildCreateKbConfirmationCard(
       ...(candidateMeetings.length > 0
         ? [
             section({
-              title: "关联会议",
+              title: "来源",
               fields: [displayField("candidate_meetings", "会议", candidateMeetings)]
             })
           ]
         : []),
       section({
-        title: curationGuidance.length > 0 ? "策展方式" : "结构预览",
+        title: curationGuidance.length > 0 ? "整理方式" : "结构预览",
         fields: [
           displayField(
             curationGuidance.length > 0 ? "curation_guidance" : "default_structure",
@@ -1000,18 +999,18 @@ export function buildAppendMeetingConfirmationCard(
     status: parsed.status,
     status_text: statusText({ status: parsed.status, cardType }),
     ...statusFields(parsed),
-    title: `确认追加会议：${kbName}`,
+    title: `知识库整理建议：${kbName}`,
     summary,
     sections: [
       section({
-        title: "追加位置",
+        title: "建议",
         fields: [
           displayField("kb_name", "加入知识库", kbName),
           displayField("meeting_reference", "会议链接", meetingReference)
         ]
       }),
       section({
-        title: "会议摘要",
+        title: "依据",
         fields: [
           displayField("meeting_summary", "摘要", meetingSummary),
           displayField("key_decisions", "关键结论", keyDecisions),

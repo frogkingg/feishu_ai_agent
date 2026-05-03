@@ -145,6 +145,7 @@ type CardRenderMode = "real" | "dry_run";
 
 interface BuildFeishuInteractiveCardOptions {
   mode?: CardRenderMode;
+  actionsEnabled?: boolean;
 }
 
 function trimToNull(value: string | null | undefined): string | null {
@@ -273,8 +274,7 @@ function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
         "feishu_task_guid",
         "meeting_reference",
         "suggested_reason",
-        "evidence",
-        "confidence"
+        "evidence"
       ]
     };
   }
@@ -291,8 +291,7 @@ function visualProfile(card: DryRunConfirmationCard): CardVisualProfile {
         "meeting_reference",
         "agenda",
         "missing_fields",
-        "evidence",
-        "confidence"
+        "evidence"
       ]
     };
   }
@@ -421,13 +420,14 @@ function buildKeyInfoElement(card: DryRunConfirmationCard, profile: CardVisualPr
     tag: "div" as const,
     text: {
       tag: "lark_md" as const,
-      content: [`**${profile.typeLabel}确认**`, ...lines].join("\n")
+      content: [`**建议**`, ...lines].join("\n")
     }
   };
 }
 
 function buildDetailElement(card: DryRunConfirmationCard, profile: CardVisualProfile) {
   const detailFields = fieldsByKeys(card, profile.detailFieldKeys)
+    .filter((field) => field.key !== "confidence")
     .filter((field) => displayValue(field) !== "无" && displayValue(field) !== "未填写")
     .slice(0, 6);
 
@@ -436,6 +436,7 @@ function buildDetailElement(card: DryRunConfirmationCard, profile: CardVisualPro
       ? detailFields.map(fieldBullet)
       : card.sections
           .flatMap((section) => section.fields)
+          .filter((field) => field.key !== "confidence")
           .filter((field) => !profile.primaryFieldKeys.includes(field.key))
           .slice(0, 4)
           .map(fieldBullet);
@@ -444,7 +445,7 @@ function buildDetailElement(card: DryRunConfirmationCard, profile: CardVisualPro
     tag: "div" as const,
     text: {
       tag: "lark_md" as const,
-      content: [`**详情依据**`, ...lines].join("\n")
+      content: [`**依据**`, ...lines].join("\n")
     }
   };
 }
@@ -495,7 +496,7 @@ function editableIntro(card: DryRunConfirmationCard): FeishuCardElement {
     tag: "div",
     text: {
       tag: "lark_md",
-      content: `**需补充**\n${fieldNames || "无可补充字段"}`
+      content: `**还缺什么**\n${fieldNames || "无可补充字段"}`
     }
   };
 }
@@ -524,17 +525,12 @@ function requiredEditableFields(card: DryRunConfirmationCard) {
     .slice(0, 3);
 }
 
-function hasMissingEditableField(card: DryRunConfirmationCard, key: string): boolean {
-  const field = card.editable_fields.find((item) => item.key === key);
-  return field === undefined ? false : hasMissingValue(field);
-}
-
 function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
   const hasRequiredEdits = requiredEditableFields(card).length > 0;
 
   if (card.card_type === "action_confirmation") {
     return hasRequiredEdits
-      ? ["confirm_with_edits", "not_mine", "remind_later", "reject"]
+      ? ["confirm", "not_mine", "remind_later", "reject"]
       : ["confirm", "not_mine", "remind_later", "reject"];
   }
 
@@ -578,17 +574,16 @@ function buttonLabel(
   const retryPrefix = card.status === "failed" ? "重试" : "";
 
   if (key === "confirm_with_edits") {
-    const editLabel = requiredEditableFields(card).length > 0 ? "补全后" : "修改后";
     if (card.card_type === "action_confirmation") {
-      return `${prefix}${retryPrefix}${editLabel}添加待办`;
+      return `${prefix}${retryPrefix}添加待办`;
     }
     if (card.card_type === "calendar_confirmation") {
-      return `${prefix}${retryPrefix}${editLabel}添加日程`;
+      return `${prefix}${retryPrefix}添加日程`;
     }
     if (card.card_type === "append_meeting_confirmation") {
-      return `${prefix}${retryPrefix}${editLabel}追加到知识库`;
+      return `${prefix}${retryPrefix}追加到知识库`;
     }
-    return `${prefix}${retryPrefix}${editLabel}确认`;
+    return `${prefix}${retryPrefix}确认`;
   }
 
   if (key === "complete_owner") {
@@ -597,9 +592,6 @@ function buttonLabel(
 
   if (key === "confirm") {
     if (card.card_type === "action_confirmation") {
-      if (hasMissingEditableField(card, "owner")) {
-        return `${prefix}${retryPrefix}添加到我的待办`;
-      }
       return `${prefix}${retryPrefix}添加待办`;
     }
     if (card.card_type === "calendar_confirmation") {
@@ -651,7 +643,43 @@ function buttonValue(
 }
 
 function headerTitle(card: DryRunConfirmationCard, profile: CardVisualProfile): string {
-  return `${profile.icon} ${card.title}`;
+  const cleaned = card.title
+    .replace(/^确认待办[:：]\s*/u, "")
+    .replace(/^确认日程[:：]\s*/u, "")
+    .replace(/^确认创建知识库[:：]\s*/u, "")
+    .replace(/^确认追加到知识库[:：]\s*/u, "")
+    .replace(/^待办建议[:：]\s*/u, "")
+    .replace(/^日程建议[:：]\s*/u, "")
+    .replace(/^知识库建议[:：]\s*/u, "")
+    .replace(/^知识库整理建议[:：]\s*/u, "")
+    .replace(/^确认[:：]\s*/u, "");
+  return `${profile.icon} ${cleaned}`;
+}
+
+function displayOnlyHint(card: DryRunConfirmationCard): string {
+  if (card.card_type === "action_confirmation") {
+    return "可在飞书「任务」中补齐负责人/截止时间后直接添加。";
+  }
+  if (card.card_type === "calendar_confirmation") {
+    return "可在飞书「日历」中补齐时间/参会人后直接创建。";
+  }
+  if (
+    card.card_type === "create_kb_confirmation" ||
+    card.card_type === "append_meeting_confirmation"
+  ) {
+    return "确认后可在知识库中创建/整理，本卡片先展示建议。";
+  }
+  return "本卡片先展示建议。";
+}
+
+function buildDisplayOnlyHintElement(card: DryRunConfirmationCard): FeishuCardElement {
+  return {
+    tag: "div",
+    text: {
+      tag: "lark_md",
+      content: displayOnlyHint(card)
+    }
+  };
 }
 
 export function buildFeishuInteractiveCard(
@@ -659,15 +687,10 @@ export function buildFeishuInteractiveCard(
   options: BuildFeishuInteractiveCardOptions = {}
 ): FeishuInteractiveCard {
   const mode = options.mode ?? "real";
+  const actionsEnabled = options.actionsEnabled ?? false;
+  const renderControls = mode === "dry_run" || actionsEnabled;
   const profile = visualProfile(card);
   const elements: FeishuCardElement[] = [
-    {
-      tag: "markdown",
-      content: `**${profile.icon} ${profile.typeLabel} | ${compactSummary(card)}**`
-    },
-    {
-      tag: "hr"
-    },
     buildKeyInfoElement(card, profile),
     buildDetailElement(card, profile)
   ];
@@ -682,7 +705,8 @@ export function buildFeishuInteractiveCard(
     );
   }
 
-  const editableFields = isEditableRenderStatus(card.status) ? requiredEditableFields(card) : [];
+  const editableFields =
+    renderControls && isEditableRenderStatus(card.status) ? requiredEditableFields(card) : [];
   if (editableFields.length > 0) {
     elements.push(
       {
@@ -693,7 +717,7 @@ export function buildFeishuInteractiveCard(
     );
   }
 
-  const actions = visibleActions(card);
+  const actions = renderControls ? visibleActions(card) : [];
   if (actions.length > 0) {
     elements.push({
       tag: "action",
@@ -717,6 +741,15 @@ export function buildFeishuInteractiveCard(
         };
       })
     });
+  }
+
+  if (!renderControls && isEditableRenderStatus(card.status)) {
+    elements.push(
+      {
+        tag: "hr"
+      },
+      buildDisplayOnlyHintElement(card)
+    );
   }
 
   return {
@@ -921,7 +954,9 @@ export async function syncConfirmationCardStatus(
   const messageId = trimToNull(input.messageId ?? input.confirmation.card_message_id);
   const chatId = trimToNull(input.chatId);
   const recipient = trimToNull(input.recipient ?? input.confirmation.recipient);
-  const cardContent = buildFeishuInteractiveCard(input.card);
+  const cardContent = buildFeishuInteractiveCard(input.card, {
+    actionsEnabled: config.feishuCardActionsEnabled
+  });
   const cardJson = JSON.stringify(cardContent);
 
   if (updateToken !== null) {
@@ -1061,7 +1096,8 @@ export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
   }
 
   const cardContent = buildFeishuInteractiveCard(input.card, {
-    mode: cardSendDryRun ? "dry_run" : "real"
+    mode: cardSendDryRun ? "dry_run" : "real",
+    actionsEnabled: config.feishuCardActionsEnabled
   });
   const cardJson = JSON.stringify(cardContent);
   const args = [

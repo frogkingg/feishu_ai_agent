@@ -57,7 +57,7 @@ describe("CardInteractionAgent", () => {
 
     expect(card).toMatchObject({
       card_type: "action_confirmation",
-      title: "确认待办：整理无人机操作流程",
+      title: "待办建议：整理无人机操作流程",
       summary: "建议负责人：张三；截止：2026-05-01；优先级：P1",
       dry_run: true
     });
@@ -123,7 +123,7 @@ describe("CardInteractionAgent", () => {
       editable_fields: card.editable_fields
     });
     expect(card.summary).toContain("负责人待补充");
-    expect(card.summary).toContain("可在卡片中填写负责人后添加");
+    expect(card.summary).not.toContain("可在卡片中填写负责人后添加");
     expect(
       card.sections[0]?.fields.find((field) => field.key === "recommended_owner")
     ).toMatchObject({
@@ -148,7 +148,7 @@ describe("CardInteractionAgent", () => {
       "not_mine",
       "remind_later"
     ]);
-    expect(card.status_text).toBe("负责人待补充，请在卡片中填写后添加待办");
+    expect(card.status_text).toBe("负责人待补充，可在飞书任务中补齐后添加");
   });
 
   it("keeps edited missing-owner cards editable", () => {
@@ -172,10 +172,10 @@ describe("CardInteractionAgent", () => {
 
     expect(card).toMatchObject({
       card_type: "action_confirmation",
-      title: "确认待办：整理无人机操作流程",
-      status_text: "负责人待补充，请在卡片中填写后添加待办"
+      title: "待办建议：整理无人机操作流程",
+      status_text: "负责人待补充，可在飞书任务中补齐后添加"
     });
-    expect(JSON.stringify(card)).toContain("待补字段");
+    expect(JSON.stringify(card)).toContain("还缺什么");
     expect(JSON.stringify(card)).not.toContain("我的个人待办");
     expect(JSON.stringify(card)).not.toContain("补全负责人");
     expect(JSON.stringify(card)).not.toContain("select_person");
@@ -211,7 +211,7 @@ describe("CardInteractionAgent", () => {
     );
 
     expect(card.card_type).toBe("calendar_confirmation");
-    expect(card.title).toBe("确认日程：无人机操作员访谈会议");
+    expect(card.title).toBe("日程建议：无人机操作员访谈会议");
     expect(card.summary).toContain("开始：2026-05-05T10:00:00+08:00");
     expect(card.summary).toContain("参会人：张三, 王五");
     expect(card.summary).toContain("地点待补充");

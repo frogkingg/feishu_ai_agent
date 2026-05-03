@@ -52,7 +52,7 @@ describe("larkIm.sendCard", () => {
     return args[dataIndex + 1];
   }
 
-  it("builds an interactive card payload from the dry-run preview", () => {
+  it("builds a display-only real card payload by default", () => {
     const interactive = buildFeishuInteractiveCard(card);
     const serialized = JSON.stringify(interactive);
 
@@ -60,57 +60,29 @@ describe("larkIm.sendCard", () => {
       wide_screen_mode: true,
       update_multi: true
     });
-    expect(interactive.header.title.content).toBe(`📌 ${card.title}`);
+    expect(interactive.header.title.content).toBe("📌 整理无人机操作流程");
     expect(interactive.header.template).toBe("turquoise");
-    expect(serialized).toContain("📌 待办");
-    expect(serialized).toContain(`待办 | ${card.summary}`);
-    expect(serialized).toContain("待办确认");
-    expect(serialized).toContain("详情依据");
+    expect(serialized).not.toContain(`待办 | ${card.summary}`);
+    expect(serialized).not.toContain("待办确认");
+    expect(serialized).toContain("建议");
+    expect(serialized).toContain("依据");
     expect(serialized).toContain("建议原因");
-    expect(serialized).toContain("置信度");
+    expect(serialized).not.toContain("置信度");
     expect(serialized).toContain("[会议纪要](https://example.feishu.cn/minutes/min_001)");
     expect(serialized).not.toContain("/dev/confirmations/conf_card_send/confirm");
-    expect(serialized).toContain('"action":"confirm"');
+    expect(serialized).not.toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).toContain('"action":"not_mine"');
+    expect(serialized).not.toContain('"action":"not_mine"');
     expect(serialized).not.toContain("mtg_001");
-    expect(serialized).toContain('"confirmation_id":"conf_card_send"');
+    expect(serialized).not.toContain('"confirmation_id":"conf_card_send"');
     expect(serialized).not.toContain("安全说明");
     expect(serialized).not.toContain("可修改信息");
     expect(serialized).not.toContain('"name":"owner"');
     expect(serialized).not.toContain('"name":"due_date"');
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).toContain("添加待办");
-    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
-      actions: [
-        { text: { content: "添加待办" } },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
-        { text: { content: "不添加" } }
-      ]
-    });
+    expect(serialized).toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
     const actionElement = interactive.elements.find((element) => element.tag === "action");
-    expect(actionElement).toMatchObject({ actions: expect.any(Array) });
-    expect(actionElement?.tag === "action" ? actionElement.actions.length : 0).toBe(4);
-    if (actionElement?.tag !== "action") {
-      throw new Error("Expected action element");
-    }
-    const confirmButton = actionElement.actions[0];
-    expect(confirmButton.name).toBe("confirm");
-    expect(confirmButton.value).toMatchObject({
-      confirmation_id: "conf_card_send",
-      request_id: "conf_card_send",
-      action: "confirm",
-      action_key: "confirm"
-    });
-    expect(confirmButton.value).not.toHaveProperty("endpoint");
-    expect(confirmButton.value).not.toHaveProperty("payload_template");
-    expect(confirmButton.behaviors).toEqual([
-      {
-        type: "callback",
-        value: confirmButton.value
-      }
-    ]);
+    expect(actionElement).toBeUndefined();
   });
 
   it("renders missing-owner action cards as personal todo creation", () => {
@@ -140,31 +112,16 @@ describe("larkIm.sendCard", () => {
     const actionElement = interactive.elements.find((element) => element.tag === "action");
 
     expect(serialized).toContain("负责人待补充");
-    expect(serialized).toContain('"name":"owner"');
+    expect(serialized).not.toContain('"name":"owner"');
     expect(serialized).not.toContain('"tag":"select_person"');
     expect(serialized).not.toContain("补全负责人");
     expect(serialized).not.toContain("我的个人待办");
     expect(serialized).not.toContain('"action":"complete_owner"');
     expect(serialized).not.toContain('"action":"confirm"');
-    expect(serialized).toContain('"action":"confirm_with_edits"');
-    expect(serialized).toContain('"action":"not_mine"');
-    expect(actionElement).toMatchObject({
-      actions: [
-        {
-          text: { content: "补全后添加待办" },
-          value: {
-            action_key: "confirm_with_edits",
-            action: "confirm_with_edits",
-            confirmation_id: "conf_missing_owner",
-            request_id: "conf_missing_owner",
-            edited_payload: "$editable_fields"
-          }
-        },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
-        { text: { content: "不添加" } }
-      ]
-    });
+    expect(serialized).not.toContain('"action":"confirm_with_edits"');
+    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
+    expect(actionElement).toBeUndefined();
   });
 
   it("keeps edited missing-owner cards out of person selection", () => {
@@ -196,30 +153,15 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain("负责人待补充");
     expect(serialized).not.toContain("我的个人待办");
     expect(serialized).not.toContain('"tag":"select_person"');
-    expect(serialized).toContain('"name":"owner"');
+    expect(serialized).not.toContain('"name":"owner"');
     expect(serialized).not.toContain("补全负责人");
     expect(serialized).not.toContain("@确认待办");
     expect(serialized).not.toContain('"action":"confirm"');
-    expect(serialized).toContain('"action":"confirm_with_edits"');
-    expect(serialized).toContain('"action":"not_mine"');
+    expect(serialized).not.toContain('"action":"confirm_with_edits"');
+    expect(serialized).not.toContain('"action":"not_mine"');
     expect(serialized).not.toContain('"action":"complete_owner"');
-    expect(actionElement).toMatchObject({
-      actions: [
-        {
-          text: { content: "补全后添加待办" },
-          value: {
-            action_key: "confirm_with_edits",
-            action: "confirm_with_edits",
-            confirmation_id: "conf_personal_todo",
-            request_id: "conf_personal_todo",
-            edited_payload: "$editable_fields"
-          }
-        },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
-        { text: { content: "不添加" } }
-      ]
-    });
+    expect(serialized).toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
+    expect(actionElement).toBeUndefined();
   });
 
   it("renders calendar cards with calendar color and focused actions", () => {
@@ -251,47 +193,27 @@ describe("larkIm.sendCard", () => {
     const visibleText = JSON.stringify(interactive.elements.slice(0, 6));
 
     expect(interactive.header.template).toBe("orange");
-    expect(interactive.header.title.content).toBe(`📅 ${calendarCard.title}`);
-    expect(serialized).toContain("📅 日程");
-    expect(serialized).toContain("日程 | 开始：5月5日 10:00");
+    expect(interactive.header.title.content).toBe("📅 无人机操作员访谈会议");
+    expect(serialized).not.toContain("日程 | 开始：5月5日 10:00");
     expect(visibleText).not.toContain("2026-05-05T10:00:00+08:00");
-    expect(serialized).toContain("日程确认");
+    expect(serialized).toContain("建议");
+    expect(serialized).toContain("依据");
     expect(serialized).toContain("[转写记录](https://example.feishu.cn/minutes/transcript_001)");
     expect(serialized).toContain("开始时间");
     expect(serialized).toContain("参会人");
     expect(serialized).toContain("原文片段");
-    expect(serialized).toContain("置信度");
+    expect(serialized).not.toContain("置信度");
     expect(serialized).not.toContain('"name":"agenda"');
     expect(serialized).not.toContain("安全说明");
     expect(serialized).not.toContain("可修改信息");
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).toContain('"action":"confirm"');
+    expect(serialized).not.toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).toContain('"action":"convert_to_task"');
-    expect(serialized).toContain('"action":"remind_later"');
+    expect(serialized).not.toContain('"action":"convert_to_task"');
+    expect(serialized).not.toContain('"action":"remind_later"');
+    expect(serialized).toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
     expect(serialized).not.toContain("mtg_001");
-    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
-      actions: [
-        {
-          text: { content: "添加日程" },
-          value: {
-            action_key: "confirm",
-            action: "confirm",
-            confirmation_id: "conf_calendar_send",
-            request_id: "conf_calendar_send"
-          },
-          behaviors: [
-            {
-              type: "callback",
-              value: expect.objectContaining({ action_key: "confirm", action: "confirm" })
-            }
-          ]
-        },
-        { text: { content: "转待办" } },
-        { text: { content: "稍后处理" } },
-        { text: { content: "不添加" } }
-      ]
-    });
+    expect(interactive.elements.find((element) => element.tag === "action")).toBeUndefined();
   });
 
   it("allows adding calendar cards when start time is present even if location is missing", () => {
@@ -321,31 +243,8 @@ describe("larkIm.sendCard", () => {
 
     expect(serialized).not.toContain("需补充");
     const actionElement = interactive.elements.find((element) => element.tag === "action");
-    expect(actionElement).toMatchObject({
-      actions: [
-        {
-          text: { content: "添加日程" },
-          value: {
-            action_key: "confirm",
-            action: "confirm",
-            confirmation_id: "conf_calendar_missing_location",
-            request_id: "conf_calendar_missing_location"
-          },
-          behaviors: [
-            {
-              type: "callback",
-              value: expect.objectContaining({
-                action_key: "confirm",
-                action: "confirm"
-              })
-            }
-          ]
-        },
-        { text: { content: "转待办" } },
-        { text: { content: "稍后处理" } },
-        { text: { content: "不添加" } }
-      ]
-    });
+    expect(actionElement).toBeUndefined();
+    expect(serialized).toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
   });
 
   it("keeps only missing start time input on calendar cards", () => {
@@ -373,39 +272,15 @@ describe("larkIm.sendCard", () => {
     const interactive = buildFeishuInteractiveCard(calendarCard);
     const serialized = JSON.stringify(interactive);
 
-    expect(serialized).toContain("需补充");
-    expect(serialized).toContain('"name":"start_time"');
+    expect(serialized).not.toContain("需补充");
+    expect(serialized).not.toContain('"name":"start_time"');
     expect(serialized).not.toContain('"name":"duration_minutes"');
     expect(serialized).not.toContain('"name":"location"');
     expect(serialized).not.toContain('"name":"agenda"');
     expect(serialized).not.toContain("可修改信息");
     const actionElement = interactive.elements.find((element) => element.tag === "action");
-    expect(actionElement).toMatchObject({
-      actions: [
-        {
-          text: { content: "补全后添加日程" },
-          value: {
-            action_key: "confirm_with_edits",
-            action: "confirm_with_edits",
-            confirmation_id: "conf_calendar_missing",
-            request_id: "conf_calendar_missing",
-            edited_payload: "$editable_fields"
-          },
-          behaviors: [
-            {
-              type: "callback",
-              value: expect.objectContaining({
-                action_key: "confirm_with_edits",
-                action: "confirm_with_edits"
-              })
-            }
-          ]
-        },
-        { text: { content: "转待办" } },
-        { text: { content: "稍后处理" } },
-        { text: { content: "不添加" } }
-      ]
-    });
+    expect(actionElement).toBeUndefined();
+    expect(serialized).toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
   });
 
   it("renders knowledge-base cards with knowledge color and fewer actions", () => {
@@ -434,48 +309,27 @@ describe("larkIm.sendCard", () => {
     const serialized = JSON.stringify(interactive);
 
     expect(interactive.header.template).toBe("green");
-    expect(interactive.header.title.content).toBe(`📚 ${kbCard.title}`);
-    expect(serialized).toContain("📚 知识库");
-    expect(serialized).toContain("知识库 | 主题：无人机操作方案");
+    expect(interactive.header.title.content).toBe("📚 无人机操作方案");
+    expect(serialized).not.toContain("知识库 | 主题：无人机操作方案");
     expect(serialized).toContain("...");
     expect(serialized).not.toContain("避免团队后续继续在群聊里翻找零散信息。");
-    expect(serialized).toContain("知识库确认");
+    expect(serialized).toContain("建议");
     expect(serialized).toContain("主题名称");
-    expect(serialized).toContain("关联会议");
+    expect(serialized).toContain("会议");
     expect(serialized).toContain("[会议纪要](https://example.feishu.cn/minutes/min_001)");
     expect(serialized).toContain("[转写记录](https://example.feishu.cn/minutes/transcript_002)");
     expect(serialized).not.toContain('"name":"suggested_goal"');
     expect(serialized).not.toContain("安全说明");
     expect(serialized).not.toContain("可修改信息");
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).toContain('"action":"create_kb"');
+    expect(serialized).not.toContain('"action":"create_kb"');
     expect(serialized).not.toContain('"action":"edit_and_create"');
-    expect(serialized).toContain('"action":"append_current_only"');
-    expect(serialized).toContain('"action":"never_remind_topic"');
+    expect(serialized).not.toContain('"action":"append_current_only"');
+    expect(serialized).not.toContain('"action":"never_remind_topic"');
     expect(serialized).not.toContain("匹配分");
     expect(serialized).not.toContain("match_reasons");
-    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
-      actions: [
-        {
-          text: { content: "创建知识库" },
-          value: {
-            action_key: "create_kb",
-            action: "create_kb",
-            confirmation_id: "conf_kb_send",
-            request_id: "conf_kb_send"
-          },
-          behaviors: [
-            {
-              type: "callback",
-              value: expect.objectContaining({ action_key: "create_kb", action: "create_kb" })
-            }
-          ]
-        },
-        { text: { content: "仅归档本次" } },
-        { text: { content: "不再提醒" } },
-        { text: { content: "不创建" } }
-      ]
-    });
+    expect(serialized).toContain("确认后可在知识库中创建/整理，本卡片先展示建议。");
+    expect(interactive.elements.find((element) => element.tag === "action")).toBeUndefined();
   });
 
   it("renders dry-run button labels with preview wording", () => {
@@ -484,6 +338,71 @@ describe("larkIm.sendCard", () => {
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
         { text: { content: "预览添加待办" } },
+        { text: { content: "不是我的" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
+  });
+
+  it("renders real callback buttons only when actions are explicitly enabled", () => {
+    const interactive = buildFeishuInteractiveCard(card, { actionsEnabled: true });
+    const serialized = JSON.stringify(interactive);
+    const actionElement = interactive.elements.find((element) => element.tag === "action");
+
+    expect(serialized).toContain('"action":"confirm"');
+    expect(serialized).toContain('"behaviors"');
+    expect(serialized).not.toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
+    expect(actionElement).toMatchObject({
+      actions: [
+        { text: { content: "添加待办" } },
+        { text: { content: "不是我的" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
+  });
+
+  it("keeps missing-field action cards simple when actions are enabled", () => {
+    const missingOwnerCard = buildActionConfirmationCard({
+      id: "conf_missing_owner_enabled",
+      target_id: "act_missing_owner_enabled",
+      recipient: "ou_recipient",
+      status: "sent",
+      original_payload: {
+        draft: {
+          title: "整理客户访谈结论",
+          description: "汇总访谈输出。",
+          owner: null,
+          collaborators: [],
+          due_date: null,
+          priority: "P1",
+          evidence: "会议中提出需要整理客户访谈结论，但没有明确负责人。",
+          confidence: 0.82,
+          suggested_reason: "会议证据中未明确负责人，需确认后再创建待办。",
+          missing_fields: ["owner", "due_date"]
+        }
+      }
+    });
+    const interactive = buildFeishuInteractiveCard(missingOwnerCard, { actionsEnabled: true });
+    const serialized = JSON.stringify(interactive);
+
+    expect(serialized).toContain('"name":"owner"');
+    expect(serialized).toContain('"name":"due_date"');
+    expect(serialized).toContain('"action":"confirm"');
+    expect(serialized).not.toContain('"action":"confirm_with_edits"');
+    expect(serialized).not.toContain("补全后添加待办");
+    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        {
+          text: { content: "添加待办" },
+          value: {
+            action_key: "confirm",
+            action: "confirm",
+            confirmation_id: "conf_missing_owner_enabled",
+            request_id: "conf_missing_owner_enabled"
+          }
+        },
         { text: { content: "不是我的" } },
         { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
