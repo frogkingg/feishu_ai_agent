@@ -106,7 +106,7 @@
 
 正例 2：创建新知识库
 
-历史会议 A 讨论校园比赛 Demo 的目标用户和场景，当前会议继续讨论 Demo 冲刺、评委展示路径、素材准备和风险。没有已有知识库覆盖这个主题。即使当前会议没有说“建知识库”，如果两场会议已经围绕同一个比赛 Demo 连续推进，应选择 `ask_create`。
+历史会议 A 讨论产品演示 Demo 的目标用户和场景，当前会议继续讨论 Demo 冲刺、用户展示路径、素材准备和风险。没有已有知识库覆盖这个主题。即使当前会议没有说“建知识库”，如果两场会议已经围绕同一个产品演示 Demo 连续推进，应选择 `ask_create`。
 
 输出要点：`suggested_action="ask_create"`，`matched_kb_id=null`，`matched_kb_name=null`，`candidate_meeting_ids` 包含当前会议和历史会议。
 

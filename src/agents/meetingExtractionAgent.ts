@@ -207,9 +207,8 @@ async function repairExtractionWithLlm(input: {
       "上一次输出没有通过 MeetingExtractionResult schema 校验。",
       "请在保留原始信息的基础上修正为项目期望的顶层 JSON object。",
       "不要返回 array 作为顶层，不要 Markdown，不要解释，不要省略必填字段。",
-      "请由你重新承担语义判断：action_items 只保留明确可执行事项；calendar_drafts 只保留后续会议、访谈、评审、同步、沟通等需要占用日历的安排。",
-      "只有交付物和截止时间的表达，例如“周五前完成方案”，应作为 action due_date，不要放进 calendar_drafts。",
-      "有明确沟通意图但时间不完整的表达，例如“下周找时间接口对齐沟通”，应保留为 calendar draft，start_time = null，并把 start_time 放入 missing_fields。",
+      "请继续遵守 system prompt 中的 Calendar Draft Decision Rules，由你重新承担日程草案语义判断。",
+      "不要用关键词命中或 schema repair 覆盖语义判断；修复只负责把你的判断整理成合法 JSON。",
       "owner 由会议语义决定；不确定时输出 null，并把 owner 放入 missing_fields。",
       `schema_error: ${briefSchemaError(input.error)}`,
       "invalid_output:",
@@ -228,7 +227,11 @@ export async function runMeetingExtractionAgent(input: {
   meeting: MeetingRow;
   llm: LlmClient;
 }): Promise<MeetingExtractionResult> {
-  const systemPrompt = readPrompt("meetingExtraction.md");
+  const systemPrompt = [
+    readPrompt("meetingExtraction.md"),
+    "# Calendar Draft Decision Rules",
+    readPrompt("calendar.md")
+  ].join("\n\n");
   const userPrompt = [
     `title: ${input.meeting.title}`,
     `meeting_started_at: ${input.meeting.started_at ?? "unknown"}`,
