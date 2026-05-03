@@ -137,6 +137,13 @@ export interface KnowledgeUpdateRow {
   created_at: string;
 }
 
+export interface TopicSuppressionRow {
+  id: string;
+  user_id: string;
+  topic_key: string;
+  created_at: string;
+}
+
 export interface CliRunRow {
   id: string;
   tool: string;
@@ -629,6 +636,21 @@ export function createRepositories(db: MeetingAtlasDb) {
     listConfirmationRequests(): ConfirmationRequestRow[] {
       return allRows<ConfirmationRequestRow>(
         db.prepare("SELECT * FROM confirmation_requests ORDER BY created_at ASC").all()
+      );
+    },
+
+    insertTopicSuppression(input: { id: string; user_id: string; topic_key: string }): void {
+      db.prepare(
+        `INSERT OR IGNORE INTO topic_suppressions (id, user_id, topic_key)
+        VALUES (?, ?, ?)`
+      ).run(input.id, input.user_id, input.topic_key);
+    },
+
+    isTopicSuppressed(input: { user_id: string; topic_key: string }): boolean {
+      return (
+        db
+          .prepare("SELECT 1 FROM topic_suppressions WHERE user_id = ? AND topic_key = ?")
+          .get(input.user_id, input.topic_key) !== undefined
       );
     },
 

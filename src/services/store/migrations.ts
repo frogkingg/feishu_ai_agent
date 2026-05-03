@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS knowledge_updates (
   FOREIGN KEY (kb_id) REFERENCES knowledge_bases(id)
 );
 
+CREATE TABLE IF NOT EXISTS topic_suppressions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  topic_key TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_topic_suppressions_user_topic
+  ON topic_suppressions(user_id, topic_key);
+
 CREATE TABLE IF NOT EXISTS cli_runs (
   id TEXT PRIMARY KEY,
   tool TEXT NOT NULL,

@@ -195,6 +195,59 @@ function buildTopicClusteringUserPrompt(context: TopicClusteringContext): string
   ].join("\n\n");
 }
 
+function suggestTopicName(input: { title: string; keywords: string[] }): string {
+  const primaryKeywords = input.keywords.slice(0, 2).join("");
+  return primaryKeywords ? `${primaryKeywords}主题知识库` : `${input.title}主题知识库`;
+}
+
+function topicKeyForSuppression(
+  match: TopicMatchResult,
+  context: TopicClusteringContext
+): string | null {
+  if (match.suggested_action === "ask_append") {
+    return match.matched_kb_name;
+  }
+
+  if (match.suggested_action === "ask_create") {
+    return suggestTopicName({
+      title: context.current_meeting.title,
+      keywords: context.extraction.topic_keywords
+    });
+  }
+
+  return null;
+}
+
+function applyTopicSuppression(input: {
+  repos: Repositories;
+  userId: string | null;
+  topicKey: string | null;
+  match: TopicMatchResult;
+}): TopicMatchResult {
+  if (input.userId === null || input.topicKey === null) {
+    return input.match;
+  }
+
+  if (
+    !input.repos.isTopicSuppressed({
+      user_id: input.userId,
+      topic_key: input.topicKey
+    })
+  ) {
+    return input.match;
+  }
+
+  return TopicMatchResultSchema.parse({
+    ...input.match,
+    matched_kb_id: null,
+    matched_kb_name: null,
+    score: 0,
+    match_reasons: [...input.match.match_reasons, `Topic suppressed by user: ${input.topicKey}`],
+    suggested_action: "no_action",
+    candidate_meeting_ids: [input.match.current_meeting_id]
+  });
+}
+
 function normalizeTopicMatch(
   raw: unknown,
   context: TopicClusteringContext,
@@ -260,7 +313,13 @@ export async function runTopicClusteringAgent(input: {
       schemaName: "TopicMatchResult"
     });
 
-    return normalizeTopicMatch(raw, context, input.meeting.id);
+    const match = normalizeTopicMatch(raw, context, input.meeting.id);
+    return applyTopicSuppression({
+      repos: input.repos,
+      userId: input.meeting.organizer,
+      topicKey: topicKeyForSuppression(match, context),
+      match
+    });
   } catch (error) {
     return fallbackTopicMatch(input.meeting.id, error);
   }

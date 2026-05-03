@@ -17,6 +17,7 @@ import { buildFeishuInteractiveCard, sendCard, syncConfirmationCardStatus } from
 import { type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
+import { createId } from "./utils/id";
 import { verifyLarkCardActionSignature, verifyLarkWebhookSignature } from "./utils/larkSignature";
 import {
   processMeetingTextToConfirmationsWorkflow,
@@ -208,6 +209,27 @@ function cardCallbackResponse(input: {
     ...toast(input.type, input.content),
     card: buildFeishuInteractiveCard(buildConfirmationCardFromRequest(input.confirmation))
   };
+}
+
+function confirmationPayload(request: ConfirmationRequestRow): Record<string, unknown> {
+  try {
+    return asRecord(JSON.parse(request.original_payload_json) as unknown) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function topicKeyFromConfirmation(request: ConfirmationRequestRow): string | null {
+  const payload = confirmationPayload(request);
+  const topicMatch = asRecord(payload.topic_match);
+  return firstString([
+    payload.topic_key,
+    payload.topic,
+    payload.topic_name,
+    payload.kb_name,
+    topicMatch?.topic,
+    topicMatch?.matched_kb_name
+  ]);
 }
 
 const CONFIRM_CARD_ACTION_KEYS = new Set([
@@ -987,6 +1009,18 @@ export function buildServer(input: {
       }
 
       if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
+        if (parsed.actionKey === "never_remind_topic") {
+          const topicKey = topicKeyFromConfirmation(confirmation);
+          const actorOpenId = parsed.actorOpenId ?? null;
+          if (actorOpenId !== null && topicKey !== null) {
+            input.repos.insertTopicSuppression({
+              id: createId("topic_supp"),
+              user_id: actorOpenId,
+              topic_key: topicKey
+            });
+          }
+        }
+
         const rejected = rejectRequest({
           repos: input.repos,
           id: requestId,
