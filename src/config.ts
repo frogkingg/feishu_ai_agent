@@ -15,6 +15,7 @@ export interface AppConfig {
   feishuCalendarCreateDryRun: boolean;
   feishuKnowledgeWriteDryRun: boolean;
   larkVerificationToken: string | null;
+  larkCardCallbackUrlHint: string | null;
   larkEncryptKey: string | null;
   devApiKey: string | null;
   larkCliBin: string;
@@ -30,6 +31,16 @@ export interface AppConfig {
 }
 
 type LlmProvider = AppConfig["llmProvider"];
+
+export interface CardCallbackReadiness {
+  ready: boolean;
+  actions_enabled: boolean;
+  verification_token_configured: boolean;
+  callback_url_configured: boolean;
+  callback_url_public: boolean;
+  callback_url_path_ok: boolean;
+  issues: string[];
+}
 
 function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
   if (value === undefined || value === "") {
@@ -50,6 +61,76 @@ function parseNumber(value: string | undefined, defaultValue: number): number {
 
 function parseLlmProvider(value: string | undefined): LlmProvider {
   return value === "openai-compatible" ? "openai-compatible" : "mock";
+}
+
+function looksLikePublicHttpUrl(value: string | null): {
+  configured: boolean;
+  publicUrl: boolean;
+  pathOk: boolean;
+} {
+  if (!value) {
+    return { configured: false, publicUrl: false, pathOk: false };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return { configured: true, publicUrl: false, pathOk: false };
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const publicUrl =
+    (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+    hostname !== "localhost" &&
+    hostname !== "127.0.0.1" &&
+    hostname !== "::1" &&
+    !hostname.endsWith(".localhost");
+
+  return {
+    configured: true,
+    publicUrl,
+    pathOk: parsed.pathname.endsWith("/webhooks/feishu/card-action")
+  };
+}
+
+export function getCardCallbackReadiness(config: Pick<
+  AppConfig,
+  "feishuCardActionsEnabled" | "larkVerificationToken" | "larkCardCallbackUrlHint"
+>): CardCallbackReadiness {
+  const url = looksLikePublicHttpUrl(config.larkCardCallbackUrlHint);
+  const verificationTokenConfigured = Boolean(config.larkVerificationToken);
+  const issues: string[] = [];
+
+  if (!config.feishuCardActionsEnabled) {
+    issues.push("FEISHU_CARD_ACTIONS_ENABLED must be true for real confirmation cards");
+  }
+  if (!verificationTokenConfigured) {
+    issues.push("LARK_VERIFICATION_TOKEN must be configured for card-action signature verification");
+  }
+  if (!url.configured) {
+    issues.push("LARK_CARD_CALLBACK_URL_HINT must be configured");
+  } else if (!url.publicUrl) {
+    issues.push("LARK_CARD_CALLBACK_URL_HINT must be an http/https public URL, not localhost or 127.0.0.1");
+  }
+  if (url.configured && !url.pathOk) {
+    issues.push("LARK_CARD_CALLBACK_URL_HINT should end with /webhooks/feishu/card-action");
+  }
+
+  return {
+    ready:
+      config.feishuCardActionsEnabled &&
+      verificationTokenConfigured &&
+      url.configured &&
+      url.publicUrl &&
+      url.pathOk,
+    actions_enabled: config.feishuCardActionsEnabled,
+    verification_token_configured: verificationTokenConfigured,
+    callback_url_configured: url.configured,
+    callback_url_public: url.publicUrl,
+    callback_url_path_ok: url.pathOk,
+    issues
+  };
 }
 
 function validateConfig(config: AppConfig): AppConfig {
@@ -85,7 +166,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     feishuDryRun,
     feishuReadDryRun: parseBoolean(process.env.FEISHU_READ_DRY_RUN, feishuDryRun),
     feishuCardSendDryRun: parseBoolean(process.env.FEISHU_CARD_SEND_DRY_RUN, true),
-    feishuCardActionsEnabled: parseBoolean(process.env.FEISHU_CARD_ACTIONS_ENABLED, false),
+    feishuCardActionsEnabled: parseBoolean(process.env.FEISHU_CARD_ACTIONS_ENABLED, true),
     feishuTaskCreateDryRun: parseBoolean(process.env.FEISHU_TASK_CREATE_DRY_RUN, feishuDryRun),
     feishuCalendarCreateDryRun: parseBoolean(
       process.env.FEISHU_CALENDAR_CREATE_DRY_RUN,
@@ -96,6 +177,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       feishuDryRun
     ),
     larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN || null,
+    larkCardCallbackUrlHint: process.env.LARK_CARD_CALLBACK_URL_HINT || null,
     larkEncryptKey: process.env.LARK_ENCRYPT_KEY || null,
     devApiKey: process.env.DEV_API_KEY || null,
     larkCliBin: process.env.LARK_CLI_BIN || "lark-cli",

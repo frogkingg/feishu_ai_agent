@@ -1,4 +1,4 @@
-import { loadConfig } from "../src/config";
+import { getCardCallbackReadiness, loadConfig } from "../src/config";
 
 describe("loadConfig", () => {
   it("defaults to mock LLM without API credentials", () => {
@@ -34,19 +34,19 @@ describe("loadConfig", () => {
 
   it("keeps card sending dry-run by default and lets it be explicitly disabled", () => {
     expect(loadConfig().feishuCardSendDryRun).toBe(true);
-    expect(loadConfig().feishuCardActionsEnabled).toBe(false);
+    expect(loadConfig().feishuCardActionsEnabled).toBe(true);
     expect(loadConfig({ feishuDryRun: true }).feishuCardSendDryRun).toBe(true);
     expect(loadConfig({ feishuDryRun: false }).feishuCardSendDryRun).toBe(true);
     expect(
       loadConfig({
         feishuDryRun: true,
         feishuCardSendDryRun: false,
-        feishuCardActionsEnabled: true
+        feishuCardActionsEnabled: false
       })
     ).toMatchObject({
       feishuDryRun: true,
       feishuCardSendDryRun: false,
-      feishuCardActionsEnabled: true
+      feishuCardActionsEnabled: false
     });
     expect(loadConfig({ feishuDryRun: false, feishuCardSendDryRun: true })).toMatchObject({
       feishuDryRun: false,
@@ -99,21 +99,61 @@ describe("loadConfig", () => {
     expect(
       loadConfig({
         larkVerificationToken: null,
+        larkCardCallbackUrlHint: null,
         larkEncryptKey: null
       })
     ).toMatchObject({
       larkVerificationToken: null,
+      larkCardCallbackUrlHint: null,
       larkEncryptKey: null
     });
 
     expect(
       loadConfig({
         larkVerificationToken: "verification-token",
+        larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action",
         larkEncryptKey: "encrypt-key"
       })
     ).toMatchObject({
       larkVerificationToken: "verification-token",
+      larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action",
       larkEncryptKey: "encrypt-key"
+    });
+  });
+
+  it("reports card callback readiness without exposing token values", () => {
+    expect(
+      getCardCallbackReadiness(
+        loadConfig({
+          feishuCardActionsEnabled: true,
+          larkVerificationToken: "verification-token",
+          larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
+        })
+      )
+    ).toMatchObject({
+      ready: true,
+      actions_enabled: true,
+      verification_token_configured: true,
+      callback_url_configured: true,
+      callback_url_public: true,
+      callback_url_path_ok: true,
+      issues: []
+    });
+
+    expect(
+      getCardCallbackReadiness(
+        loadConfig({
+          feishuCardActionsEnabled: true,
+          larkVerificationToken: "",
+          larkCardCallbackUrlHint: "http://localhost:3000/webhooks/feishu/card-action"
+        })
+      )
+    ).toMatchObject({
+      ready: false,
+      verification_token_configured: false,
+      callback_url_configured: true,
+      callback_url_public: false,
+      callback_url_path_ok: true
     });
   });
 

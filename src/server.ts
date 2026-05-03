@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
-import { AppConfig } from "./config";
+import { AppConfig, getCardCallbackReadiness } from "./config";
 import { ManualMeetingInputSchema, ProcessMeetingTextInputSchema } from "./schemas";
 import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
@@ -675,20 +675,25 @@ export function buildServer(input: {
     }
   });
 
-  app.get("/health", async () => ({
-    ok: true,
-    service: "meeting-atlas",
-    phase: "phase-6",
-    dry_run: input.config.feishuDryRun,
-    read_dry_run: input.config.feishuReadDryRun,
-    card_send_dry_run: input.config.feishuCardSendDryRun,
-    card_actions_enabled: input.config.feishuCardActionsEnabled,
-    task_create_dry_run: input.config.feishuTaskCreateDryRun,
-    calendar_create_dry_run: input.config.feishuCalendarCreateDryRun,
-    knowledge_write_dry_run: input.config.feishuKnowledgeWriteDryRun,
-    llm_provider: input.config.llmProvider,
-    sqlite_path: input.config.sqlitePath
-  }));
+  app.get("/health", async () => {
+    const cardCallbackReadiness = getCardCallbackReadiness(input.config);
+    return {
+      ok: true,
+      service: "meeting-atlas",
+      phase: "phase-6",
+      dry_run: input.config.feishuDryRun,
+      read_dry_run: input.config.feishuReadDryRun,
+      card_send_dry_run: input.config.feishuCardSendDryRun,
+      card_actions_enabled: input.config.feishuCardActionsEnabled,
+      card_callback_ready: cardCallbackReadiness.ready,
+      card_callback_url_configured: cardCallbackReadiness.callback_url_configured,
+      task_create_dry_run: input.config.feishuTaskCreateDryRun,
+      calendar_create_dry_run: input.config.feishuCalendarCreateDryRun,
+      knowledge_write_dry_run: input.config.feishuKnowledgeWriteDryRun,
+      llm_provider: input.config.llmProvider,
+      sqlite_path: input.config.sqlitePath
+    };
+  });
 
   app.post("/webhooks/feishu/event", async (request, reply) => {
     const rawBody = getRawBody(request);

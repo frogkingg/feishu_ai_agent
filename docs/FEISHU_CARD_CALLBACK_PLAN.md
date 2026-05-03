@@ -10,7 +10,15 @@
 
 飞书回调不能访问 `localhost`。本地开发服务需要一个可被飞书平台访问的公网 URL。
 
-真实发送卡片时，MeetingAtlas 默认保持 `FEISHU_CARD_ACTIONS_ENABLED=false`。在这个默认模式下，真实飞书卡片只展示建议和极短操作提示，不渲染 callback buttons，也不渲染卡片输入控件，避免公网回调未配置时用户点击按钮触发飞书 `200671`。只有公开回调 URL、验签配置和回调验收完成后，才允许显式设置 `FEISHU_CARD_ACTIONS_ENABLED=true`。
+真实发送的 confirmation card 默认必须包含可点击确认按钮。`display-only` 只允许用于点击确认、拒绝、失败或执行完成后的结果态，不能作为发送态确认卡。若显式设置 `FEISHU_CARD_ACTIONS_ENABLED=false`，该模式只能用于 preview-only 展示测试；真实发送未完成 confirmation 时必须失败并提示需要配置飞书 card-action callback，不能把不可确认卡伪装成有效确认卡。
+
+真实确认测试前必须完成：
+
+- 飞书应用后台配置公开 Card Action callback URL，指向 `https://your-domain/webhooks/feishu/card-action`。
+- MeetingAtlas 服务可被飞书公网访问，不能使用 `localhost`。
+- 配置 `LARK_VERIFICATION_TOKEN`，并在公网回调中启用验签。
+- 配置 `LARK_CARD_CALLBACK_URL_HINT=https://your-domain/webhooks/feishu/card-action`，且必须与飞书开放平台「消息卡片请求地址」一致。
+- 保持 `FEISHU_DRY_RUN=true`，直到 callback 确认、卡片结果态回写、幂等和审计记录都验收通过。
 
 开发阶段推荐：
 

@@ -39,6 +39,11 @@ describe("larkIm.sendCard", () => {
   const failingRunner: LarkCliRunner = async () => {
     throw new Error("fake lark CLI failure");
   };
+  const validCardCallbackConfig = {
+    feishuCardActionsEnabled: true,
+    larkVerificationToken: "verification-token",
+    larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
+  };
 
   function contentArg(args: string[]) {
     const contentIndex = args.indexOf("--content");
@@ -52,7 +57,7 @@ describe("larkIm.sendCard", () => {
     return args[dataIndex + 1];
   }
 
-  it("builds a display-only real card payload by default", () => {
+  it("builds a real send-state confirmation card with callback buttons by default", () => {
     const interactive = buildFeishuInteractiveCard(card);
     const serialized = JSON.stringify(interactive);
 
@@ -70,19 +75,26 @@ describe("larkIm.sendCard", () => {
     expect(serialized).not.toContain("置信度");
     expect(serialized).toContain("[会议纪要](https://example.feishu.cn/minutes/min_001)");
     expect(serialized).not.toContain("/dev/confirmations/conf_card_send/confirm");
-    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).toContain('"action":"not_mine"');
     expect(serialized).not.toContain("mtg_001");
-    expect(serialized).not.toContain('"confirmation_id":"conf_card_send"');
+    expect(serialized).toContain('"confirmation_id":"conf_card_send"');
     expect(serialized).not.toContain("安全说明");
     expect(serialized).not.toContain("可修改信息");
     expect(serialized).not.toContain('"name":"owner"');
     expect(serialized).not.toContain('"name":"due_date"');
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
+    expect(serialized).not.toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
     const actionElement = interactive.elements.find((element) => element.tag === "action");
-    expect(actionElement).toBeUndefined();
+    expect(actionElement).toMatchObject({
+      actions: [
+        { text: { content: "添加待办" } },
+        { text: { content: "不是我的" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
   });
 
   it("renders missing-owner action cards as personal todo creation", () => {
@@ -112,16 +124,23 @@ describe("larkIm.sendCard", () => {
     const actionElement = interactive.elements.find((element) => element.tag === "action");
 
     expect(serialized).toContain("负责人待补充");
-    expect(serialized).not.toContain('"name":"owner"');
+    expect(serialized).toContain('"name":"owner"');
     expect(serialized).not.toContain('"tag":"select_person"');
     expect(serialized).not.toContain("补全负责人");
     expect(serialized).not.toContain("我的个人待办");
     expect(serialized).not.toContain('"action":"complete_owner"');
-    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).not.toContain('"action":"not_mine"');
-    expect(serialized).toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
-    expect(actionElement).toBeUndefined();
+    expect(serialized).toContain('"action":"not_mine"');
+    expect(serialized).not.toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
+    expect(actionElement).toMatchObject({
+      actions: [
+        { text: { content: "添加待办" } },
+        { text: { content: "不是我的" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
   });
 
   it("keeps edited missing-owner cards out of person selection", () => {
@@ -153,15 +172,22 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain("负责人待补充");
     expect(serialized).not.toContain("我的个人待办");
     expect(serialized).not.toContain('"tag":"select_person"');
-    expect(serialized).not.toContain('"name":"owner"');
+    expect(serialized).toContain('"name":"owner"');
     expect(serialized).not.toContain("补全负责人");
     expect(serialized).not.toContain("@确认待办");
-    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).toContain('"action":"not_mine"');
     expect(serialized).not.toContain('"action":"complete_owner"');
-    expect(serialized).toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
-    expect(actionElement).toBeUndefined();
+    expect(serialized).not.toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
+    expect(actionElement).toMatchObject({
+      actions: [
+        { text: { content: "添加待办" } },
+        { text: { content: "不是我的" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
   });
 
   it("renders calendar cards with calendar color and focused actions", () => {
@@ -207,13 +233,20 @@ describe("larkIm.sendCard", () => {
     expect(serialized).not.toContain("安全说明");
     expect(serialized).not.toContain("可修改信息");
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).not.toContain('"action":"convert_to_task"');
-    expect(serialized).not.toContain('"action":"remind_later"');
-    expect(serialized).toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
+    expect(serialized).toContain('"action":"convert_to_task"');
+    expect(serialized).toContain('"action":"remind_later"');
+    expect(serialized).not.toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
     expect(serialized).not.toContain("mtg_001");
-    expect(interactive.elements.find((element) => element.tag === "action")).toBeUndefined();
+    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        { text: { content: "添加日程" } },
+        { text: { content: "转待办" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
   });
 
   it("allows adding calendar cards when start time is present even if location is missing", () => {
@@ -243,8 +276,15 @@ describe("larkIm.sendCard", () => {
 
     expect(serialized).not.toContain("需补充");
     const actionElement = interactive.elements.find((element) => element.tag === "action");
-    expect(actionElement).toBeUndefined();
-    expect(serialized).toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
+    expect(actionElement).toMatchObject({
+      actions: [
+        { text: { content: "添加日程" } },
+        { text: { content: "转待办" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
+    expect(serialized).not.toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
   });
 
   it("keeps only missing start time input on calendar cards", () => {
@@ -273,14 +313,21 @@ describe("larkIm.sendCard", () => {
     const serialized = JSON.stringify(interactive);
 
     expect(serialized).not.toContain("需补充");
-    expect(serialized).not.toContain('"name":"start_time"');
+    expect(serialized).toContain('"name":"start_time"');
     expect(serialized).not.toContain('"name":"duration_minutes"');
     expect(serialized).not.toContain('"name":"location"');
     expect(serialized).not.toContain('"name":"agenda"');
     expect(serialized).not.toContain("可修改信息");
     const actionElement = interactive.elements.find((element) => element.tag === "action");
-    expect(actionElement).toBeUndefined();
-    expect(serialized).toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
+    expect(actionElement).toMatchObject({
+      actions: [
+        { text: { content: "添加日程" } },
+        { text: { content: "转待办" } },
+        { text: { content: "稍后处理" } },
+        { text: { content: "不添加" } }
+      ]
+    });
+    expect(serialized).not.toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
   });
 
   it("renders knowledge-base cards with knowledge color and fewer actions", () => {
@@ -322,14 +369,21 @@ describe("larkIm.sendCard", () => {
     expect(serialized).not.toContain("安全说明");
     expect(serialized).not.toContain("可修改信息");
     expect(serialized).not.toContain('"tag":"textarea"');
-    expect(serialized).not.toContain('"action":"create_kb"');
+    expect(serialized).toContain('"action":"create_kb"');
     expect(serialized).not.toContain('"action":"edit_and_create"');
-    expect(serialized).not.toContain('"action":"append_current_only"');
-    expect(serialized).not.toContain('"action":"never_remind_topic"');
+    expect(serialized).toContain('"action":"append_current_only"');
+    expect(serialized).toContain('"action":"never_remind_topic"');
     expect(serialized).not.toContain("匹配分");
     expect(serialized).not.toContain("match_reasons");
-    expect(serialized).toContain("确认后可在知识库中创建/整理，本卡片先展示建议。");
-    expect(interactive.elements.find((element) => element.tag === "action")).toBeUndefined();
+    expect(serialized).not.toContain("确认后可在知识库中创建/整理，本卡片先展示建议。");
+    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [
+        { text: { content: "创建知识库" } },
+        { text: { content: "仅归档本次" } },
+        { text: { content: "不再提醒" } },
+        { text: { content: "不创建" } }
+      ]
+    });
   });
 
   it("renders dry-run button labels with preview wording", () => {
@@ -345,22 +399,15 @@ describe("larkIm.sendCard", () => {
     });
   });
 
-  it("renders real callback buttons only when actions are explicitly enabled", () => {
-    const interactive = buildFeishuInteractiveCard(card, { actionsEnabled: true });
+  it("renders preview-only display cards only when actions are explicitly disabled", () => {
+    const interactive = buildFeishuInteractiveCard(card, { actionsEnabled: false });
     const serialized = JSON.stringify(interactive);
     const actionElement = interactive.elements.find((element) => element.tag === "action");
 
-    expect(serialized).toContain('"action":"confirm"');
-    expect(serialized).toContain('"behaviors"');
-    expect(serialized).not.toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
-    expect(actionElement).toMatchObject({
-      actions: [
-        { text: { content: "添加待办" } },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
-        { text: { content: "不添加" } }
-      ]
-    });
+    expect(serialized).not.toContain('"action":"confirm"');
+    expect(serialized).not.toContain('"behaviors"');
+    expect(serialized).toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
+    expect(actionElement).toBeUndefined();
   });
 
   it("keeps missing-field action cards simple when actions are enabled", () => {
@@ -634,6 +681,7 @@ describe("larkIm.sendCard", () => {
       config: loadConfig({
         feishuDryRun: false,
         feishuCardSendDryRun: false,
+        ...validCardCallbackConfig,
         larkCliBin: "definitely-not-real-lark"
       }),
       card,
@@ -677,6 +725,7 @@ describe("larkIm.sendCard", () => {
       config: loadConfig({
         feishuDryRun: true,
         feishuCardSendDryRun: false,
+        ...validCardCallbackConfig,
         larkCliBin: "fake-lark-cli"
       }),
       card,
@@ -711,6 +760,105 @@ describe("larkIm.sendCard", () => {
       dry_run: 0,
       status: "success"
     });
+  });
+
+  it("fails real send-state cards when explicitly configured as preview-only", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const result = await sendCard({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCardSendDryRun: false,
+        feishuCardActionsEnabled: false,
+        larkVerificationToken: "verification-token",
+        larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action",
+        larkCliBin: "definitely-not-real-lark"
+      }),
+      card,
+      chatId: "oc_test_chat"
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "failed",
+      dry_run: false,
+      cli_run_id: null,
+      card_message_id: null,
+      chat_id: "oc_test_chat"
+    });
+    expect(result.error).toContain("require clickable card-action callbacks");
+    expect(result.error).toContain("FEISHU_CARD_ACTIONS_ENABLED must be true");
+    expect(repos.listCliRuns()).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      "missing callback URL",
+      {
+        feishuCardActionsEnabled: true,
+        larkVerificationToken: "verification-token",
+        larkCardCallbackUrlHint: null
+      },
+      "LARK_CARD_CALLBACK_URL_HINT must be configured"
+    ],
+    [
+      "localhost callback URL",
+      {
+        feishuCardActionsEnabled: true,
+        larkVerificationToken: "verification-token",
+        larkCardCallbackUrlHint: "http://localhost:3000/webhooks/feishu/card-action"
+      },
+      "must be an http/https public URL"
+    ],
+    [
+      "missing verification token",
+      {
+        feishuCardActionsEnabled: true,
+        larkVerificationToken: null,
+        larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
+      },
+      "LARK_VERIFICATION_TOKEN must be configured"
+    ],
+    [
+      "wrong callback path",
+      {
+        feishuCardActionsEnabled: true,
+        larkVerificationToken: "verification-token",
+        larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card"
+      },
+      "should end with /webhooks/feishu/card-action"
+    ]
+  ])("fails real send-state cards when callback readiness is invalid: %s", async (_name, configPatch, error) => {
+    const repos = createRepositories(createMemoryDatabase());
+    const calls: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      calls.push(args);
+      return { stdout: JSON.stringify({ message_id: "om_should_not_send" }), stderr: "" };
+    };
+
+    const result = await sendCard({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCardSendDryRun: false,
+        ...configPatch,
+        larkCliBin: "fake-lark-cli"
+      }),
+      card,
+      chatId: "oc_test_chat",
+      runner
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "failed",
+      dry_run: false,
+      cli_run_id: null,
+      card_message_id: null
+    });
+    expect(result.error).toContain(error);
+    expect(calls).toHaveLength(0);
+    expect(repos.listCliRuns()).toHaveLength(0);
   });
 
   it("keeps card sending dry-run by default even when other Feishu writes are real", async () => {

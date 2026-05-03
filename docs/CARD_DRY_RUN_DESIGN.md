@@ -103,11 +103,14 @@ lark-cli im +messages-send --msg-type interactive --content <card-json> --as bot
 ```env
 FEISHU_DRY_RUN=true
 FEISHU_CARD_SEND_DRY_RUN=false
+FEISHU_CARD_ACTIONS_ENABLED=true
+LARK_VERIFICATION_TOKEN=<configured in Feishu app>
+LARK_CARD_CALLBACK_URL_HINT=https://your-domain/webhooks/feishu/card-action
 LARK_CLI_BIN=lark-cli
 LLM_PROVIDER=mock
 ```
 
-该配置只打开飞书 IM 卡片发送，不打开任务、日程、Wiki 或 Doc 的真实写入。
+该配置只打开飞书 IM 确认卡片发送和卡片按钮回调，不打开任务、日程、Wiki 或 Doc 的真实写入。发送态 confirmation card 必须可确认；只读 / display-only 卡片只用于确认、拒绝、失败或执行完成后的结果态。如果 callback 公网地址、`LARK_CARD_CALLBACK_URL_HINT` 或验签尚未配置，真实发送会 fail fast，不应发送真实确认卡。飞书开放平台「消息卡片请求地址」必须与 `LARK_CARD_CALLBACK_URL_HINT` 一致。
 
 `POST /dev/cards/send-all`
 

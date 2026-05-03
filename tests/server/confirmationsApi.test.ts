@@ -193,6 +193,12 @@ function cardSendArgsForConfirmation(
 }
 
 describe("confirmation dev APIs", () => {
+  const validCardCallbackConfig = {
+    feishuCardActionsEnabled: true,
+    larkVerificationToken: "verification-token",
+    larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
+  };
+
   it("confirms and rejects requests through HTTP", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const app = buildServer({
@@ -771,6 +777,7 @@ describe("confirmation dev APIs", () => {
       config: loadConfig({
         feishuDryRun: true,
         feishuCardSendDryRun: false,
+        ...validCardCallbackConfig,
         larkCliBin: "fake-lark",
         sqlitePath: ":memory:"
       }),
@@ -877,6 +884,7 @@ describe("confirmation dev APIs", () => {
       config: loadConfig({
         feishuDryRun: false,
         feishuCardSendDryRun: false,
+        ...validCardCallbackConfig,
         larkCliBin: "definitely-not-real-lark",
         sqlitePath: ":memory:"
       }),

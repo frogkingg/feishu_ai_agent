@@ -112,7 +112,9 @@ MeetingAtlas 当前使用两个开关分层控制飞书能力：
    ```env
    FEISHU_DRY_RUN=true
    FEISHU_CARD_SEND_DRY_RUN=false
+   FEISHU_CARD_ACTIONS_ENABLED=true
    LARK_VERIFICATION_TOKEN=<your-token>
+   LARK_CARD_CALLBACK_URL_HINT=https://your-domain/webhooks/feishu/card-action
    LARK_CLI_BIN=lark-cli
    LLM_PROVIDER=openai-compatible
    LLM_BASE_URL=...
@@ -131,8 +133,12 @@ MeetingAtlas 当前使用两个开关分层控制飞书能力：
 
    ```bash
    ngrok http 3000
-   # 把 https://xxx.ngrok.io 填到飞书开放平台
+   # 把 https://xxx.ngrok.io/webhooks/feishu/card-action 同时填到：
+   # 1. 飞书开放平台「消息卡片请求地址」
+   # 2. LARK_CARD_CALLBACK_URL_HINT
    ```
+
+真实发送未完成 confirmation card 前，系统会检查 `FEISHU_CARD_ACTIONS_ENABLED=true`、`LARK_VERIFICATION_TOKEN` 非空、`LARK_CARD_CALLBACK_URL_HINT` 是公网 http/https URL 且以 `/webhooks/feishu/card-action` 结尾。任一条件不满足会 fail fast，不调用 lark-cli 发送可点击但会 200671 的卡片。
 
 真实 LLM 实验时保持 `FEISHU_DRY_RUN=true`，只切换模型提供方：
 

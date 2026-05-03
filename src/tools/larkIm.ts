@@ -1,4 +1,4 @@
-import { AppConfig, loadConfig } from "../config";
+import { AppConfig, getCardCallbackReadiness, loadConfig } from "../config";
 import { DryRunConfirmationCard } from "../schemas";
 import { ConfirmationRequestRow, Repositories } from "../services/store/repositories";
 import { linkifyMeetingReference } from "../utils/display";
@@ -147,6 +147,9 @@ interface BuildFeishuInteractiveCardOptions {
   mode?: CardRenderMode;
   actionsEnabled?: boolean;
 }
+
+const CallbackRequiredForRealConfirmationError =
+  "Real Feishu confirmation cards require clickable card-action callbacks. Configure FEISHU_CARD_ACTIONS_ENABLED=true, LARK_VERIFICATION_TOKEN, and a public LARK_CARD_CALLBACK_URL_HINT ending with /webhooks/feishu/card-action.";
 
 function trimToNull(value: string | null | undefined): string | null {
   if (value === undefined || value === null) {
@@ -687,7 +690,7 @@ export function buildFeishuInteractiveCard(
   options: BuildFeishuInteractiveCardOptions = {}
 ): FeishuInteractiveCard {
   const mode = options.mode ?? "real";
-  const actionsEnabled = options.actionsEnabled ?? false;
+  const actionsEnabled = options.actionsEnabled ?? true;
   const renderControls = mode === "dry_run" || actionsEnabled;
   const profile = visualProfile(card);
   const elements: FeishuCardElement[] = [
@@ -1093,6 +1096,20 @@ export async function sendCard(input: SendCardInput): Promise<SendCardResult> {
       identity,
       error: "lark.im.send_card requires recipient or chat_id"
     });
+  }
+
+  if (!cardSendDryRun && isEditableRenderStatus(input.card.status)) {
+    const callbackReadiness = getCardCallbackReadiness(config);
+    if (!callbackReadiness.ready) {
+      const details = callbackReadiness.issues.join("; ");
+      return failedResult({
+        dryRun: false,
+        recipient,
+        chatId,
+        identity,
+        error: `${CallbackRequiredForRealConfirmationError} Missing or invalid: ${details}`
+      });
+    }
   }
 
   const cardContent = buildFeishuInteractiveCard(input.card, {

@@ -167,6 +167,12 @@ describe("POST /webhooks/feishu/event", () => {
         operator_id: { open_id: "ou_card_owner" }
       }
     });
+    const signatureInput = {
+      timestamp: "1234567890",
+      nonce: "nonce-test",
+      verificationToken: "verification-token",
+      body
+    };
     const sentCardArgs: string[][] = [];
     const runner: LarkCliRunner = async (_bin, args) => {
       sentCardArgs.push(args);
@@ -182,7 +188,10 @@ describe("POST /webhooks/feishu/event", () => {
     const { app, repos } = createApp(
       {
         feishuDryRun: true,
-        feishuCardSendDryRun: false
+        feishuCardSendDryRun: false,
+        feishuCardActionsEnabled: true,
+        larkVerificationToken: "verification-token",
+        larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
       },
       runner
     );
@@ -191,7 +200,10 @@ describe("POST /webhooks/feishu/event", () => {
       method: "POST",
       url: "/webhooks/feishu/event",
       headers: {
-        "content-type": "application/json"
+        "content-type": "application/json",
+        "x-lark-request-timestamp": signatureInput.timestamp,
+        "x-lark-request-nonce": signatureInput.nonce,
+        "x-lark-signature": sign(signatureInput)
       },
       payload: body
     });
