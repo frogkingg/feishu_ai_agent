@@ -1,11 +1,17 @@
 # Feishu CLI Notes
 
-Phase 4 wired confirmation execution into the tool layer.
+MeetingAtlas routes Feishu side effects through tool wrappers only after a
+confirmation request is accepted. Real Feishu writes remain disabled by default
+through `FEISHU_DRY_RUN=true`.
 
-Phase 6 still keeps knowledge-base creation as local dry-run Markdown.
-The current card-send phase adds a `lark.im.send_card` wrapper for confirmation cards.
-Real Feishu writes remain disabled by default through `FEISHU_DRY_RUN=true`;
-card sending has its own `FEISHU_CARD_SEND_DRY_RUN` switch, which defaults to `true`.
+The tool layer currently covers:
+
+- `lark.im.send_card` and `lark.im.update_card` for confirmation card delivery and status sync.
+- `lark.task.create` for confirmed action items.
+- `lark.calendar.create` for confirmed calendar drafts.
+- `lark.wiki.spaces.create`, `lark.doc.create`, and `lark.docs.update` for knowledge-base write canaries.
+
+Each class of write has its own dry-run switch so real tests can be opened one lane at a time.
 
 ## Feishu Safety Modes
 
@@ -13,19 +19,25 @@ card sending has its own `FEISHU_CARD_SEND_DRY_RUN` switch, which defaults to `t
 | ------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mode A: full dry-run, default safe mode     | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=true`  | Does not send real cards; does not create real tasks; does not create real calendar events; does not create real Wiki / Doc resources; all CLI calls are recorded as `planned` / dry-run. |
 | Mode B: real confirmation cards only        | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=false` | Sends real Feishu confirmation cards; tasks, calendars, Wiki / Doc remain dry-run; this is the recommended first real Feishu test mode.                                                   |
-| Mode C: full real mode, not recommended yet | `FEISHU_DRY_RUN=false`                                    | Future mode for real task, calendar, Wiki / Doc writes; not recommended now; CLI failures must not be recorded as success.                                                                |
+| Mode C: per-workflow or full real canary    | `FEISHU_DRY_RUN=false` or a single write dry-run set false | Allows real task, calendar, Wiki / Doc writes after explicit calibration; not recommended for unisolated environments. CLI failures must not be recorded as success.                      |
 
 ## Current Tool Commands
 
-The tool layer currently uses abstract command arguments:
+Confirmed task creation uses:
 
 ```text
-lark task create ...
-lark calendar event create ...
+lark-cli task +create --summary <title> --description <description> [--due <date>] [--assignee <ou_id>] --as user
 ```
 
-These are placeholders inside `src/tools/larkTask.ts` and
-`src/tools/larkCalendar.ts`, not product workflow assumptions.
+If the owner is a natural-language name instead of an `ou_` open_id, MeetingAtlas
+does not silently drop it. The task description is appended with
+`负责人（待认领）：<name>`, and the result reports `owner_resolved=false`.
+
+Confirmed calendar creation uses:
+
+```text
+lark-cli calendar +create --summary <title> --start <iso> --end <iso> --description <agenda> [--attendee-ids <ou_ids>] --as user
+```
 
 Confirmation card sending uses the calibrated IM shortcut shape:
 
@@ -52,8 +64,19 @@ LLM_PROVIDER=mock
 This configuration opens only the IM card delivery path. Confirming a card still executes
 through the confirmation layer and remains dry-run while `FEISHU_DRY_RUN=true`.
 
-Before enabling real writes, calibrate command names and payload shape with the
-local CLI:
+Knowledge-base creation uses:
+
+```text
+lark-cli wiki spaces create --data <json> --format json --yes --as user
+lark-cli wiki +node-create --space-id <space_id> --title <page_title> --obj-type docx --as user
+lark-cli docs +update --api-version v2 --doc <doc_token> --command append --content <markdown> --doc-format markdown --as user
+```
+
+`createKnowledgeBaseWorkflow` writes the generated homepage page as a doc using
+`--space-id`; it does not treat a Wiki `space_id` as a `parent_node_token`.
+
+Before enabling real writes, calibrate command names, permissions, and payload
+shape with the local CLI:
 
 ```bash
 lark-cli --help
@@ -82,20 +105,26 @@ The default `LARK_CLI_BIN` is `lark-cli`.
 - For card sending, if the CLI is unavailable or exits with an error in real
   mode, the send-card result must be `failed`; the confirmation request remains
   unexecuted and must not receive a fake `card_message_id`.
-- Knowledge-base creation remains dry-run only until Phase 7 wires `larkWiki` /
-  `larkDoc`; real mode must fail instead of creating mock wiki URLs.
-- Mode C (`FEISHU_DRY_RUN=false`) is not recommended yet. When it is enabled in the
-  future, CLI failures must never be turned into fake task, calendar, Wiki, or Doc success.
+- Knowledge-base real writes are canary-gated by `FEISHU_KNOWLEDGE_WRITE_DRY_RUN`;
+  CLI failures must never be turned into fake Wiki or Doc success.
+- Mode C (`FEISHU_DRY_RUN=false`) is not recommended for shared or unisolated
+  environments. When enabled, CLI failures must never be turned into fake task,
+  calendar, Wiki, or Doc success.
 
 ## Webhook Boundary
 
-`POST /webhooks/feishu/event` currently supports Feishu challenge response and
-logs unrecognized payloads before returning accepted.
+`POST /webhooks/feishu/event` supports Feishu challenge response, signature
+verification when `LARK_VERIFICATION_TOKEN` is configured, and accepted handling
+for unrecognized events.
 
-Signature verification, event de-duplication, and mapping real meeting/minutes
-events into MeetingAtlas inputs are Phase 7 work.
+`vc.meeting.recording_ready_v1` events are mapped into MeetingAtlas meeting
+processing in the background.
 
-`POST /webhooks/feishu/card` is a dry-run-only skeleton for card button callbacks.
-It maps `action_key` and `request_id` back to confirmation actions, refuses to run when
-`FEISHU_DRY_RUN=false`, and must receive production-grade signature verification before
-public exposure.
+`POST /webhooks/feishu/card-action` maps button payloads back to confirmation
+actions, executes accepted operations through the confirmation layer, and syncs
+the final card status.
+
+In `development` and `test`, missing `LARK_VERIFICATION_TOKEN` is allowed with a
+warning for local testing. In all other environments, missing verification token
+returns 503 for Feishu webhooks. `/dev/*` follows the same fail-closed rule for
+`DEV_API_KEY`.
