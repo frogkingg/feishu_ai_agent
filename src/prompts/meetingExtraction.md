@@ -83,6 +83,8 @@ SourceMention 格式：
 1. 每个 action item 必须有 title。
 2. 每个 action item 必须有 evidence。
 3. 每个 action item 必须有 suggested_reason。
+   3a. 如果 action item 的意图是创建、整理、归档、维护或更新知识库、研究档案、项目资料库、上手包、专题资料沉淀，suggested_reason 必须包含精确片段 "kb_creation_intent: true"。
+   3b. 这个标记只用于让 workflow 识别“知识库创建/整理类 action”并改走知识库确认路由；普通整理清单、建立 SOP、补充说明文档、同步表格等事项不要加这个标记。
 4. 不确定负责人时 owner = null，并在 missing_fields 中加入 "owner"。
 5. 不确定截止时间时 due_date = null，并在 missing_fields 中加入 "due_date"。
 6. due_date 必须是 YYYY-MM-DD 格式，例如 "2026-05-01"。
@@ -114,6 +116,9 @@ SourceMention 格式：
 - “周五前完成方案”“下周五前交付方案”“月底前补齐清单”这类只有交付物和截止时间的表达，应生成 action item 的 due_date，不要生成 calendar_drafts。
 - 如果只有“需要建立 SOP”“需要关注风险”“可以后续整理”“可以看看”“有机会研究”，但没有 owner、动作主体、交付物或截止时间，不要生成 action item。
 - “建立 SOP”这类团队共识，如果没有 owner 和 due_date，优先作为 key_decisions，不要强行变成 action item。
+- 如果会议明确要求把会议材料、访谈结论、项目资料、用户问题或主题内容整理成知识库/资料库/研究档案/上手包，并且符合 action item 的 owner/动作/交付物边界，可以生成 action item；此时 suggested_reason 必须包含 "kb_creation_intent: true"。
+- 如果只是“整理风险清单”“建立 SOP”“补一版接口说明”“更新需求表”，对象不是知识库、研究档案、资料库或上手包，不要加入 "kb_creation_intent: true"。
+- 如果会议只是表达“后续可以沉淀一下”“有机会整理成资料”，没有 owner、动作主体、交付物或截止时间，不要为了知识库路由而生成 action item。
 - “风险/阻塞/不确定/权限分散/流程不统一/可能影响/担心/缺少……”优先进入 risks，不要为了补 action 而把风险改写成待办。
 - “找时间聊一下”“之后对齐一下”“可以看看”“有机会研究”“需要关注”“后续再讨论”这类弱表达，缺少明确 owner + 可交付物 + 截止时间时，不要生成 action item。
 - 如果发言人明确认领动作，例如“我负责确认权限”“陈一你 5 月 6 日前改一版线框图”，可以生成 action item；缺少 due date 时 due_date = null 且 missing_fields 包含 "due_date"。
@@ -149,6 +154,8 @@ SourceMention 格式：
 - “陈一你 2026-05-06 前把首页线框图改一版。” -> 生成 action item，owner = "陈一"，due_date = "2026-05-06"。
 - “需要建立统一 SOP。”如果没有 owner 或截止时间 -> 作为 key_decisions；不要生成 action item。
 - “王五负责在 2026-05-03 前整理风险清单。” -> 生成 action item。
+- “张三负责在 2026-05-10 前把两次访谈结论整理成客户研究知识库。” -> 生成 action item，suggested_reason 包含 "kb_creation_intent: true"。
+- “李四负责在 2026-05-10 前整理风险清单。” -> 生成 action item，但 suggested_reason 不包含 "kb_creation_intent: true"。
 
 下面是不同场景的完整 JSON 示例。示例只用于说明结构和判断边界；实际输出时只返回一个 JSON 对象。
 

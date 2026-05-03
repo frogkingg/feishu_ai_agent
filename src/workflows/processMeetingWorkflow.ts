@@ -16,12 +16,7 @@ import { formatMeetingReference } from "../utils/display";
 import { createId } from "../utils/id";
 import { personalWorkspaceName } from "../utils/personalWorkspace";
 
-const KnowledgeBaseActionIntentPatterns = [
-  /创建.{0,12}知识库/,
-  /整理.{0,12}知识库/,
-  /归档到.{0,12}知识库/,
-  /建立.{0,12}知识库/
-];
+const KnowledgeBaseCreationIntentMarker = "kb_creation_intent: true";
 const PersonalKnowledgeBaseMode = "personal";
 
 export interface ProcessMeetingResult {
@@ -61,8 +56,7 @@ function knowledgeCuratorGuidance(): string[] {
 function isKnowledgeBaseCreationAction(
   item: MeetingExtractionResult["action_items"][number]
 ): boolean {
-  const text = `${item.title} ${item.description ?? ""}`;
-  return KnowledgeBaseActionIntentPatterns.some((pattern) => pattern.test(text));
+  return item.suggested_reason.toLowerCase().includes(KnowledgeBaseCreationIntentMarker);
 }
 
 function actionConfirmationRecipient(input: {

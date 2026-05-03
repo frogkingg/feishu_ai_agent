@@ -427,7 +427,7 @@ describe("demo-full-p0 script", () => {
           priority: "P1",
           evidence: "后续要把这两次访谈整理成一个无人机操作方案知识库。",
           confidence: 0.9,
-          suggested_reason: "会议明确提出整理知识库。",
+          suggested_reason: "会议明确提出整理知识库。kb_creation_intent: true",
           missing_fields: []
         },
         {
@@ -631,7 +631,7 @@ describe("demo-full-p0 script", () => {
             priority: "P1",
             evidence: "后续要把这两次访谈整理成一个无人机操作方案知识库。",
             confidence: 0.9,
-            suggested_reason: "会议明确提出整理知识库。",
+            suggested_reason: "会议明确提出整理知识库。kb_creation_intent: true",
             missing_fields: []
           },
           {
