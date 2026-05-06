@@ -316,6 +316,60 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json()).toEqual({ challenge: "challenge-token" });
   });
 
+  it("returns the Feishu challenge value before missing-token checks in production", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        nodeEnv: "production",
+        sqlitePath: ":memory:",
+        larkVerificationToken: null
+      }),
+      repos,
+      llm: new MockLlmClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: { challenge: "challenge-token" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ challenge: "challenge-token" });
+  });
+
+  it("keeps ordinary card actions fail-closed without a verification token in production", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const app = buildServer({
+      config: loadConfig({
+        feishuDryRun: true,
+        nodeEnv: "production",
+        sqlitePath: ":memory:",
+        larkVerificationToken: null
+      }),
+      repos,
+      llm: new MockLlmClient()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        open_id: "ou_test",
+        action: {
+          value: {
+            confirmation_id: "nonexistent",
+            action: "confirm"
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: "LARK_VERIFICATION_TOKEN not configured" });
+  });
+
   it("accepts legacy Feishu card-action callbacks signed with 40-character sha1 signatures", async () => {
     const verificationToken = "verification-token";
     const { app } = await createAppWithConfirmations(verificationToken);

@@ -54,6 +54,19 @@ describe("POST /webhooks/feishu/event", () => {
     expect(response.json()).toEqual({ challenge: "challenge-token" });
   });
 
+  it("returns the Feishu challenge value before missing-token checks in production", async () => {
+    const { app } = createApp({ nodeEnv: "production", larkVerificationToken: null });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      payload: { challenge: "challenge-token" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ challenge: "challenge-token" });
+  });
+
   it("returns the Feishu challenge value before signature verification", async () => {
     const { app } = createApp({ larkVerificationToken: "verification-token" });
 
@@ -65,6 +78,19 @@ describe("POST /webhooks/feishu/event", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ challenge: "challenge-token" });
+  });
+
+  it("keeps ordinary events fail-closed without a verification token in production", async () => {
+    const { app } = createApp({ nodeEnv: "production", larkVerificationToken: null });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      payload: { header: { event_type: "unknown.event" }, event: { id: "evt_001" } }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: "LARK_VERIFICATION_TOKEN not configured" });
   });
 
   it("accepts unrecognized events", async () => {

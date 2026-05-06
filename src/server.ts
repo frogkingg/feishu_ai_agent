@@ -945,6 +945,12 @@ export function buildServer(input: {
   });
 
   app.post("/webhooks/feishu/event", async (request, reply) => {
+    const rawBody = getRawBody(request);
+    const payload = (request.body ?? {}) as FeishuEventWebhookPayload;
+    if (typeof payload.challenge === "string") {
+      return { challenge: payload.challenge };
+    }
+
     if (!input.config.larkVerificationToken) {
       if (allowsLocalSecurityBypass(input.config)) {
         request.log.warn(
@@ -953,12 +959,6 @@ export function buildServer(input: {
       } else {
         return reply.code(503).send({ error: "LARK_VERIFICATION_TOKEN not configured" });
       }
-    }
-
-    const rawBody = getRawBody(request);
-    const payload = (request.body ?? {}) as FeishuEventWebhookPayload;
-    if (typeof payload.challenge === "string") {
-      return { challenge: payload.challenge };
     }
 
     if (
@@ -1057,6 +1057,12 @@ export function buildServer(input: {
   });
 
   app.post("/webhooks/feishu/card-action", async (request, reply) => {
+    const rawBody = getRawBody(request);
+    const bodyRecord = asRecord(request.body ?? {});
+    if (bodyRecord !== null && typeof bodyRecord.challenge === "string") {
+      return { challenge: bodyRecord.challenge };
+    }
+
     if (!input.config.larkVerificationToken) {
       if (allowsLocalSecurityBypass(input.config)) {
         request.log.warn(
@@ -1065,12 +1071,6 @@ export function buildServer(input: {
       } else {
         return reply.code(503).send({ error: "LARK_VERIFICATION_TOKEN not configured" });
       }
-    }
-
-    const rawBody = getRawBody(request);
-    const bodyRecord = asRecord(request.body ?? {});
-    if (bodyRecord !== null && typeof bodyRecord.challenge === "string") {
-      return { challenge: bodyRecord.challenge };
     }
 
     if (
