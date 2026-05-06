@@ -20,7 +20,7 @@ import { type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
 import { createId } from "./utils/id";
-import { verifyLarkCardActionSignature, verifyLarkWebhookSignature } from "./utils/larkSignature";
+import { decryptLarkPayload, verifyLarkCardActionSignature, verifyLarkWebhookSignature } from "./utils/larkSignature";
 import {
   processMeetingTextToConfirmationsWorkflow,
   processMeetingWorkflow
@@ -44,6 +44,7 @@ const SendCardBodySchema = z
   });
 
 const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
+const FeishuMeetingEndedEventType = "vc.meeting.all_meeting_ended_v1";
 const TranscriptPendingText = "【transcript pending - to be fetched via lark-cli vc +notes】";
 const CardActionAcceptedMessage = "已收到请求，正在添加到飞书…";
 const CardActionSnoozedMessage = "好的，30 分钟后再提醒你";
@@ -112,17 +113,29 @@ function isLarkSignatureValid(input: {
   request: FastifyRequest;
   body: string;
   verificationToken: string | null;
+  encryptKey?: string | null;
 }): boolean {
-  if (input.verificationToken === null) {
-    return true;
-  }
-
   const timestamp = getHeaderString(input.request, "x-lark-request-timestamp");
   const nonce = getHeaderString(input.request, "x-lark-request-nonce");
   const signature = getHeaderString(input.request, "x-lark-signature");
 
   if (timestamp === null || nonce === null || signature === null) {
     return false;
+  }
+
+  // When Encrypt Key is configured, Feishu signs with Encrypt Key on the raw body
+  if (input.encryptKey) {
+    return verifyLarkWebhookSignature({
+      timestamp,
+      nonce,
+      body: input.body,
+      verificationToken: input.encryptKey,
+      signature
+    });
+  }
+
+  if (input.verificationToken === null) {
+    return true;
   }
 
   return verifyLarkWebhookSignature({
@@ -139,17 +152,29 @@ function isLarkCardActionSignatureValid(input: {
   rawBody: string;
   body: unknown;
   verificationToken: string | null;
+  encryptKey?: string | null;
 }): boolean {
-  if (input.verificationToken === null) {
-    return true;
-  }
-
   const timestamp = getHeaderString(input.request, "x-lark-request-timestamp");
   const nonce = getHeaderString(input.request, "x-lark-request-nonce");
   const signature = getHeaderString(input.request, "x-lark-signature");
 
   if (timestamp === null || nonce === null || signature === null) {
     return false;
+  }
+
+  // When Encrypt Key is configured, encrypted card events use SHA-256 with Encrypt Key
+  if (input.encryptKey) {
+    return verifyLarkWebhookSignature({
+      timestamp,
+      nonce,
+      body: input.rawBody,
+      verificationToken: input.encryptKey,
+      signature
+    });
+  }
+
+  if (input.verificationToken === null) {
+    return true;
   }
 
   if (
@@ -188,6 +213,31 @@ function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, un
 
 function allowsLocalSecurityBypass(config: Pick<AppConfig, "nodeEnv">): boolean {
   return config.nodeEnv === "development" || config.nodeEnv === "test";
+}
+
+function sortedStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(sortedStringify).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0
+  );
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${sortedStringify(v)}`).join(",")}}`;
+}
+
+function decryptFeishuPayloadIfEncrypted(
+  body: Record<string, unknown>,
+  encryptKey: string | null
+): { decrypted: boolean; payload: Record<string, unknown>; rawForSignature: string } {
+  if (typeof body.encrypt === "string" && encryptKey) {
+    const decryptedJson = decryptLarkPayload(body.encrypt, encryptKey);
+    const payload = JSON.parse(decryptedJson) as Record<string, unknown>;
+    return { decrypted: true, payload, rawForSignature: decryptedJson };
+  }
+  return { decrypted: false, payload: body, rawForSignature: JSON.stringify(body) };
 }
 
 function requiresDevApiKey(url: string): boolean {
@@ -946,8 +996,22 @@ export function buildServer(input: {
 
   app.post("/webhooks/feishu/event", async (request, reply) => {
     const rawBody = getRawBody(request);
-    const payload = (request.body ?? {}) as FeishuEventWebhookPayload;
-    if (typeof payload.challenge === "string") {
+    const rawPayload = (request.body ?? {}) as Record<string, unknown>;
+
+    // Handle unencrypted challenge (no Encrypt Key configured)
+    if (typeof rawPayload.challenge === "string") {
+      return { challenge: rawPayload.challenge };
+    }
+
+    // Handle encrypted payload (Encrypt Key configured in Feishu Open Platform)
+    const { decrypted, payload: payloadData, rawForSignature } = decryptFeishuPayloadIfEncrypted(
+      rawPayload,
+      input.config.larkEncryptKey
+    );
+    const payload = payloadData as FeishuEventWebhookPayload;
+
+    // Handle encrypted challenge (return immediately, no signature check needed)
+    if (decrypted && typeof payload.challenge === "string") {
       return { challenge: payload.challenge };
     }
 
@@ -965,11 +1029,16 @@ export function buildServer(input: {
       !isLarkSignatureValid({
         request,
         body: rawBody,
-        verificationToken: input.config.larkVerificationToken
+        verificationToken: input.config.larkVerificationToken,
+        encryptKey: input.config.larkEncryptKey
       })
     ) {
       request.log.warn(
-        getLarkSignatureDiagnostics(request),
+        {
+          ...getLarkSignatureDiagnostics(request),
+          decrypted,
+          raw_body_preview: rawBody.slice(0, 120)
+        },
         "rejected feishu event webhook with invalid signature"
       );
       return reply.code(401).send({ error: "Invalid Lark webhook signature" });
@@ -978,15 +1047,17 @@ export function buildServer(input: {
     const eventType = getFeishuEventType(payload);
     request.log.info({ event_type: eventType }, "received feishu event webhook");
 
-    if (eventType === FeishuRecordingReadyEventType) {
+    if (eventType === FeishuRecordingReadyEventType || eventType === FeishuMeetingEndedEventType) {
       const event = FeishuRecordingReadyEventSchema.parse(payload.event ?? {});
       const organizer = event.operator_id?.open_id ?? event.host_user_id?.open_id ?? null;
       const externalMeetingId = event.meeting_id ?? event.minute_token ?? "unknown";
       const title = event.topic?.trim() || externalMeetingId;
 
+      // 会议结束后需要更长时间等待妙记生成
+      const waitMs = eventType === FeishuMeetingEndedEventType ? 15000 : 5000;
+
       void (async () => {
-        // 等待妙记生成
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
         const transcript = await withTimeout(
           fetchTranscript({
             repos: input.repos,
@@ -998,7 +1069,7 @@ export function buildServer(input: {
           }).catch((error) => {
             request.log.warn(
               { err: error, external_meeting_id: externalMeetingId },
-              "failed to fetch transcript for feishu recording_ready event; using fallback text"
+              "failed to fetch transcript for feishu event; using fallback text"
             );
             return TranscriptPendingText;
           }),
@@ -1036,7 +1107,7 @@ export function buildServer(input: {
             card_send_results: cardSendResults.length,
             transcript_preview: transcript.slice(0, 80)
           },
-          "triggered meeting workflow from feishu recording_ready event"
+          "triggered meeting workflow from feishu event"
         );
       })().catch((error) => {
         request.log.error(
@@ -1045,7 +1116,7 @@ export function buildServer(input: {
             external_meeting_id: externalMeetingId,
             err: error
           },
-          "failed meeting workflow from feishu recording_ready event"
+          "failed meeting workflow from feishu event"
         );
       });
 
@@ -1058,8 +1129,22 @@ export function buildServer(input: {
 
   app.post("/webhooks/feishu/card-action", async (request, reply) => {
     const rawBody = getRawBody(request);
-    const bodyRecord = asRecord(request.body ?? {});
-    if (bodyRecord !== null && typeof bodyRecord.challenge === "string") {
+    const rawBodyRecord = asRecord(request.body ?? {});
+
+    // Handle unencrypted challenge (no Encrypt Key configured)
+    if (rawBodyRecord !== null && typeof rawBodyRecord.challenge === "string") {
+      return { challenge: rawBodyRecord.challenge };
+    }
+
+    // Handle encrypted payload (Encrypt Key configured in Feishu Open Platform)
+    const { decrypted, payload: decryptedPayload, rawForSignature } = decryptFeishuPayloadIfEncrypted(
+      rawBodyRecord ?? {},
+      input.config.larkEncryptKey
+    );
+    const bodyRecord = decrypted ? (decryptedPayload as Record<string, unknown>) : rawBodyRecord;
+
+    // Handle encrypted challenge (return immediately, no signature check needed)
+    if (decrypted && bodyRecord !== null && typeof bodyRecord.challenge === "string") {
       return { challenge: bodyRecord.challenge };
     }
 
@@ -1076,9 +1161,10 @@ export function buildServer(input: {
     if (
       !isLarkCardActionSignatureValid({
         request,
-        rawBody,
-        body: request.body ?? {},
-        verificationToken: input.config.larkVerificationToken
+        rawBody: rawBody,
+        body: decrypted ? decryptedPayload : (request.body ?? {}),
+        verificationToken: input.config.larkVerificationToken,
+        encryptKey: input.config.larkEncryptKey
       })
     ) {
       request.log.warn(
@@ -1088,7 +1174,7 @@ export function buildServer(input: {
       return reply.code(401).send({ error: "Invalid Lark webhook signature" });
     }
 
-    const parsed = extractCardCallbackPayload(request.body ?? {});
+    const parsed = extractCardCallbackPayload(decrypted ? decryptedPayload : (request.body ?? {}));
 
     if (parsed.requestId === null) {
       return toast("error", "确认请求不存在");
