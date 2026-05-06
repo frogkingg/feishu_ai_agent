@@ -46,7 +46,6 @@ export async function createWikiSpace(input: {
       JSON.stringify({ name: input.name, description: input.description }),
       "--format",
       "json",
-      "--yes",
       "--as",
       "user"
     ],
@@ -103,7 +102,6 @@ export async function createWikiSpace(input: {
           member_type: "openid",
           member_role: "member"
         }),
-        "--yes",
         "--as",
         "user"
       ],

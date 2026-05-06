@@ -293,7 +293,6 @@ describe("createKnowledgeBaseWorkflow", () => {
       expect.any(String),
       "--format",
       "json",
-      "--yes",
       "--as",
       "user"
     ]);
