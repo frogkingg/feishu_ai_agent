@@ -112,6 +112,7 @@ SourceMention 格式：
 
 - 只有会议明确形成“谁要做什么”时，才写入 action_items。
 - 一个 action item 至少需要有明确责任人或明确动作主体，并且有可交付物或可完成动作。
+- 短口语会议中，“我们要/大家要/接下来要/需要在 X 前完成 Y/把 Y 做好/推进 Y”属于明确动作主体；如果有明确截止时间或明确交付物，应生成 action item。此时 owner 可以为 null，并在 missing_fields 中加入 "owner"，不要因为没有点名个人而丢掉待办。
 - owner 可以来自会议证据中的明确点名分配、发言人主动承诺、或会议上下文中可追溯的模块/话题负责关系；接收人、会议组织者、卡片接收者、当前用户都不等于 owner。
 - 如果 evidence 中没有直接支撑 owner 的原话，不要为了补全字段推断 owner；owner = null，并在 missing_fields 中加入 "owner"。
 - suggested_reason 只能解释会议证据如何支持该 action，不要写“用户据此认领/承诺完成”“组织者默认负责”“已发送给某人所以负责”等无会议证据的话术。
@@ -159,6 +160,7 @@ SourceMention 格式：
 - “王五负责在 2026-05-03 前整理风险清单。” -> 生成 action item。
 - “张三负责在 2026-05-10 前把两次访谈结论整理成客户研究知识库。” -> 生成 action item，kb_creation_intent = true。
 - “李四负责在 2026-05-10 前整理风险清单。” -> 生成 action item，kb_creation_intent = false。
+- “我们 9 点之前把录屏完成，10 点前把录屏内容填写完成，9:30 完成周期性总结。” -> 生成多个 action item；owner = null，due_date 使用会议日期，missing_fields 包含 "owner"，evidence 保留原话中的具体时间。
 
 下面是不同场景的完整 JSON 示例。示例只用于说明结构和判断边界；实际输出时只返回一个 JSON 对象。
 
