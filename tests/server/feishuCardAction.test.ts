@@ -27,10 +27,21 @@ function currentLarkTimestamp() {
   return Math.floor(Date.now() / 1000).toString();
 }
 
-function goTimeString(date: Date) {
-  const datePart = date.toISOString().slice(0, 19).replace("T", " ");
+function goTimeString(date: Date, options: { offsetMinutes?: number; zone?: string } = {}) {
+  const offsetMinutes = options.offsetMinutes ?? 0;
+  const datePart = new Date(date.getTime() + offsetMinutes * 60 * 1000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
   const nanoseconds = date.getUTCMilliseconds().toString().padStart(3, "0").padEnd(9, "0");
-  return `${datePart}.${nanoseconds} +0000 UTC m=+1234.5678`;
+  const offsetSign = offsetMinutes < 0 ? "-" : "+";
+  const offsetAbsoluteMinutes = Math.abs(offsetMinutes);
+  const offsetHours = Math.floor(offsetAbsoluteMinutes / 60)
+    .toString()
+    .padStart(2, "0");
+  const offsetRemainderMinutes = (offsetAbsoluteMinutes % 60).toString().padStart(2, "0");
+  const zone = options.zone ?? "UTC";
+  return `${datePart}.${nanoseconds} ${offsetSign}${offsetHours}${offsetRemainderMinutes} ${zone} m=+1234.5678`;
 }
 
 function contentArg(args: string[]) {
@@ -501,6 +512,47 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
   });
 
+  it("accepts Feishu card-action callbacks with Go time string CST timestamps signed as the raw header", async () => {
+    const verificationToken = "verification-token";
+    const { app, action } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: action.id,
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = goTimeString(new Date(), { offsetMinutes: 480, zone: "CST" });
+    const nonce = "legacy-card-go-time-cst-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "已确认，处理完成"
+      },
+      card: expect.any(Object)
+    });
+  });
+
   it("accepts Feishu card-action callbacks with ISO timestamps signed as the raw header", async () => {
     const verificationToken = "verification-token";
     const { app, action } = await createAppWithConfirmations(verificationToken);
@@ -796,6 +848,44 @@ describe("POST /webhooks/feishu/card-action", () => {
     };
     const timestamp = goTimeString(new Date(Date.now() - 301_000));
     const nonce = "legacy-card-stale-go-time-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
+  it("rejects stale CST Go time string Feishu card-action timestamps", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = goTimeString(new Date(Date.now() - 301_000), {
+      offsetMinutes: 480,
+      zone: "CST"
+    });
+    const nonce = "legacy-card-stale-cst-go-time-timestamp-nonce";
 
     const response = await app.inject({
       method: "POST",

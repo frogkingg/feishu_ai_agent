@@ -144,7 +144,7 @@ function getLarkTimestampCandidates(timestamp: string | null): string[] {
 
 function parseStrictLarkDateTimeTimestampSeconds(timestamp: string): number | null {
   const match = timestamp.match(
-    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|\s*([+-])(\d{2})(?::?(\d{2})))(?:\s+UTC(?:\s+m=[+-]?\d+(?:\.\d+)?)?)?$/i
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|\s*([+-])(\d{2})(?::?(\d{2})))(?:\s+[A-Z]{2,5})?(?:\s+m=[+-]?\d+(?:\.\d+)?)?$/
   );
   if (match === null) {
     return null;
