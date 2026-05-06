@@ -17,7 +17,6 @@ import { formatMeetingReference } from "../utils/display";
 import { createId } from "../utils/id";
 import { personalWorkspaceName } from "../utils/personalWorkspace";
 
-const KnowledgeBaseCreationIntentMarker = "kb_creation_intent: true";
 const PersonalKnowledgeBaseMode = "personal";
 
 export interface ProcessMeetingResult {
@@ -57,7 +56,7 @@ function knowledgeCuratorGuidance(): string[] {
 function isKnowledgeBaseCreationAction(
   item: MeetingExtractionResult["action_items"][number]
 ): boolean {
-  return item.suggested_reason.toLowerCase().includes(KnowledgeBaseCreationIntentMarker);
+  return item.kb_creation_intent === true;
 }
 
 function actionConfirmationRecipient(input: {

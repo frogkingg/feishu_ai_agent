@@ -108,7 +108,7 @@ export async function createKnowledgeBaseWorkflow(input: {
     .filter((calendar) => meetingIds.has(calendar.meeting_id));
   const owner =
     request.recipient ?? meetings.find((meeting) => meeting.organizer !== null)?.organizer ?? null;
-  const dryRun = config.feishuKnowledgeWriteDryRun ?? config.feishuDryRun ?? true;
+  const dryRun = config.feishuDryRun || config.feishuKnowledgeWriteDryRun;
   const llm = input.llm ?? createLlmClient(config);
 
   const draft = await runKnowledgeCuratorAgent({

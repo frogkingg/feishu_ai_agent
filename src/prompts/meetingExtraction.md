@@ -45,6 +45,7 @@ ActionItemDraft 格式：
 "evidence": string,
 "confidence": number,
 "suggested_reason": string,
+"kb_creation_intent": boolean,
 "missing_fields": string[]
 }
 
@@ -83,27 +84,29 @@ SourceMention 格式：
 1. 每个 action item 必须有 title。
 2. 每个 action item 必须有 evidence。
 3. 每个 action item 必须有 suggested_reason。
-   3a. 如果 action item 的意图是创建、整理、归档、维护或更新知识库、研究档案、项目资料库、上手包、专题资料沉淀，suggested_reason 必须包含精确片段 "kb_creation_intent: true"。
-   3b. 这个标记只用于让 workflow 识别“知识库创建/整理类 action”并改走知识库确认路由；普通整理清单、建立 SOP、补充说明文档、同步表格等事项不要加这个标记。
-4. 不确定负责人时 owner = null，并在 missing_fields 中加入 "owner"。
-5. 不确定截止时间时 due_date = null，并在 missing_fields 中加入 "due_date"。
-6. due_date 必须是 YYYY-MM-DD 格式，例如 "2026-05-01"。
-   6a. 如果会议输入中提供 meeting_started_at，所有“今天、明天、后天、本周五、下周五、周五前、下周、月底”等相对日期都必须以 meeting_started_at 为基准归一，不要以当前系统日期为基准。
-   6b. 只有日期没有小时的表达可用于 action due_date；calendar start_time 必须有明确日期和小时，否则 start_time = null，并在 missing_fields 中加入 "start_time"。
-7. 每个 calendar draft 必须有 title。
-8. 每个 calendar draft 必须有 evidence。
-9. start_time 和 end_time 如果不确定，必须为 null。
-10. start_time 为 null 时，missing_fields 必须包含 "start_time"。
-11. 日程是否成立由你根据会议语义判断；代码只校验结构，不会再用关键词替你判断。
-12. “周五前完成方案”是任务截止时间，不是日程。
-13. “周五 10 点开评审会”是日程。
-14. “下周二上午 10 点再约用户访谈”是日程。
-15. “可以看看”“有机会研究”“之后再说”不是明确待办，不要加入 action_items。
-16. confidence 必须是 0 到 1 的数字。
-17. 如果没有风险，risks 返回 []。
-18. 如果没有资料引用，source_mentions 返回 []。
-19. 如果没有关键决策，key_decisions 返回 []。
-20. 所有字段都必须存在，不能省略。
+4. 每个 action item 必须有 kb_creation_intent，类型是 boolean。
+   4a. 如果 action item 的意图是创建、整理、归档、维护或更新知识库、研究档案、项目资料库、上手包、专题资料沉淀，kb_creation_intent = true。
+   4b. 普通整理清单、建立 SOP、补充说明文档、同步表格等事项，kb_creation_intent = false。
+   4c. suggested_reason 只写人类可读理由，不要把机器标记或路由字段塞进 suggested_reason。
+5. 不确定负责人时 owner = null，并在 missing_fields 中加入 "owner"。
+6. 不确定截止时间时 due_date = null，并在 missing_fields 中加入 "due_date"。
+7. due_date 必须是 YYYY-MM-DD 格式，例如 "2026-05-01"。
+   7a. 如果会议输入中提供 meeting_started_at，所有“今天、明天、后天、本周五、下周五、周五前、下周、月底”等相对日期都必须以 meeting_started_at 为基准归一，不要以当前系统日期为基准。
+   7b. 只有日期没有小时的表达可用于 action due_date；calendar start_time 必须有明确日期和小时，否则 start_time = null，并在 missing_fields 中加入 "start_time"。
+8. 每个 calendar draft 必须有 title。
+9. 每个 calendar draft 必须有 evidence。
+10. start_time 和 end_time 如果不确定，必须为 null。
+11. start_time 为 null 时，missing_fields 必须包含 "start_time"。
+12. 日程是否成立由你根据会议语义判断；代码只校验结构，不会再用关键词替你判断。
+13. “周五前完成方案”是任务截止时间，不是日程。
+14. “周五 10 点开评审会”是日程。
+15. “下周二上午 10 点再约用户访谈”是日程。
+16. “可以看看”“有机会研究”“之后再说”不是明确待办，不要加入 action_items。
+17. confidence 必须是 0 到 1 的数字。
+18. 如果没有风险，risks 返回 []。
+19. 如果没有资料引用，source_mentions 返回 []。
+20. 如果没有关键决策，key_decisions 返回 []。
+21. 所有字段都必须存在，不能省略。
 
 待办 Action Item 判断规则：
 
@@ -116,8 +119,8 @@ SourceMention 格式：
 - “周五前完成方案”“下周五前交付方案”“月底前补齐清单”这类只有交付物和截止时间的表达，应生成 action item 的 due_date，不要生成 calendar_drafts。
 - 如果只有“需要建立 SOP”“需要关注风险”“可以后续整理”“可以看看”“有机会研究”，但没有 owner、动作主体、交付物或截止时间，不要生成 action item。
 - “建立 SOP”这类团队共识，如果没有 owner 和 due_date，优先作为 key_decisions，不要强行变成 action item。
-- 如果会议明确要求把会议材料、访谈结论、项目资料、用户问题或主题内容整理成知识库/资料库/研究档案/上手包，并且符合 action item 的 owner/动作/交付物边界，可以生成 action item；此时 suggested_reason 必须包含 "kb_creation_intent: true"。
-- 如果只是“整理风险清单”“建立 SOP”“补一版接口说明”“更新需求表”，对象不是知识库、研究档案、资料库或上手包，不要加入 "kb_creation_intent: true"。
+- 如果会议明确要求把会议材料、访谈结论、项目资料、用户问题或主题内容整理成知识库/资料库/研究档案/上手包，并且符合 action item 的 owner/动作/交付物边界，可以生成 action item；此时 kb_creation_intent = true。
+- 如果只是“整理风险清单”“建立 SOP”“补一版接口说明”“更新需求表”，对象不是知识库、研究档案、资料库或上手包，kb_creation_intent = false。
 - 如果会议只是表达“后续可以沉淀一下”“有机会整理成资料”，没有 owner、动作主体、交付物或截止时间，不要为了知识库路由而生成 action item。
 - “风险/阻塞/不确定/权限分散/流程不统一/可能影响/担心/缺少……”优先进入 risks，不要为了补 action 而把风险改写成待办。
 - “找时间聊一下”“之后对齐一下”“可以看看”“有机会研究”“需要关注”“后续再讨论”这类弱表达，缺少明确 owner + 可交付物 + 截止时间时，不要生成 action item。
@@ -154,8 +157,8 @@ SourceMention 格式：
 - “陈一你 2026-05-06 前把首页线框图改一版。” -> 生成 action item，owner = "陈一"，due_date = "2026-05-06"。
 - “需要建立统一 SOP。”如果没有 owner 或截止时间 -> 作为 key_decisions；不要生成 action item。
 - “王五负责在 2026-05-03 前整理风险清单。” -> 生成 action item。
-- “张三负责在 2026-05-10 前把两次访谈结论整理成客户研究知识库。” -> 生成 action item，suggested_reason 包含 "kb_creation_intent: true"。
-- “李四负责在 2026-05-10 前整理风险清单。” -> 生成 action item，但 suggested_reason 不包含 "kb_creation_intent: true"。
+- “张三负责在 2026-05-10 前把两次访谈结论整理成客户研究知识库。” -> 生成 action item，kb_creation_intent = true。
+- “李四负责在 2026-05-10 前整理风险清单。” -> 生成 action item，kb_creation_intent = false。
 
 下面是不同场景的完整 JSON 示例。示例只用于说明结构和判断边界；实际输出时只返回一个 JSON 对象。
 
@@ -180,6 +183,7 @@ SourceMention 格式：
 "evidence": "林悦确认由她在 2026-06-03 前更新首页信息架构线框。",
 "confidence": 0.9,
 "suggested_reason": "会议中明确指定林悦负责更新线框，并给出截止日期。",
+"kb_creation_intent": false,
 "missing_fields": []
 }
 ],
@@ -271,6 +275,7 @@ SourceMention 格式：
 "evidence": "陈一 2026-05-06 前把首页线框图改一版。",
 "confidence": 0.92,
 "suggested_reason": "会议中明确责任人陈一、可完成动作和截止日期。",
+"kb_creation_intent": false,
 "missing_fields": []
 }
 ],

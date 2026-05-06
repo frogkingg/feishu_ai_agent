@@ -13,6 +13,7 @@ export const ActionItemDraftSchema = z.object({
   evidence: z.string().trim().min(1, "evidence cannot be empty"),
   confidence: z.number().min(0).max(1),
   suggested_reason: z.string().min(1),
+  kb_creation_intent: z.boolean().optional(),
   missing_fields: z.array(z.string())
 });
 
