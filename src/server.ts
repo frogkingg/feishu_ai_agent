@@ -142,6 +142,60 @@ function getLarkTimestampCandidates(timestamp: string | null): string[] {
   return candidates;
 }
 
+function parseStrictLarkDateTimeTimestampSeconds(timestamp: string): number | null {
+  const match = timestamp.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|\s*([+-])(\d{2})(?::?(\d{2})))(?:\s+UTC(?:\s+m=[+-]?\d+(?:\.\d+)?)?)?$/i
+  );
+  if (match === null) {
+    return null;
+  }
+
+  const [, yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue, fractionValue, offsetSign, offsetHourValue, offsetMinuteValue] =
+    match;
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+  const day = Number(dayValue);
+  const hour = Number(hourValue);
+  const minute = Number(minuteValue);
+  const second = Number(secondValue);
+  const millisecond = Number((fractionValue ?? "").padEnd(3, "0").slice(0, 3));
+  const offsetHour = offsetHourValue === undefined ? 0 : Number(offsetHourValue);
+  const offsetMinute = offsetMinuteValue === undefined ? 0 : Number(offsetMinuteValue);
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    return null;
+  }
+
+  const offsetDirection = offsetSign === "-" ? -1 : 1;
+  const offsetMilliseconds = offsetDirection * (offsetHour * 60 + offsetMinute) * 60 * 1000;
+  const timestampMilliseconds =
+    Date.UTC(year, month - 1, day, hour, minute, second, millisecond) - offsetMilliseconds;
+  const parsedDate = new Date(timestampMilliseconds + offsetMilliseconds);
+  if (
+    parsedDate.getUTCFullYear() !== year ||
+    parsedDate.getUTCMonth() !== month - 1 ||
+    parsedDate.getUTCDate() !== day ||
+    parsedDate.getUTCHours() !== hour ||
+    parsedDate.getUTCMinutes() !== minute ||
+    parsedDate.getUTCSeconds() !== second
+  ) {
+    return null;
+  }
+
+  const timestampSeconds = Math.floor(timestampMilliseconds / 1000);
+  return Number.isSafeInteger(timestampSeconds) ? timestampSeconds : null;
+}
+
 function getLarkTimestampFreshnessSeconds(timestamp: string): number | null {
   const trimmed = timestamp.trim();
   if (trimmed.length === 0) {
@@ -149,7 +203,7 @@ function getLarkTimestampFreshnessSeconds(timestamp: string): number | null {
   }
 
   if (!/^\d+(?:\.\d+)?$/.test(trimmed)) {
-    return null;
+    return parseStrictLarkDateTimeTimestampSeconds(trimmed);
   }
 
   const timestampNumber = Number(trimmed);

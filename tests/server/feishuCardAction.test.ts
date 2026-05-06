@@ -27,6 +27,12 @@ function currentLarkTimestamp() {
   return Math.floor(Date.now() / 1000).toString();
 }
 
+function goTimeString(date: Date) {
+  const datePart = date.toISOString().slice(0, 19).replace("T", " ");
+  const nanoseconds = date.getUTCMilliseconds().toString().padStart(3, "0").padEnd(9, "0");
+  return `${datePart}.${nanoseconds} +0000 UTC m=+1234.5678`;
+}
+
 function contentArg(args: string[]) {
   const contentIndex = args.indexOf("--content");
   expect(contentIndex).toBeGreaterThanOrEqual(0);
@@ -454,6 +460,88 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
   });
 
+  it("accepts Feishu card-action callbacks with Go time string timestamps signed as the raw header", async () => {
+    const verificationToken = "verification-token";
+    const { app, action } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: action.id,
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = goTimeString(new Date());
+    const nonce = "legacy-card-go-time-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "已确认，处理完成"
+      },
+      card: expect.any(Object)
+    });
+  });
+
+  it("accepts Feishu card-action callbacks with ISO timestamps signed as the raw header", async () => {
+    const verificationToken = "verification-token";
+    const { app, action } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: action.id,
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = new Date().toISOString();
+    const nonce = "legacy-card-iso-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "已确认，处理完成"
+      },
+      card: expect.any(Object)
+    });
+  });
+
   it("accepts Feishu card-action callbacks with comma-joined duplicate timestamp headers", async () => {
     const verificationToken = "verification-token";
     const { app } = await createAppWithConfirmations(verificationToken);
@@ -658,7 +746,7 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
   });
 
-  it("rejects ISO-ish Feishu card-action timestamps without accepting them as epoch candidates", async () => {
+  it("rejects fresh ISO Feishu card-action timestamps when the signature was not made with the raw header", async () => {
     const verificationToken = "verification-token";
     const { app } = await createAppWithConfirmations(verificationToken);
     const payload = {
@@ -671,7 +759,7 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     };
     const signedTimestamp = currentLarkTimestamp();
-    const timestamp = "2026-05-06T18:32:54Z";
+    const timestamp = new Date().toISOString();
     const nonce = "legacy-card-iso-ish-timestamp-nonce";
 
     const response = await app.inject({
@@ -682,6 +770,41 @@ describe("POST /webhooks/feishu/card-action", () => {
         "x-lark-request-nonce": nonce,
         "x-lark-signature": signLegacyCardAction({
           timestamp: signedTimestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
+  it("rejects stale Go time string Feishu card-action timestamps", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = goTimeString(new Date(Date.now() - 301_000));
+    const nonce = "legacy-card-stale-go-time-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
           nonce,
           body: payload,
           verificationToken
