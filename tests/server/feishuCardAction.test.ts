@@ -658,6 +658,42 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
   });
 
+  it("rejects ISO-ish Feishu card-action timestamps without accepting them as epoch candidates", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const signedTimestamp = currentLarkTimestamp();
+    const timestamp = "2026-05-06T18:32:54Z";
+    const nonce = "legacy-card-iso-ish-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp: signedTimestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
   it("rejects comma-joined Feishu card-action timestamps when all candidates are stale", async () => {
     const verificationToken = "verification-token";
     const { app } = await createAppWithConfirmations(verificationToken);

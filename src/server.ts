@@ -223,6 +223,52 @@ function getLarkSignatureTimestampFailureReason(timestamp: string | null): strin
   return null;
 }
 
+function describeLarkTimestampShape(timestamp: string | null): Record<string, unknown> {
+  const prefixClass = (() => {
+    if (timestamp === null || timestamp.length === 0) {
+      return "missing";
+    }
+
+    const firstCharacter = timestamp.trimStart()[0];
+    if (firstCharacter === undefined) {
+      return "missing";
+    }
+    if (/\d/.test(firstCharacter)) {
+      return "digit";
+    }
+    if (/[A-Za-z]/.test(firstCharacter)) {
+      return "alpha";
+    }
+    if (firstCharacter === '"' || firstCharacter === "'") {
+      return "quote";
+    }
+    if ("[]{}()".includes(firstCharacter)) {
+      return "bracket";
+    }
+    return "other";
+  })();
+
+  return {
+    timestamp_length: timestamp?.length ?? 0,
+    timestamp_digit_run_lengths:
+      timestamp === null
+        ? []
+        : Array.from(timestamp.matchAll(/\d+/g), (match) => match[0].length).slice(0, 8),
+    timestamp_has_alpha: timestamp === null ? false : /[A-Za-z]/.test(timestamp),
+    timestamp_has_colon: timestamp?.includes(":") ?? false,
+    timestamp_has_dash: timestamp?.includes("-") ?? false,
+    timestamp_has_t: timestamp === null ? false : /t/i.test(timestamp),
+    timestamp_has_z: timestamp === null ? false : /z/i.test(timestamp),
+    timestamp_has_dot: timestamp?.includes(".") ?? false,
+    timestamp_has_comma: timestamp?.includes(",") ?? false,
+    timestamp_has_equals: timestamp?.includes("=") ?? false,
+    timestamp_has_quote: timestamp === null ? false : /["']/.test(timestamp),
+    timestamp_has_bracket: timestamp === null ? false : /[\[\]{}()]/.test(timestamp),
+    timestamp_has_space: timestamp === null ? false : /\s/.test(timestamp),
+    timestamp_prefix_class: prefixClass
+  };
+}
+
 function isLarkSignatureValid(input: {
   request: FastifyRequest;
   body: string;
@@ -349,6 +395,7 @@ function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, un
     has_timestamp: timestamp !== null,
     has_nonce: nonce !== null,
     has_signature: signature !== null,
+    ...describeLarkTimestampShape(timestamp),
     timestamp_candidate_count: timestampCandidates.length,
     timestamp_failure_reason: timestampFailureReason,
     reason:
