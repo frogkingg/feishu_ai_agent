@@ -215,19 +215,6 @@ function allowsLocalSecurityBypass(config: Pick<AppConfig, "nodeEnv">): boolean 
   return config.nodeEnv === "development" || config.nodeEnv === "test";
 }
 
-function sortedStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(sortedStringify).join(",")}]`;
-  }
-  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
-    a < b ? -1 : a > b ? 1 : 0
-  );
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${sortedStringify(v)}`).join(",")}}`;
-}
-
 function decryptFeishuPayloadIfEncrypted(
   body: Record<string, unknown>,
   encryptKey: string | null
