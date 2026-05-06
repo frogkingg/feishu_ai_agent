@@ -254,12 +254,12 @@ describe("confirmation dev APIs", () => {
       confirmations
         .find((item) => item.request_type === "action")
         ?.dry_run_card?.actions.map((action) => action.key)
-    ).toEqual(["confirm", "confirm_with_edits", "reject", "not_mine", "remind_later"]);
+    ).toEqual(["confirm", "confirm_with_edits", "reject"]);
     expect(
       confirmations
         .find((item) => item.request_type === "calendar")
         ?.dry_run_card?.actions.map((action) => action.key)
-    ).toEqual(["confirm", "confirm_with_edits", "reject", "convert_to_task", "remind_later"]);
+    ).toEqual(["confirm", "confirm_with_edits", "reject", "convert_to_task"]);
 
     const cardsResponse = await app.inject({
       method: "GET",
@@ -572,11 +572,11 @@ describe("confirmation dev APIs", () => {
     const endpoints = cards.flatMap((card) => card.actions.map((action) => action.endpoint));
     expect(endpoints.length).toBeGreaterThan(0);
     expect(endpoints.every((endpoint) => supportedEndpointPattern.test(endpoint))).toBe(true);
+    expect(endpoints).not.toContain(
+      `/dev/confirmations/${convertedActionConfirmationId}/remind-later`
+    );
     expect(endpoints).toEqual(
-      expect.arrayContaining([
-        `/dev/confirmations/${convertedActionConfirmationId}/remind-later`,
-        `/dev/confirmations/${appendConfirmationId}/confirm`
-      ])
+      expect.arrayContaining([`/dev/confirmations/${appendConfirmationId}/confirm`])
     );
   });
 

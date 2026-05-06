@@ -443,26 +443,6 @@ function actionConfirmationActions(requestId: string): CardAction[] {
       payload_template: {
         reason: "$reason"
       }
-    },
-    {
-      key: "not_mine",
-      label: "不是我的",
-      style: "default",
-      action_type: "http_post",
-      endpoint: `/dev/confirmations/${requestId}/reject`,
-      payload_template: {
-        reason: "not_mine"
-      }
-    },
-    {
-      key: "remind_later",
-      label: "稍后处理",
-      style: "default",
-      action_type: "http_post",
-      endpoint: `/dev/confirmations/${requestId}/remind-later`,
-      payload_template: {
-        reminder: "$remind_later"
-      }
     }
   ];
 }
@@ -505,16 +485,6 @@ function calendarConfirmationActions(requestId: string): CardAction[] {
       endpoint: `/dev/confirmations/${requestId}/convert-to-task`,
       payload_template: {
         draft: "$editable_fields"
-      }
-    },
-    {
-      key: "remind_later",
-      label: "稍后提醒",
-      style: "default",
-      action_type: "http_post",
-      endpoint: `/dev/confirmations/${requestId}/remind-later`,
-      payload_template: {
-        reminder: "$remind_later"
       }
     }
   ];

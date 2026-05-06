@@ -532,15 +532,13 @@ function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
   const hasRequiredEdits = requiredEditableFields(card).length > 0;
 
   if (card.card_type === "action_confirmation") {
-    return hasRequiredEdits
-      ? ["confirm", "not_mine", "remind_later", "reject"]
-      : ["confirm", "not_mine", "remind_later", "reject"];
+    return ["confirm", "reject"];
   }
 
   if (card.card_type === "calendar_confirmation") {
     return hasRequiredEdits
-      ? ["confirm_with_edits", "convert_to_task", "remind_later", "reject"]
-      : ["confirm", "convert_to_task", "remind_later", "reject"];
+      ? ["confirm_with_edits", "convert_to_task", "reject"]
+      : ["confirm", "convert_to_task", "reject"];
   }
 
   if (card.card_type === "create_kb_confirmation") {
@@ -552,6 +550,8 @@ function preferredActionKeys(card: DryRunConfirmationCard): CardActionKey[] {
   return ["confirm", "reject"];
 }
 
+const hiddenConfirmationActions = new Set<CardActionKey>(["not_mine", "remind_later"]);
+
 function visibleActions(card: DryRunConfirmationCard) {
   if (["confirmed", "executed", "rejected", "failed"].includes(card.status)) {
     return [];
@@ -560,6 +560,7 @@ function visibleActions(card: DryRunConfirmationCard) {
   const actionByKey = new Map(card.actions.map((action) => [action.key, action]));
   return preferredActionKeys(card)
     .map((key) => actionByKey.get(key))
+    .filter((action) => !action || !hiddenConfirmationActions.has(action.key))
     .filter((action): action is DryRunConfirmationCard["actions"][number] => Boolean(action));
 }
 

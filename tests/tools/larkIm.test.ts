@@ -78,7 +78,9 @@ describe("larkIm.sendCard", () => {
     expect(serialized).not.toContain("/dev/confirmations/conf_card_send/confirm");
     expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).toContain('"action":"not_mine"');
+    expect(card.actions.map((action) => action.key)).toEqual(["confirm", "confirm_with_edits", "reject"]);
+    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).not.toContain('"action":"remind_later"');
     expect(serialized).not.toContain("mtg_001");
     expect(serialized).toContain('"confirmation_id":"conf_card_send"');
     expect(serialized).not.toContain("安全说明");
@@ -91,10 +93,44 @@ describe("larkIm.sendCard", () => {
     expect(actionElement).toMatchObject({
       actions: [
         { text: { content: "添加待办" } },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
+    });
+  });
+
+  it("filters legacy low-priority actions from real interactive cards", () => {
+    const legacyCard = {
+      ...card,
+      actions: [
+        ...card.actions,
+        {
+          key: "not_mine",
+          label: "不是我的",
+          style: "default",
+          action_type: "http_post",
+          endpoint: "/dev/confirmations/conf_card_send/reject",
+          payload_template: { reason: "not_mine" }
+        },
+        {
+          key: "remind_later",
+          label: "稍后处理",
+          style: "default",
+          action_type: "http_post",
+          endpoint: "/dev/confirmations/conf_card_send/remind-later",
+          payload_template: { reminder: "$remind_later" }
+        }
+      ]
+    } satisfies typeof card;
+
+    const interactive = buildFeishuInteractiveCard(legacyCard);
+    const serialized = JSON.stringify(interactive);
+
+    expect(serialized).toContain('"action":"confirm"');
+    expect(serialized).toContain('"action":"reject"');
+    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).not.toContain('"action":"remind_later"');
+    expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
+      actions: [{ text: { content: "添加待办" } }, { text: { content: "不添加" } }]
     });
   });
 
@@ -132,13 +168,17 @@ describe("larkIm.sendCard", () => {
     expect(serialized).not.toContain('"action":"complete_owner"');
     expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).toContain('"action":"not_mine"');
+    expect(missingOwnerCard.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject"
+    ]);
+    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).not.toContain('"action":"remind_later"');
     expect(serialized).not.toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
     expect(actionElement).toMatchObject({
       actions: [
         { text: { content: "添加待办" } },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -178,14 +218,18 @@ describe("larkIm.sendCard", () => {
     expect(serialized).not.toContain("@确认待办");
     expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
-    expect(serialized).toContain('"action":"not_mine"');
+    expect(completionCard.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject"
+    ]);
+    expect(serialized).not.toContain('"action":"not_mine"');
+    expect(serialized).not.toContain('"action":"remind_later"');
     expect(serialized).not.toContain('"action":"complete_owner"');
     expect(serialized).not.toContain("可在飞书「任务」中补齐负责人/截止时间后直接添加。");
     expect(actionElement).toMatchObject({
       actions: [
         { text: { content: "添加待办" } },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -237,14 +281,20 @@ describe("larkIm.sendCard", () => {
     expect(serialized).toContain('"action":"confirm"');
     expect(serialized).not.toContain('"action":"confirm_with_edits"');
     expect(serialized).toContain('"action":"convert_to_task"');
-    expect(serialized).toContain('"action":"remind_later"');
+    expect(calendarCard.actions.map((action) => action.key)).toEqual([
+      "confirm",
+      "confirm_with_edits",
+      "reject",
+      "convert_to_task"
+    ]);
+    expect(serialized).not.toContain('"action":"remind_later"');
+    expect(serialized).not.toContain('"action":"not_mine"');
     expect(serialized).not.toContain("可在飞书「日历」中补齐时间/参会人后直接创建。");
     expect(serialized).not.toContain("mtg_001");
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
         { text: { content: "添加日程" } },
         { text: { content: "转待办" } },
-        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -281,7 +331,6 @@ describe("larkIm.sendCard", () => {
       actions: [
         { text: { content: "添加日程" } },
         { text: { content: "转待办" } },
-        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -324,7 +373,6 @@ describe("larkIm.sendCard", () => {
       actions: [
         { text: { content: "添加日程" } },
         { text: { content: "转待办" } },
-        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -393,8 +441,6 @@ describe("larkIm.sendCard", () => {
     expect(interactive.elements.find((element) => element.tag === "action")).toMatchObject({
       actions: [
         { text: { content: "预览添加待办" } },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });
@@ -451,8 +497,6 @@ describe("larkIm.sendCard", () => {
             request_id: "conf_missing_owner_enabled"
           }
         },
-        { text: { content: "不是我的" } },
-        { text: { content: "稍后处理" } },
         { text: { content: "不添加" } }
       ]
     });

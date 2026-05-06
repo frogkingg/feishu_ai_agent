@@ -284,17 +284,14 @@ const KNOWLEDGE_BASE_ACTION_PATTERNS = [
 const ACTION_CARD_ACTION_KEYS = [
   "confirm",
   "confirm_with_edits",
-  "reject",
-  "not_mine",
-  "remind_later"
+  "reject"
 ];
-const ACTION_OWNER_COMPLETION_CARD_ACTION_KEYS = ["confirm", "reject", "remind_later"];
+const ACTION_OWNER_COMPLETION_CARD_ACTION_KEYS = ["confirm", "reject"];
 const CALENDAR_CARD_ACTION_KEYS = [
   "confirm",
   "confirm_with_edits",
   "reject",
-  "convert_to_task",
-  "remind_later"
+  "convert_to_task"
 ];
 const CREATE_KB_CARD_ACTION_KEYS = [
   "create_kb",
