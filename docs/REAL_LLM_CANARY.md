@@ -28,3 +28,22 @@ npm run canary:real-llm -- --llm-timeout-ms 180000 --step-timeout-ms 600000
 ```
 
 Do not commit `.env`, SQLite DBs, or raw canary output containing meeting data.
+
+## Latest RC Result
+
+Release candidate `6b9fb08` passed the real LLM dry-run canary sequence:
+
+1. `npm run canary:real-llm -- --dry-check`
+2. `npm run canary:real-llm`
+
+Recorded safe summary:
+
+- masked config: provider `openai-compatible`, API key present, base URL present, model masked, all Feishu dry-run switches `true`
+- `ok`: `true`
+- total time: about `513.8s`
+- `topic_results`: first OpenClaw onboarding meeting stayed `observe`; second related meeting returned `ask_create` with score `0.94`
+- `create_kb_results`: one dry-run `create_kb` execution, `failed=false`, `dry_run=true`, `page_count=13`, no forbidden fallback words
+- `quality`: `create_kb_present=true`, `single_create_kb_confirm_not_failed=true`, `knowledge_no_forbidden_words=true`, `calendar_missing_fields_clean=true`, `cli_runs_safe=true`, `no_real_feishu_write_or_card_send=true`
+- CLI safety: all recorded CLI runs were dry-run planned records; no real Feishu write or card send occurred
+
+One intermediate sandbox run failed at network fetch during smoke extraction; the escalated rerun passed. This was an environment/network restriction, not a schema, prompt, or product-logic failure.

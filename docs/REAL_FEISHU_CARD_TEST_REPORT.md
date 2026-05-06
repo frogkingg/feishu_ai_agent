@@ -62,6 +62,24 @@ npm run demo:full-p0 -- --send-cards --chat-id <test_chat_id>
 - card_send CLI runs: success
 - 全局 `FEISHU_DRY_RUN=true`，未真实创建任务、日程、Wiki 或 Doc。
 
+## 最新真实飞书 Canary 快照
+
+Release candidate `6b9fb08` 已补充通过真实 Feishu task / calendar / Wiki / Doc
+canary。该 canary 属于隔离真实写入验收，用于证明确认后工具层可以真实调用对应飞书能力；
+它不改变提交版和录屏默认口径，默认仍为：
+
+```env
+FEISHU_DRY_RUN=true
+FEISHU_CARD_SEND_DRY_RUN=true
+```
+
+服务器公网 `/health` 已通过。公网域名、真实接收人、token、密钥和私有部署信息不写入仓库。
+
+飞书妙记事件回调公网验收已通过：签名 `vc.meeting.recording_ready_v1` 合成事件返回
+`202 accepted`，重复 `event_id` 返回 `duplicate`，后台 `webhook_events` 状态进入
+`processed`，未出现 invalid signature/token 或 workflow failure。卡片按钮公网链路仍作为独立
+验收项记录，不与妙记事件回调混用。
+
 实际收到的卡片为：
 
 1. action card: 整理无人机现有操作流程
@@ -88,10 +106,10 @@ docs/assets/real-feishu-card-test/
 
 ## 安全边界
 
-- 未真实创建任务。
-- 未真实创建日程。
-- 未真实创建 Wiki / Doc。
-- 真实发送仅限确认卡片本身，不等于确认或执行卡片里的业务动作。
+- 默认录屏与共享发布仍保持全 dry-run，不真实创建任务、日程、Wiki 或 Doc。
+- 真实发送卡片测试只证明确认卡片能到达飞书，不等于确认或执行卡片里的业务动作。
+- Release candidate `6b9fb08` 的 task / calendar / Wiki / Doc 真实写入结果来自隔离 canary，
+  只作为 readiness 证明，不改变默认安全模式。
 
 ## 当前限制
 

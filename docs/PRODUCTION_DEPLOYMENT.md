@@ -3,6 +3,16 @@
 This runbook describes the minimum reusable production deployment shape for MeetingAtlas.
 It does not include secrets, host IPs, private keys, or real Feishu tokens.
 
+## Latest RC Acceptance Snapshot
+
+Snapshot for release candidate `6b9fb08`:
+
+- Real LLM dry-run canary passed after `--dry-check`; all Feishu dry-run switches remained true, final summary reported `ok=true`, quality checks passed, and no real Feishu writes were performed.
+- Real Feishu task, calendar, Wiki, and Doc canary passed in an isolated canary lane. This does not change the shared release default.
+- Public server `/health` passed. Do not record the public hostname, tokens, or private deployment metadata in this runbook.
+- Default release posture remains dry-run: `FEISHU_DRY_RUN=true` and `FEISHU_CARD_SEND_DRY_RUN=true`.
+- Feishu meeting-minutes webhook public acceptance passed for `vc.meeting.recording_ready_v1`: a signed synthetic event returned `202`, the duplicate event returned `duplicate`, and the stored webhook event reached `processed`. Card-action public acceptance remains a separate check.
+
 ## Runtime Baseline
 
 - Use Node.js 24 LTS or newer.
