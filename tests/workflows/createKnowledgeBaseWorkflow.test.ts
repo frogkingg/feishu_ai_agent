@@ -250,7 +250,7 @@ describe("createKnowledgeBaseWorkflow", () => {
     await confirmRequest({
       repos,
       config: loadConfig({
-        feishuDryRun: true,
+        feishuDryRun: false,
         feishuKnowledgeWriteDryRun: false,
         sqlitePath: ":memory:"
       }),
@@ -342,5 +342,37 @@ describe("createKnowledgeBaseWorkflow", () => {
     expect(repos.listCliRuns().map((run) => run.status)).toEqual(
       Array(1 + childPageCount * 2).fill("success")
     );
+  });
+
+  it("keeps the knowledge canary planned when global Feishu dry-run is enabled", async () => {
+    const repos = await processDroneMeetings();
+    const request = repos
+      .listConfirmationRequests()
+      .find((item) => item.request_type === "create_kb");
+    expect(request).toBeTruthy();
+    const runnerCalls: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      runnerCalls.push(args);
+      throw new Error("knowledge runner should not run while FEISHU_DRY_RUN=true");
+    };
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuKnowledgeWriteDryRun: false,
+        sqlitePath: ":memory:"
+      }),
+      id: request!.id,
+      runner
+    });
+
+    expect(runnerCalls).toHaveLength(0);
+    expect(repos.listKnowledgeBases()[0]).toMatchObject({
+      wiki_url: "mock://feishu/wiki/dry_wiki_无人机操作流程主题知识库",
+      homepage_url: "mock://feishu/wiki/dry_doc_00 首页 / 总览"
+    });
+    expect(repos.listCliRuns().map((run) => run.status)).toEqual(Array(14).fill("planned"));
+    expect(repos.listCliRuns().every((run) => run.dry_run === 1)).toBe(true);
   });
 });

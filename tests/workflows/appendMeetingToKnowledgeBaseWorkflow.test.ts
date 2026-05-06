@@ -79,10 +79,7 @@ function topicMatchForPrompt(input: GenerateJsonInput): TopicMatchResult {
       score: 0.92,
       match_reasons: ["Mock LLM 判断当前会议应追加到已有知识库"],
       suggested_action: "ask_append",
-      candidate_meeting_ids: [
-        ...stringArray(matchedKb.created_from_meetings),
-        currentMeetingId
-      ]
+      candidate_meeting_ids: [...stringArray(matchedKb.created_from_meetings), currentMeetingId]
     };
   }
 
@@ -435,7 +432,7 @@ describe("appendMeetingToKnowledgeBaseWorkflow", () => {
     const result = await confirmRequest({
       repos,
       config: loadConfig({
-        feishuDryRun: true,
+        feishuDryRun: false,
         feishuKnowledgeWriteDryRun: false,
         sqlitePath: ":memory:"
       }),

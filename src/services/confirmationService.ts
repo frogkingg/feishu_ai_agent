@@ -357,6 +357,37 @@ function failRequest(input: {
   );
 }
 
+function cannotTransitionMessage(input: {
+  action: string;
+  request: ConfirmationRequestRow;
+}): string {
+  return `Cannot ${input.action} ${input.request.status} request: ${input.request.id}`;
+}
+
+function assertRequestCanTransition(input: { request: ConfirmationRequestRow; action: string }) {
+  if (["confirmed", "executed", "failed", "rejected"].includes(input.request.status)) {
+    throw new Error(cannotTransitionMessage(input));
+  }
+}
+
+function assertRequestCanConfirm(input: {
+  request: ConfirmationRequestRow;
+  allowPreconfirmed?: boolean;
+}): "already_executed" | "can_confirm" {
+  const { request } = input;
+  if (request.status === "executed") {
+    return "already_executed";
+  }
+  if (request.status === "confirmed" && input.allowPreconfirmed === true) {
+    return "can_confirm";
+  }
+  if (["confirmed", "failed", "rejected"].includes(request.status)) {
+    throw new Error(cannotTransitionMessage({ action: "confirm", request }));
+  }
+
+  return "can_confirm";
+}
+
 export function createConfirmationRequest(input: {
   repos: Repositories;
   requestType: ConfirmationRequestType;
@@ -408,9 +439,7 @@ export function snoozeConfirmation(input: {
   if (!request) {
     throw new Error(`Confirmation request not found: ${input.id}`);
   }
-  if (request.status === "executed" || request.status === "rejected") {
-    throw new Error(`Cannot snooze processed request: ${input.id}`);
-  }
+  assertRequestCanTransition({ request, action: "snooze" });
 
   const minutes = input.minutes ?? 30;
   const snoozedAt = nowIso();
@@ -461,6 +490,7 @@ export async function convertCalendarConfirmationToActionConfirmation(input: {
   if (request.request_type !== "calendar") {
     throw new Error(`convert_to_task requires a calendar confirmation: ${input.id}`);
   }
+  assertRequestCanTransition({ request, action: "convert_to_task" });
 
   const calendar = input.repos.getCalendarDraft(request.target_id);
   if (!calendar) {
@@ -559,10 +589,7 @@ export async function convertCalendarConfirmationToActionConfirmation(input: {
   };
 }
 
-export function appendCurrentOnlyConfirmation(input: {
-  repos: Repositories;
-  id: string;
-}): {
+export function appendCurrentOnlyConfirmation(input: { repos: Repositories; id: string }): {
   source_confirmation: ConfirmationRequestRow;
   knowledge_base_id: string;
   meeting_id: string;
@@ -575,6 +602,7 @@ export function appendCurrentOnlyConfirmation(input: {
   if (request.request_type !== "create_kb") {
     throw new Error(`append_current_only requires a create_kb confirmation: ${input.id}`);
   }
+  assertRequestCanTransition({ request, action: "append_current_only" });
 
   const payload = parseJsonObject(request.original_payload_json);
   const meetingId = currentMeetingIdFromCreateKbPayload(payload);
@@ -587,8 +615,9 @@ export function appendCurrentOnlyConfirmation(input: {
     throw new Error(`Meeting not found: ${meetingId}`);
   }
 
-  const existingCandidate =
-    request.target_id.startsWith("kb_") ? input.repos.getKnowledgeBase(request.target_id) : null;
+  const existingCandidate = request.target_id.startsWith("kb_")
+    ? input.repos.getKnowledgeBase(request.target_id)
+    : null;
   const knowledgeBase =
     existingCandidate ??
     input.repos.createKnowledgeBase({
@@ -718,6 +747,7 @@ export async function confirmRequest(input: {
   id: string;
   editedPayload?: unknown;
   actorOpenId?: string | null;
+  allowPreconfirmed?: boolean;
   llm?: LlmClient;
   runner?: LarkCliRunner;
 }): Promise<{
@@ -728,14 +758,16 @@ export async function confirmRequest(input: {
   if (!request) {
     throw new Error(`Confirmation request not found: ${input.id}`);
   }
-  if (request.status === "executed") {
+  if (
+    assertRequestCanConfirm({
+      request,
+      allowPreconfirmed: input.allowPreconfirmed
+    }) === "already_executed"
+  ) {
     return {
       confirmation: request,
       result: { already_executed: true }
     };
-  }
-  if (request.status === "rejected") {
-    throw new Error(`Cannot confirm rejected request: ${input.id}`);
   }
 
   const confirmedAt = nowIso();
@@ -976,6 +1008,7 @@ export function rejectRequest(input: {
   if (!request) {
     throw new Error(`Confirmation request not found: ${input.id}`);
   }
+  assertRequestCanTransition({ request, action: "reject" });
 
   if (request.request_type === "action") {
     input.repos.updateActionItemRejection({

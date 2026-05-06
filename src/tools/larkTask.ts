@@ -1,4 +1,4 @@
-import { AppConfig } from "../config";
+import { AppConfig, loadConfig } from "../config";
 import { ActionItemRow, Repositories } from "../services/store/repositories";
 import { runLarkCli, type LarkCliRunner } from "./larkCli";
 
@@ -28,6 +28,7 @@ export async function createTask(input: {
   draft: ActionItemRow;
   runner?: LarkCliRunner;
 }): Promise<CreateTaskResult> {
+  const config = input.config ?? loadConfig();
   const owner = input.draft.owner;
   const ownerResolved = owner !== null && owner.startsWith("ou_");
   const pendingOwner = !ownerResolved && owner?.trim() ? owner.trim() : null;
@@ -37,14 +38,7 @@ export async function createTask(input: {
   ]
     .filter((part) => part.length > 0)
     .join("\n");
-  const args = [
-    "task",
-    "+create",
-    "--summary",
-    input.draft.title,
-    "--description",
-    description
-  ];
+  const args = ["task", "+create", "--summary", input.draft.title, "--description", description];
   if (input.draft.due_date) {
     args.push("--due", input.draft.due_date);
   }
@@ -55,9 +49,9 @@ export async function createTask(input: {
 
   const result = await runLarkCli(args, {
     repos: input.repos,
-    config: input.config,
+    config,
     toolName: "lark.task.create",
-    dryRun: input.config?.feishuTaskCreateDryRun,
+    dryRun: config.feishuDryRun || config.feishuTaskCreateDryRun,
     expectJson: true,
     runner: input.runner
   });

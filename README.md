@@ -83,18 +83,19 @@ LARK_CARD_CALLBACK_URL_HINT=
 
 ### 飞书安全模式
 
-MeetingAtlas 当前使用两个开关分层控制飞书能力：
+MeetingAtlas 当前使用全局 dry-run、卡片发送 dry-run 和分项写入 dry-run 分层控制飞书能力：
 
-| 模式                             | 配置                                                      | 结果                                                                                                           |
-| -------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| 模式 A：全 dry-run，默认安全模式 | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=true`  | 不真实发送卡片；不真实创建任务；不真实创建日程；不真实创建 Wiki / Doc；所有 CLI 都只记录 `planned` / dry-run。 |
-| 模式 B：只真实发送确认卡片       | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=false` | 真实发送飞书确认卡片；任务、日程、Wiki / Doc 仍然 dry-run；这是当前推荐的第一层真实飞书测试模式。              |
-| 模式 C：分项真实写入 canary      | `FEISHU_DRY_RUN=false` 或关闭单项 dry-run                 | 可真实创建任务、日程、Wiki / Doc；必须逐项校准 CLI、权限和 webhook，不建议直接用于未隔离环境。                 |
+| 模式                             | 配置                                                                                                                              | 结果                                                                                                                                                              |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 模式 A：全 dry-run，默认安全模式 | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=true`                                                                          | 不真实发送卡片；不真实创建任务；不真实创建日程；不真实创建 Wiki / Doc；所有 CLI 都只记录 `planned` / dry-run；提交版和默认演示保持该模式。                        |
+| 模式 B：只真实发送确认卡片       | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=false`                                                                         | 真实发送飞书确认卡片；任务、日程、Wiki / Doc 仍然 dry-run；这是当前推荐的第一层真实飞书测试模式。                                                                 |
+| 模式 C：隔离真实写入 canary      | `FEISHU_DRY_RUN=false` 做 full real canary，或在隔离环境里只关闭一个 `FEISHU_*_CREATE_DRY_RUN` / `FEISHU_KNOWLEDGE_WRITE_DRY_RUN` | 可以跑 action/calendar/knowledge 的 per-workflow 或 full real canary 代码闭环；真实写入只在专用 DB、专用接收人和权限校准后逐项开启，不作为共享提交/演示默认模式。 |
 
 `FEISHU_DRY_RUN=true` 是默认安全模式。确认 action/calendar/create_kb 后只写本地记录和 dry-run 输出，不真实创建飞书任务、日程、Wiki 或 Doc。
 `FEISHU_CARD_SEND_DRY_RUN` 只控制确认卡片是否真实发送，默认值必须保持为 `true`。因此可以保持 `FEISHU_DRY_RUN=true`，只在校准好 `LARK_CLI_BIN` 和飞书 bot 权限后设置 `FEISHU_CARD_SEND_DRY_RUN=false`，用于真实发送确认卡片；任务、日程和知识库写入仍保持 dry-run。
 
 当 `FEISHU_DRY_RUN=false` 或关闭单项 dry-run 时，action/calendar/knowledge write 必须真实调用 `LARK_CLI_BIN` 且命令成功；CLI 不存在或命令失败会把确认请求标记为 `failed`，不会写成 created。若只想验证真实卡片发送，不要关闭 `FEISHU_DRY_RUN`，改用 `FEISHU_CARD_SEND_DRY_RUN=false`。
+Mode C 的定位是隔离 canary/readiness：可以证明 per-workflow 或 full real canary 的代码闭环，但不得把共享环境、提交版默认配置或比赛演示口径描述成已经全量真实写入。提交版默认仍保留 dry-run / confirmation-first 安全边界。
 
 服务启动时会打印当前安全模式和缺失配置。非 `development` / `test` 环境下：
 
@@ -103,6 +104,12 @@ MeetingAtlas 当前使用两个开关分层控制飞书能力：
 - 配置了 verification token 后，webhook 必须通过飞书签名校验。
 
 ## 真实闭环配置检查清单
+
+今天提交前推荐验收顺序：
+
+1. **模式 A：全 dry-run。** 使用全新 `SQLITE_PATH`、`FEISHU_DRY_RUN=true`、`FEISHU_CARD_SEND_DRY_RUN=true` 跑完整 P0 主链路，确认 action/calendar/create_kb 都先生成 confirmation，执行结果只写 dry-run 记录。
+2. **模式 B：真实卡片。** 仍保持 `FEISHU_DRY_RUN=true`，只设置 `FEISHU_CARD_SEND_DRY_RUN=false`，用专用接收人验证 confirmation card 真实发送和回调 readiness；任务、日程、Wiki / Doc 仍然 dry-run。
+3. **模式 C：单项真实写入 canary/readiness。** 只在隔离 DB、隔离接收人和已校准 CLI 权限下逐项打开 task、calendar 或 knowledge write；CLI 失败不得伪造成功，提交版默认演示不依赖共享环境真实写入。
 
 打通真实飞书闭环需要确认以下四项：
 

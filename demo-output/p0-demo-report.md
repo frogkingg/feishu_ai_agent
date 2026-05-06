@@ -2,9 +2,9 @@
 
 ✅ MeetingAtlas P0 Demo passed
 
-- Generated at: 2026-04-30T15:08:58.664Z
+- Generated at: 2026-05-06T04:32:59.706Z
 - Mode: full-p0
-- Base URL: http://127.0.0.1:3001
+- Base URL: http://127.0.0.1:3000
 - LLM Provider: mock
 - Feishu Write Mode: dry-run
 - Mode note: FEISHU_DRY_RUN=true; this demo did not perform real Feishu writes.
@@ -20,25 +20,25 @@
 - Append meeting cards: 1
 - Card send CLI records: 0
 - Knowledge base name: 无人机操作流程主题知识库
-- Knowledge base URL: mock://feishu/wiki/kb\_无人机操作流程主题知识库
+- Knowledge base URL: mock://feishu/wiki/dry_wiki_无人机操作流程主题知识库
 - Knowledge update: meeting_added
 - Knowledge updates: kb_created -> meeting_added
 - Pending confirmations: 0
 - Pending confirmation IDs: none
-- Dry-run CLI records: 6
+- Dry-run CLI records: 20
 
 ## Topic Flow
 
-- First meeting: mtg_187ac1f6dd4046c09a37
+- First meeting: mtg_094a8c0332ff4be5bde1
 - First topic action: observe
 - First extraction: actions=2, calendars=1
-- Second meeting: mtg_e8ea4d8102a4456b8d51
+- Second meeting: mtg_45419a5dbf574fd48f69
 - Second topic action: ask_create
 - Second topic score: 0.9
-- Candidate meetings: mtg_187ac1f6dd4046c09a37, mtg_e8ea4d8102a4456b8d51
-- Third meeting: mtg_d65938e6d4a34970ae67
+- Candidate meetings: mtg_094a8c0332ff4be5bde1, mtg_45419a5dbf574fd48f69
+- Third meeting: mtg_3a44efd802cd4de9bb69
 - Third topic action: ask_append
-- Third matched knowledge base: kb\_无人机操作流程主题知识库
+- Third matched knowledge base: kb_无人机操作流程主题知识库
 - Third extraction: actions=1, calendars=1
 
 ## Product Story

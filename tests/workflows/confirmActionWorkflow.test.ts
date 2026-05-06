@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config";
-import { confirmRequest, createConfirmationRequest } from "../../src/services/confirmationService";
+import {
+  appendCurrentOnlyConfirmation,
+  confirmRequest,
+  convertCalendarConfirmationToActionConfirmation,
+  createConfirmationRequest,
+  rejectRequest
+} from "../../src/services/confirmationService";
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
@@ -182,7 +188,81 @@ describe("confirm action request", () => {
     );
   });
 
-  it("creates real Feishu tasks with the task canary while global writes stay dry-run", async () => {
+  it("keeps task creation dry-run when global writes stay dry-run even if the task canary is enabled", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createActionTestMeeting(repos);
+    const action = repos.createActionItem({
+      id: "act_global_dry_run_blocks_task_canary",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "确认试飞场地权限",
+      description: "确认宝石湖试飞是否需要额外审批。",
+      owner: "ou_owner",
+      collaborators_json: JSON.stringify([]),
+      due_date: "2026-05-08",
+      priority: "P1",
+      evidence: "李四说他去确认试飞场地权限。",
+      confidence: 0.84,
+      suggested_reason: "会议明确点名负责人。",
+      missing_fields_json: JSON.stringify([]),
+      confirmation_status: "sent",
+      feishu_task_guid: null,
+      task_url: null,
+      rejection_reason: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "action",
+      targetId: action.id,
+      recipient: action.owner,
+      originalPayload: { draft: action }
+    });
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const runner: LarkCliRunner = async (bin, args) => {
+      calls.push({ bin, args });
+      return {
+        stdout: JSON.stringify({
+          data: {
+            guid: "task_guid_should_not_be_used",
+            url: "https://applink.feishu.cn/client/todo/detail?guid=task_guid_should_not_be_used"
+          }
+        }),
+        stderr: ""
+      };
+    };
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuTaskCreateDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
+      id: request.id,
+      runner
+    });
+
+    const updatedAction = repos.getActionItem(action.id);
+    const updatedRequest = repos.getConfirmationRequest(request.id);
+    expect(calls).toHaveLength(0);
+    expect(updatedRequest).toMatchObject({
+      status: "executed",
+      error: null
+    });
+    expect(updatedAction).toMatchObject({
+      confirmation_status: "created",
+      feishu_task_guid: "dry_task_act_global_dry_run_blocks_task_canary",
+      task_url: "mock://feishu/task/act_global_dry_run_blocks_task_canary"
+    });
+    expect(repos.listCliRuns()).toHaveLength(1);
+    expect(repos.listCliRuns()[0]).toMatchObject({
+      tool: "lark.task.create",
+      dry_run: 1,
+      status: "planned"
+    });
+  });
+
+  it("creates real Feishu tasks only when global writes and the task canary are enabled", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const meeting = createActionTestMeeting(repos);
     const action = repos.createActionItem({
@@ -228,7 +308,7 @@ describe("confirm action request", () => {
     await confirmRequest({
       repos,
       config: loadConfig({
-        feishuDryRun: true,
+        feishuDryRun: false,
         feishuTaskCreateDryRun: false,
         larkCliBin: "fake-lark-cli"
       }),
@@ -311,7 +391,7 @@ describe("confirm action request", () => {
     await confirmRequest({
       repos,
       config: loadConfig({
-        feishuDryRun: true,
+        feishuDryRun: false,
         feishuTaskCreateDryRun: false,
         larkCliBin: "fake-lark-cli"
       }),
@@ -607,4 +687,135 @@ describe("confirm action request", () => {
     });
     expect(cliRuns[0].error).toContain("fake lark CLI failure");
   });
+});
+
+describe("confirmation service state guards", () => {
+  const blockedConfirmStatuses = ["confirmed", "failed", "rejected"] as const;
+  const blockedMutationStatuses = ["confirmed", "executed", "failed", "rejected"] as const;
+
+  function createRequestWithStatus(
+    repos: ReturnType<typeof createRepositories>,
+    requestType: "action" | "calendar" | "create_kb",
+    status: (typeof blockedMutationStatuses)[number]
+  ) {
+    const targetId =
+      requestType === "calendar"
+        ? "cal_state_guard"
+        : requestType === "create_kb"
+          ? "kb_state_guard"
+          : "act_state_guard";
+    const request = createConfirmationRequest({
+      repos,
+      requestType,
+      targetId,
+      recipient: "ou_state_guard",
+      originalPayload: {
+        meeting_id: "mtg_state_guard",
+        candidate_meeting_ids: ["mtg_state_guard"],
+        topic_name: "状态机测试主题"
+      }
+    });
+
+    repos.updateConfirmationRequest({
+      id: request.id,
+      status,
+      confirmed_at:
+        status === "confirmed" || status === "executed" ? "2026-04-28T10:00:00.000Z" : null,
+      executed_at: status === "executed" ? "2026-04-28T10:01:00.000Z" : null,
+      error:
+        status === "failed"
+          ? "previous failure"
+          : status === "rejected"
+            ? "previous rejection"
+            : null
+    });
+
+    return repos.getConfirmationRequest(request.id)!;
+  }
+
+  it("returns no-op when confirming an already executed request", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const request = createRequestWithStatus(repos, "action", "executed");
+
+    const result = await confirmRequest({
+      repos,
+      config: loadConfig({ feishuDryRun: true, larkCliBin: "definitely-not-real-lark" }),
+      id: request.id
+    });
+
+    expect(result.confirmation.status).toBe("executed");
+    expect(result.result).toEqual({ already_executed: true });
+    expect(repos.getConfirmationRequest(request.id)?.status).toBe("executed");
+    expect(repos.listCliRuns()).toHaveLength(0);
+  });
+
+  it.each(blockedConfirmStatuses)("blocks confirm for %s requests", async (status) => {
+    const repos = createRepositories(createMemoryDatabase());
+    const request = createRequestWithStatus(repos, "action", status);
+
+    await expect(
+      confirmRequest({
+        repos,
+        config: loadConfig({ feishuDryRun: true, larkCliBin: "definitely-not-real-lark" }),
+        id: request.id
+      })
+    ).rejects.toThrow(`Cannot confirm ${status} request: ${request.id}`);
+
+    expect(repos.getConfirmationRequest(request.id)?.status).toBe(status);
+    expect(repos.listCliRuns()).toHaveLength(0);
+  });
+
+  it.each(blockedMutationStatuses)("blocks reject for %s requests", (status) => {
+    const repos = createRepositories(createMemoryDatabase());
+    const request = createRequestWithStatus(repos, "action", status);
+
+    expect(() =>
+      rejectRequest({
+        repos,
+        id: request.id,
+        reason: "duplicate"
+      })
+    ).toThrow(`Cannot reject ${status} request: ${request.id}`);
+
+    expect(repos.getConfirmationRequest(request.id)?.status).toBe(status);
+  });
+
+  it.each(blockedMutationStatuses)(
+    "blocks convert_to_task for %s calendar requests without creating new confirmation",
+    async (status) => {
+      const repos = createRepositories(createMemoryDatabase());
+      const request = createRequestWithStatus(repos, "calendar", status);
+      const beforeCount = repos.listConfirmationRequests().length;
+
+      await expect(
+        convertCalendarConfirmationToActionConfirmation({
+          repos,
+          id: request.id,
+          llm: new MockLlmClient()
+        })
+      ).rejects.toThrow(`Cannot convert_to_task ${status} request: ${request.id}`);
+
+      expect(repos.getConfirmationRequest(request.id)?.status).toBe(status);
+      expect(repos.listConfirmationRequests()).toHaveLength(beforeCount);
+    }
+  );
+
+  it.each(blockedMutationStatuses)(
+    "blocks append_current_only for %s create_kb requests without creating new confirmation",
+    (status) => {
+      const repos = createRepositories(createMemoryDatabase());
+      const request = createRequestWithStatus(repos, "create_kb", status);
+      const beforeCount = repos.listConfirmationRequests().length;
+
+      expect(() =>
+        appendCurrentOnlyConfirmation({
+          repos,
+          id: request.id
+        })
+      ).toThrow(`Cannot append_current_only ${status} request: ${request.id}`);
+
+      expect(repos.getConfirmationRequest(request.id)?.status).toBe(status);
+      expect(repos.listConfirmationRequests()).toHaveLength(beforeCount);
+    }
+  );
 });

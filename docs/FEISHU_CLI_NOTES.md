@@ -15,11 +15,11 @@ Each class of write has its own dry-run switch so real tests can be opened one l
 
 ## Feishu Safety Modes
 
-| Mode                                        | Config                                                    | Result                                                                                                                                                                                    |
-| ------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mode A: full dry-run, default safe mode     | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=true`  | Does not send real cards; does not create real tasks; does not create real calendar events; does not create real Wiki / Doc resources; all CLI calls are recorded as `planned` / dry-run. |
-| Mode B: real confirmation cards only        | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=false` | Sends real Feishu confirmation cards; tasks, calendars, Wiki / Doc remain dry-run; this is the recommended first real Feishu test mode.                                                   |
-| Mode C: per-workflow or full real canary    | `FEISHU_DRY_RUN=false` or a single write dry-run set false | Allows real task, calendar, Wiki / Doc writes after explicit calibration; not recommended for unisolated environments. CLI failures must not be recorded as success.                      |
+| Mode                                     | Config                                                                                                                              | Result                                                                                                                                                                                                                                 |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mode A: full dry-run, default safe mode  | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=true`                                                                            | Does not send real cards; does not create real tasks; does not create real calendar events; does not create real Wiki / Doc resources; all CLI calls are recorded as `planned` / dry-run; committed demos keep this mode by default.   |
+| Mode B: real confirmation cards only     | `FEISHU_DRY_RUN=true`<br>`FEISHU_CARD_SEND_DRY_RUN=false`                                                                           | Sends real Feishu confirmation cards; tasks, calendars, Wiki / Doc remain dry-run; this is the recommended first real Feishu test mode.                                                                                                |
+| Mode C: per-workflow or full real canary | `FEISHU_DRY_RUN=false` for full real canary, or one isolated `FEISHU_*_CREATE_DRY_RUN` / `FEISHU_KNOWLEDGE_WRITE_DRY_RUN` set false | Allows task, calendar, or knowledge real-write canaries only in isolated DB / recipient / permission setups after explicit CLI calibration; it is not the shared commit or demo default. CLI failures must not be recorded as success. |
 
 ## Current Tool Commands
 
@@ -107,9 +107,11 @@ The default `LARK_CLI_BIN` is `lark-cli`.
   unexecuted and must not receive a fake `card_message_id`.
 - Knowledge-base real writes are canary-gated by `FEISHU_KNOWLEDGE_WRITE_DRY_RUN`;
   CLI failures must never be turned into fake Wiki or Doc success.
-- Mode C (`FEISHU_DRY_RUN=false`) is not recommended for shared or unisolated
-  environments. When enabled, CLI failures must never be turned into fake task,
-  calendar, Wiki, or Doc success.
+- Mode C is an isolated canary/readiness mode, not the shared commit or demo
+  default. Open task, calendar, or knowledge writes one workflow at a time, or
+  run a full real canary only after DB, recipient, permissions, CLI commands,
+  callback URL, and webhook verification are calibrated. CLI failures must never
+  be turned into fake task, calendar, Wiki, or Doc success.
 
 ## Webhook Boundary
 

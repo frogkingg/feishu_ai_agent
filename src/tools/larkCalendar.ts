@@ -1,4 +1,4 @@
-import { AppConfig } from "../config";
+import { AppConfig, loadConfig } from "../config";
 import { CalendarDraftRow, Repositories } from "../services/store/repositories";
 import { runLarkCli, type LarkCliRunner } from "./larkCli";
 
@@ -40,8 +40,14 @@ export async function createCalendarEvent(input: {
   draft: CalendarDraftRow;
   runner?: LarkCliRunner;
 }): Promise<CreateCalendarEventResult> {
+  const config = input.config ?? loadConfig();
+  const dryRun = config.feishuDryRun || config.feishuCalendarCreateDryRun;
+
   if (!input.draft.start_time) {
     throw new Error("calendar start_time is required before creating a Feishu event");
+  }
+  if (!dryRun && !input.draft.end_time) {
+    throw new Error("calendar end_time is required before creating a real Feishu event");
   }
 
   const participantIds = parseParticipantIds(input.draft.participants_json);
@@ -63,9 +69,9 @@ export async function createCalendarEvent(input: {
 
   const result = await runLarkCli(args, {
     repos: input.repos,
-    config: input.config,
+    config,
     toolName: "lark.calendar.create",
-    dryRun: input.config?.feishuCalendarCreateDryRun,
+    dryRun,
     expectJson: true,
     runner: input.runner
   });

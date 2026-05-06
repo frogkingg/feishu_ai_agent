@@ -71,6 +71,9 @@ export async function createDoc(input: {
   parentNodeToken?: string | null;
   runner?: LarkCliRunner;
 }): Promise<CreateDocResult> {
+  const dryRun = input.config
+    ? input.config.feishuDryRun || input.config.feishuKnowledgeWriteDryRun
+    : true;
   const createArgs = [
     "wiki",
     "+node-create",
@@ -92,7 +95,7 @@ export async function createDoc(input: {
     repos: input.repos,
     config: input.config,
     toolName: "lark.doc.create",
-    dryRun: input.config?.feishuKnowledgeWriteDryRun,
+    dryRun,
     expectJson: true,
     runner: input.runner
   });
@@ -145,7 +148,7 @@ export async function createDoc(input: {
           repos: input.repos,
           config: input.config,
           toolName: "lark.docs.update",
-          dryRun: input.config?.feishuKnowledgeWriteDryRun,
+          dryRun,
           expectJson: true,
           runner: input.runner
         }

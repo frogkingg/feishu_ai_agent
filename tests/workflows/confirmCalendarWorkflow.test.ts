@@ -5,6 +5,7 @@ import { confirmRequest, createConfirmationRequest } from "../../src/services/co
 import { MockLlmClient } from "../../src/services/llm/mockLlmClient";
 import { createMemoryDatabase } from "../../src/services/store/db";
 import { createRepositories } from "../../src/services/store/repositories";
+import { createCalendarEvent } from "../../src/tools/larkCalendar";
 import { type LarkCliRunner } from "../../src/tools/larkCli";
 import { processMeetingWorkflow } from "../../src/workflows/processMeetingWorkflow";
 
@@ -173,6 +174,187 @@ describe("confirm calendar request", () => {
     expect(args).not.toContain(JSON.stringify(["王五", "赵六"]));
   });
 
+  it("keeps calendar canary planned when global Feishu dry-run is enabled", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createCalendarTestMeeting(repos);
+    const calendar = repos.createCalendarDraft({
+      id: "cal_global_dry_run_gate",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "无人机操作员访谈",
+      start_time: "2026-05-05T10:00:00+08:00",
+      end_time: "2026-05-05T11:00:00+08:00",
+      duration_minutes: 60,
+      participants_json: JSON.stringify(["ou_alpha"]),
+      agenda: "确认真实操作步骤和限制",
+      location: null,
+      evidence: "下周二上午 10 点再约操作员访谈。",
+      confidence: 0.82,
+      missing_fields_json: JSON.stringify([]),
+      confirmation_status: "sent",
+      calendar_event_id: null,
+      event_url: null
+    });
+    const request = createConfirmationRequest({
+      repos,
+      requestType: "calendar",
+      targetId: calendar.id,
+      recipient: meeting.organizer,
+      originalPayload: { draft: calendar }
+    });
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const runner: LarkCliRunner = async (bin, args) => {
+      calls.push({ bin, args });
+      return {
+        stdout: JSON.stringify({ data: { event_id: "event_real" } }),
+        stderr: ""
+      };
+    };
+
+    await confirmRequest({
+      repos,
+      config: loadConfig({
+        feishuDryRun: true,
+        feishuCalendarCreateDryRun: false,
+        larkCliBin: "fake-lark-cli"
+      }),
+      id: request.id,
+      runner
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(repos.listCliRuns()[0]).toMatchObject({
+      tool: "lark.calendar.create",
+      dry_run: 1,
+      status: "planned"
+    });
+    expect(repos.getCalendarDraft(calendar.id)).toMatchObject({
+      confirmation_status: "created",
+      calendar_event_id: "dry_event_cal_global_dry_run_gate",
+      event_url: "mock://feishu/calendar/cal_global_dry_run_gate"
+    });
+  });
+
+  it("keeps calendar creation dry-run when config is omitted but calendar dry-run is enabled", async () => {
+    const previousFeishuDryRun = process.env.FEISHU_DRY_RUN;
+    const previousCalendarDryRun = process.env.FEISHU_CALENDAR_CREATE_DRY_RUN;
+    const previousLarkCliBin = process.env.LARK_CLI_BIN;
+    process.env.FEISHU_DRY_RUN = "false";
+    process.env.FEISHU_CALENDAR_CREATE_DRY_RUN = "true";
+    process.env.LARK_CLI_BIN = "fake-lark-cli";
+
+    try {
+      const repos = createRepositories(createMemoryDatabase());
+      const meeting = createCalendarTestMeeting(repos);
+      const calendar = repos.createCalendarDraft({
+        id: "cal_omitted_config_calendar_dry_run",
+        meeting_id: meeting.id,
+        kb_id: null,
+        title: "无人机操作员访谈",
+        start_time: "2026-05-05T10:00:00+08:00",
+        end_time: "2026-05-05T11:00:00+08:00",
+        duration_minutes: 60,
+        participants_json: JSON.stringify(["ou_alpha"]),
+        agenda: "确认真实操作步骤和限制",
+        location: null,
+        evidence: "下周二上午 10 点再约操作员访谈。",
+        confidence: 0.82,
+        missing_fields_json: JSON.stringify([]),
+        confirmation_status: "sent",
+        calendar_event_id: null,
+        event_url: null
+      });
+      const calls: Array<{ bin: string; args: string[] }> = [];
+      const runner: LarkCliRunner = async (bin, args) => {
+        calls.push({ bin, args });
+        return {
+          stdout: JSON.stringify({ data: { event_id: "event_real" } }),
+          stderr: ""
+        };
+      };
+
+      const result = await createCalendarEvent({
+        repos,
+        draft: calendar,
+        runner
+      });
+
+      expect(calls).toHaveLength(0);
+      expect(result).toMatchObject({
+        calendar_event_id: "dry_event_cal_omitted_config_calendar_dry_run",
+        event_url: "mock://feishu/calendar/cal_omitted_config_calendar_dry_run",
+        dry_run: true
+      });
+      expect(repos.listCliRuns()[0]).toMatchObject({
+        tool: "lark.calendar.create",
+        dry_run: 1,
+        status: "planned"
+      });
+    } finally {
+      if (previousFeishuDryRun === undefined) {
+        delete process.env.FEISHU_DRY_RUN;
+      } else {
+        process.env.FEISHU_DRY_RUN = previousFeishuDryRun;
+      }
+      if (previousCalendarDryRun === undefined) {
+        delete process.env.FEISHU_CALENDAR_CREATE_DRY_RUN;
+      } else {
+        process.env.FEISHU_CALENDAR_CREATE_DRY_RUN = previousCalendarDryRun;
+      }
+      if (previousLarkCliBin === undefined) {
+        delete process.env.LARK_CLI_BIN;
+      } else {
+        process.env.LARK_CLI_BIN = previousLarkCliBin;
+      }
+    }
+  });
+
+  it("fails before real calendar CLI execution when end time is missing", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const meeting = createCalendarTestMeeting(repos);
+    const calendar = repos.createCalendarDraft({
+      id: "cal_missing_end_time_real",
+      meeting_id: meeting.id,
+      kb_id: null,
+      title: "无人机操作员访谈",
+      start_time: "2026-05-05T10:00:00+08:00",
+      end_time: null,
+      duration_minutes: null,
+      participants_json: JSON.stringify(["ou_alpha"]),
+      agenda: "确认真实操作步骤和限制",
+      location: null,
+      evidence: "下周二上午 10 点再约操作员访谈。",
+      confidence: 0.82,
+      missing_fields_json: JSON.stringify(["end_time"]),
+      confirmation_status: "sent",
+      calendar_event_id: null,
+      event_url: null
+    });
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const runner: LarkCliRunner = async (bin, args) => {
+      calls.push({ bin, args });
+      return {
+        stdout: JSON.stringify({ data: { event_id: "event_real" } }),
+        stderr: ""
+      };
+    };
+
+    await expect(
+      createCalendarEvent({
+        repos,
+        config: loadConfig({
+          feishuDryRun: false,
+          feishuCalendarCreateDryRun: false,
+          larkCliBin: "fake-lark-cli"
+        }),
+        draft: calendar,
+        runner
+      })
+    ).rejects.toThrow("calendar end_time is required before creating a real Feishu event");
+    expect(calls).toHaveLength(0);
+    expect(repos.listCliRuns()).toHaveLength(0);
+  });
+
   it("creates real Feishu events with the calendar canary and filters attendees to open_ids", async () => {
     const repos = createRepositories(createMemoryDatabase());
     const meeting = createCalendarTestMeeting(repos);
@@ -218,7 +400,7 @@ describe("confirm calendar request", () => {
     await confirmRequest({
       repos,
       config: loadConfig({
-        feishuDryRun: true,
+        feishuDryRun: false,
         feishuCalendarCreateDryRun: false,
         larkCliBin: "fake-lark-cli"
       }),
@@ -298,7 +480,7 @@ describe("confirm calendar request", () => {
     await confirmRequest({
       repos,
       config: loadConfig({
-        feishuDryRun: true,
+        feishuDryRun: false,
         feishuCalendarCreateDryRun: false,
         larkCliBin: "fake-lark-cli"
       }),

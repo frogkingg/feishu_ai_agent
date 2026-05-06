@@ -36,6 +36,7 @@ export async function createWikiSpace(input: {
   members?: string[];
   runner?: LarkCliRunner;
 }): Promise<CreateWikiResult> {
+  const dryRun = input.config.feishuDryRun || input.config.feishuKnowledgeWriteDryRun;
   const result = await runLarkCli(
     [
       "wiki",
@@ -53,7 +54,7 @@ export async function createWikiSpace(input: {
       repos: input.repos,
       config: input.config,
       toolName: "lark.wiki.spaces.create",
-      dryRun: input.config.feishuKnowledgeWriteDryRun,
+      dryRun,
       expectJson: true,
       runner: input.runner
     }
@@ -110,7 +111,7 @@ export async function createWikiSpace(input: {
         repos: input.repos,
         config: input.config,
         toolName: "lark.wiki.members.create",
-        dryRun: input.config.feishuKnowledgeWriteDryRun,
+        dryRun,
         expectJson: true,
         runner: input.runner
       }

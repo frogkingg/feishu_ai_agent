@@ -190,6 +190,16 @@ function allowsLocalSecurityBypass(config: Pick<AppConfig, "nodeEnv">): boolean 
   return config.nodeEnv === "development" || config.nodeEnv === "test";
 }
 
+function requiresDevApiKey(url: string): boolean {
+  const [path] = url.split("?");
+  if (path.startsWith("/dev")) {
+    return true;
+  }
+
+  const segments = path.split("/").filter((segment) => segment.length > 0);
+  return segments.length === 3 && segments[0] === "kb" && segments[2] === "ask";
+}
+
 function getSecurityMode(config: AppConfig): "dry-run" | "card-real" | "fully-real" {
   if (
     !config.feishuDryRun &&
@@ -880,7 +890,7 @@ export function buildServer(input: {
   logSecurityMode(app, input.config);
 
   app.addHook("onRequest", async (request, reply) => {
-    if (!request.url.startsWith("/dev")) {
+    if (!requiresDevApiKey(request.url)) {
       return;
     }
 
@@ -889,7 +899,7 @@ export function buildServer(input: {
       if (allowsLocalSecurityBypass(input.config)) {
         request.log.warn(
           { path: request.url },
-          "DEV_API_KEY not configured; allowing /dev request in local environment"
+          "DEV_API_KEY not configured; allowing protected request in local environment"
         );
         return;
       }
@@ -1159,6 +1169,7 @@ export function buildServer(input: {
             id: requestId,
             editedPayload: parsed.editedPayload,
             actorOpenId: parsed.actorOpenId,
+            allowPreconfirmed: true,
             runner: input.larkCliRunner
           });
           const finalUpdate = await syncCardStatusForRequest({
