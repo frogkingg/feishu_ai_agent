@@ -132,6 +132,13 @@ function getLarkTimestampCandidates(timestamp: string | null): string[] {
     candidates.push(firstCommaToken);
   }
 
+  for (const match of trimmed.matchAll(/(?:^|[^\d])(\d{10,19}(?:\.\d+)?)(?!\d)/g)) {
+    const epochLikeToken = match[1];
+    if (epochLikeToken !== undefined && !candidates.includes(epochLikeToken)) {
+      candidates.push(epochLikeToken);
+    }
+  }
+
   return candidates;
 }
 
@@ -336,11 +343,14 @@ function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, un
   const nonce = getHeaderString(request, "x-lark-request-nonce");
   const signature = getHeaderString(request, "x-lark-signature");
   const timestampFailureReason = getLarkSignatureTimestampFailureReason(timestamp);
+  const timestampCandidates = getLarkTimestampCandidates(timestamp);
 
   return {
     has_timestamp: timestamp !== null,
     has_nonce: nonce !== null,
     has_signature: signature !== null,
+    timestamp_candidate_count: timestampCandidates.length,
+    timestamp_failure_reason: timestampFailureReason,
     reason:
       timestampFailureReason ??
       (nonce === null

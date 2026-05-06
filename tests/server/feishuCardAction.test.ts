@@ -495,6 +495,90 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
   });
 
+  it("accepts Feishu card-action callbacks with ts-prefixed timestamp headers", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const signedTimestamp = currentLarkTimestamp();
+    const nonce = "legacy-card-ts-prefixed-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": `ts=${signedTimestamp}`,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp: signedTimestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      toast: {
+        type: "error",
+        content: "确认请求不存在"
+      }
+    });
+  });
+
+  it("accepts Feishu card-action callbacks with quoted and bracketed timestamp headers", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+
+    for (const [timestampHeader, nonce] of [
+      [`"${currentLarkTimestamp()}"`, "legacy-card-quoted-timestamp-nonce"],
+      [`[${currentLarkTimestamp()}]`, "legacy-card-bracketed-timestamp-nonce"]
+    ]) {
+      const signedTimestamp = timestampHeader.replace(/\D/g, "");
+      const response = await app.inject({
+        method: "POST",
+        url: "/webhooks/feishu/card-action",
+        headers: {
+          "x-lark-request-timestamp": timestampHeader,
+          "x-lark-request-nonce": nonce,
+          "x-lark-signature": signLegacyCardAction({
+            timestamp: signedTimestamp,
+            nonce,
+            body: payload,
+            verificationToken
+          })
+        },
+        payload
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        toast: {
+          type: "error",
+          content: "确认请求不存在"
+        }
+      });
+    }
+  });
+
   it("accepts Feishu card-action callbacks with microsecond and nanosecond timestamps", async () => {
     const verificationToken = "verification-token";
     const { app } = await createAppWithConfirmations(verificationToken);
@@ -538,7 +622,7 @@ describe("POST /webhooks/feishu/card-action", () => {
     }
   });
 
-  it("rejects comma-joined Feishu card-action timestamps when the first token is not numeric", async () => {
+  it("rejects wrapped Feishu card-action timestamps when no fresh epoch-like token is present", async () => {
     const verificationToken = "verification-token";
     const { app } = await createAppWithConfirmations(verificationToken);
     const payload = {
@@ -551,8 +635,8 @@ describe("POST /webhooks/feishu/card-action", () => {
       }
     };
     const signedTimestamp = currentLarkTimestamp();
-    const timestamp = `not-a-timestamp, ${signedTimestamp}`;
-    const nonce = "legacy-card-invalid-first-comma-timestamp-nonce";
+    const timestamp = "ts=12345; version=2; port=443";
+    const nonce = "legacy-card-no-epoch-like-timestamp-nonce";
 
     const response = await app.inject({
       method: "POST",
