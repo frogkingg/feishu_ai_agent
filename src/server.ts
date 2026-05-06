@@ -1043,19 +1043,94 @@ async function syncCardStatusForRequest(input: {
   updateToken?: string | null;
   messageId?: string | null;
   chatId?: string | null;
+  statusText?: string;
   runner?: LarkCliRunner;
 }) {
   const latest = input.repos.getConfirmationRequest(input.request.id) ?? input.request;
+  const card = buildConfirmationCardFromRequest(latest, { repos: input.repos });
+  if (input.statusText !== undefined) {
+    card.status_text = input.statusText;
+  }
+
   return syncConfirmationCardStatus({
     repos: input.repos,
     config: input.config,
     confirmation: latest,
-    card: buildConfirmationCardFromRequest(latest, { repos: input.repos }),
+    card,
     updateToken: input.updateToken,
     messageId: input.messageId,
     chatId: input.chatId,
     runner: input.runner
   });
+}
+
+async function syncDevTerminalCardStatus(input: {
+  log: FastifyRequest["log"];
+  repos: Repositories;
+  config: AppConfig;
+  request: ConfirmationRequestRow;
+  runner?: LarkCliRunner;
+}) {
+  if (!input.request.card_message_id) {
+    return {
+      ok: true,
+      skipped: true,
+      method: "skipped",
+      status: "skipped",
+      dry_run: input.config.feishuCardSendDryRun,
+      update_cli_run_id: null,
+      fallback_cli_run_id: null,
+      card_message_id: null,
+      recipient: input.request.recipient,
+      chat_id: null,
+      error: null
+    };
+  }
+
+  try {
+    const result = await syncCardStatusForRequest({
+      repos: input.repos,
+      config: input.config,
+      request: input.request,
+      messageId: input.request.card_message_id,
+      statusText: input.request.status === "rejected" ? "已拒绝" : undefined,
+      runner: input.runner
+    });
+
+    if (!result.ok) {
+      input.log.warn(
+        cardStatusLogContext({
+          confirmationId: input.request.id,
+          phase: "dev_terminal",
+          result
+        }),
+        "dev confirmation card status update failed"
+      );
+    }
+
+    return {
+      ...result,
+      skipped: false
+    };
+  } catch (error) {
+    input.log.warn(
+      { err: error, confirmation_id: input.request.id },
+      "dev confirmation card status update threw after terminal transition"
+    );
+    return {
+      ok: false,
+      skipped: false,
+      method: "error",
+      status: "failed",
+      dry_run: input.config.feishuCardSendDryRun,
+      update_cli_run_id: null,
+      fallback_cli_run_id: null,
+      card_message_id: input.request.card_message_id,
+      recipient: input.request.recipient,
+      chat_id: null,
+      error: briefError(error)
+    };
+  }
 }
 
 function sendCardStatusCode(result: { ok: boolean; error: string | null }): number {
@@ -2103,24 +2178,46 @@ export function buildServer(input: {
   app.post("/dev/confirmations/:id/confirm", async (request) => {
     const params = request.params as { id: string };
     const body = (request.body ?? {}) as { edited_payload?: unknown };
-    return confirmRequest({
+    const result = await confirmRequest({
       repos: input.repos,
       config: input.config,
       id: params.id,
       editedPayload: body.edited_payload,
       runner: input.larkCliRunner
     });
+    const cardUpdate = await syncDevTerminalCardStatus({
+      log: request.log,
+      repos: input.repos,
+      config: input.config,
+      request: result.confirmation,
+      runner: input.larkCliRunner
+    });
+
+    return {
+      ...result,
+      card_update: cardUpdate
+    };
   });
 
   app.post("/dev/confirmations/:id/reject", async (request) => {
     const params = request.params as { id: string };
     const body = (request.body ?? {}) as { reason?: string | null };
+    const confirmation = rejectRequest({
+      repos: input.repos,
+      id: params.id,
+      reason: body.reason
+    });
+    const cardUpdate = await syncDevTerminalCardStatus({
+      log: request.log,
+      repos: input.repos,
+      config: input.config,
+      request: confirmation,
+      runner: input.larkCliRunner
+    });
+
     return {
-      confirmation: rejectRequest({
-        repos: input.repos,
-        id: params.id,
-        reason: body.reason
-      })
+      confirmation,
+      card_update: cardUpdate
     };
   });
 

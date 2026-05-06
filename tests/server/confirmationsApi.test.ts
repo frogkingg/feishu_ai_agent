@@ -189,6 +189,12 @@ function cardSendArgsForConfirmation(
   return JSON.parse(run!.args_json) as string[];
 }
 
+function dataArg(args: string[]) {
+  const dataIndex = args.indexOf("--data");
+  expect(dataIndex).toBeGreaterThanOrEqual(0);
+  return args[dataIndex + 1];
+}
+
 describe("confirmation dev APIs", () => {
   const validCardCallbackConfig = {
     feishuCardActionsEnabled: true,
@@ -230,6 +236,14 @@ describe("confirmation dev APIs", () => {
     const calendar = repos
       .listConfirmationRequests()
       .find((item) => item.request_type === "calendar");
+    repos.updateConfirmationCardMessage({
+      id: action!.id,
+      card_message_id: "om_dev_action_card"
+    });
+    repos.updateConfirmationCardMessage({
+      id: calendar!.id,
+      card_message_id: "om_dev_calendar_card"
+    });
 
     const listResponse = await app.inject({
       method: "GET",
@@ -292,6 +306,18 @@ describe("confirmation dev APIs", () => {
       payload: {}
     });
     expect(confirmResponse.statusCode).toBe(200);
+    expect(confirmResponse.json()).toMatchObject({
+      confirmation: {
+        id: action!.id,
+        status: "executed"
+      },
+      card_update: {
+        ok: true,
+        skipped: false,
+        method: "update",
+        card_message_id: "om_dev_action_card"
+      }
+    });
 
     const rejectResponse = await app.inject({
       method: "POST",
@@ -299,6 +325,38 @@ describe("confirmation dev APIs", () => {
       payload: { reason: "稍后再约" }
     });
     expect(rejectResponse.statusCode).toBe(200);
+    expect(rejectResponse.json()).toMatchObject({
+      confirmation: {
+        id: calendar!.id,
+        status: "rejected"
+      },
+      card_update: {
+        ok: true,
+        skipped: false,
+        method: "update",
+        card_message_id: "om_dev_calendar_card"
+      }
+    });
+
+    const cardUpdateRuns = repos
+      .listCliRuns()
+      .filter((run) => run.tool === "lark.im.update_card");
+    expect(cardUpdateRuns).toHaveLength(2);
+    const updateArgs = cardUpdateRuns.map((run) => JSON.parse(run.args_json) as string[]);
+    expect(updateArgs[0]).toEqual(
+      expect.arrayContaining(["api", "PATCH", "/open-apis/im/v1/messages/om_dev_action_card"])
+    );
+    expect(updateArgs[1]).toEqual(
+      expect.arrayContaining(["api", "PATCH", "/open-apis/im/v1/messages/om_dev_calendar_card"])
+    );
+    const updatedCards = updateArgs.map((args) => {
+      const updateData = JSON.parse(dataArg(args)) as { content: string };
+      return JSON.parse(updateData.content) as { elements: Array<{ tag: string }> };
+    });
+    expect(JSON.stringify(updatedCards[0])).toContain("已添加待办");
+    expect(JSON.stringify(updatedCards[1])).toContain("已拒绝");
+    expect(updatedCards[0].elements.some((element) => element.tag === "action")).toBe(false);
+    expect(updatedCards[1].elements.some((element) => element.tag === "action")).toBe(false);
 
     const unfinishedCardsResponse = await app.inject({
       method: "GET",
@@ -317,7 +375,7 @@ describe("confirmation dev APIs", () => {
       cli_runs: unknown[];
       confirmation_requests: Array<{ status: string }>;
     };
-    expect(state.cli_runs).toHaveLength(1);
+    expect(state.cli_runs).toHaveLength(3);
     expect(state.confirmation_requests.some((request) => request.status === "executed")).toBe(true);
     expect(state.confirmation_requests.some((request) => request.status === "rejected")).toBe(true);
   });
