@@ -121,11 +121,18 @@ function getLarkSignatureTimestampFailureReason(timestamp: string | null): strin
     return "missing_timestamp";
   }
 
-  if (!/^\d+$/.test(timestamp)) {
+  const trimmed = timestamp.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) {
     return "invalid_timestamp";
   }
 
-  const timestampSeconds = Number(timestamp);
+  const timestampNumber = Number(trimmed);
+  if (!Number.isFinite(timestampNumber)) {
+    return "invalid_timestamp";
+  }
+
+  const timestampSeconds =
+    timestampNumber > 1_000_000_000_000 ? Math.floor(timestampNumber / 1000) : Math.floor(timestampNumber);
   if (!Number.isSafeInteger(timestampSeconds)) {
     return "invalid_timestamp";
   }
