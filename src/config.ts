@@ -185,7 +185,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     llmApiKey: process.env.LLM_API_KEY || null,
     llmBaseUrl: process.env.LLM_BASE_URL || null,
     llmModel: process.env.LLM_MODEL || null,
-    llmTimeoutMs: parseNumber(process.env.LLM_TIMEOUT_MS, 30000),
+    llmTimeoutMs: parseNumber(process.env.LLM_TIMEOUT_MS, 60000),
     llmMaxInputChars: parseNumber(process.env.LLM_MAX_INPUT_CHARS, 30000),
     llmTemperature: parseNumber(process.env.LLM_TEMPERATURE, 0),
     llmMaxTokens: parseNumber(process.env.LLM_MAX_TOKENS, 4096),
