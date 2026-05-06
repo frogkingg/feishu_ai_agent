@@ -5,6 +5,17 @@
 最新一次实际运行结果由 `npm run demo:full-p0` 写入
 `demo-output/p0-demo-report.md`。
 
+## 录屏前验收口径
+
+当前 RC commit：`6b9fb08`。
+
+- 真实 LLM dry-run canary 已通过，且所有 Feishu dry-run 开关保持为 `true`。
+- 真实 Feishu task / calendar / Wiki / Doc canary 已通过，用于证明隔离真实写入链路。
+- 服务器公网 `/health` 已通过。
+- 录屏默认仍按 dry-run / confirmation-first 口径演示，不真实写飞书。
+- 飞书妙记事件回调公网验收已通过：签名 `vc.meeting.recording_ready_v1` 合成事件被接收，重复事件幂等，后台状态为 `processed`。
+- 卡片按钮公网链路是独立验收项；录屏如不演示点击回调，不要把它和妙记事件回调混成一个证明点。
+
 `demo-output/p0-demo-report.md` 只保留完整 P0 主链路结果。send-cards dry-run
 链路会写入 `demo-output/send-cards-demo-report.md`，用于证明确认卡片发送计划能进入
 `lark.im.send_card` 工具层。两份报告互补：前者证明完整执行闭环，后者证明卡片发送

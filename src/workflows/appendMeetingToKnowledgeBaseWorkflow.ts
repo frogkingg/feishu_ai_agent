@@ -227,7 +227,9 @@ export async function appendMeetingToKnowledgeBaseWorkflow(input: {
     actions,
     calendars
   });
-  const dryRun = input.config?.feishuKnowledgeWriteDryRun ?? input.config?.feishuDryRun ?? true;
+  const dryRun = input.config
+    ? input.config.feishuDryRun || input.config.feishuKnowledgeWriteDryRun
+    : true;
   let realDocUrl: string | null = null;
 
   if (!dryRun) {

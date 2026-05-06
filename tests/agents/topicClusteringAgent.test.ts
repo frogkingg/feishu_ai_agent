@@ -53,7 +53,7 @@ class QueueLlmClient implements LlmClient {
 class TopicDecisionLlmClient implements LlmClient {
   readonly calls: GenerateJsonInput[] = [];
 
-  constructor(private readonly decide: (input: GenerateJsonInput) => TopicMatchResult) {}
+  constructor(private readonly decide: (input: GenerateJsonInput) => unknown) {}
 
   async generateJson<T>(input: GenerateJsonInput): Promise<T> {
     this.calls.push(input);
@@ -566,6 +566,79 @@ describe("TopicClusteringAgent", () => {
     expect(result.suggested_action).toBe("ask_append");
     expect(result.matched_kb_id).toBe(knowledgeBase.id);
     expect(result.candidate_meeting_ids).toEqual([source.id, current.id]);
+  });
+
+  it("repairs invalid TopicMatchResult through the LLM instead of defaulting to observe", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const current = createStoredMeeting(repos, {
+      id: "mtg_topic_repair",
+      title: "OpenClaw onboarding 复盘",
+      keywords: ["OpenClaw"]
+    });
+    const llm = new TopicDecisionLlmClient((input) =>
+      input.userPrompt.includes("上一次输出没有通过 TopicMatchResult schema 校验")
+        ? {
+            current_meeting_id: current.id,
+            matched_kb_id: null,
+            matched_kb_name: null,
+            score: 0.91,
+            match_reasons: ["LLM repair 后明确判断应创建知识库"],
+            suggested_action: "ask_create",
+            candidate_meeting_ids: [current.id]
+          }
+        : {
+            current_meeting_id: current.id,
+            matched_kb_id: null,
+            matched_kb_name: null,
+            score: 0.91,
+            match_reasons: ["invalid action should trigger repair"],
+            suggested_action: "ask_later",
+            candidate_meeting_ids: [current.id]
+          }
+    );
+
+    const result = await runTopicClusteringAgent({
+      repos,
+      meeting: current,
+      extraction: productReviewExtractionWithKeywords(["OpenClaw", "onboarding"]),
+      llm
+    });
+
+    expect(result.suggested_action).toBe("ask_create");
+    expect(result.match_reasons).toContain("LLM repair 后明确判断应创建知识库");
+    expect(llm.calls).toHaveLength(2);
+    expect(llm.calls[1].userPrompt).toContain("schema_error");
+    expect(llm.calls[1].userPrompt).toContain("original_topic_prompt");
+  });
+
+  it("falls back to audited no_action only after TopicMatchResult repair also fails", async () => {
+    const repos = createRepositories(createMemoryDatabase());
+    const current = createStoredMeeting(repos, {
+      id: "mtg_topic_repair_failed",
+      title: "OpenClaw onboarding 复盘",
+      keywords: ["OpenClaw"]
+    });
+    const llm = new TopicDecisionLlmClient(() => ({
+      current_meeting_id: current.id,
+      matched_kb_id: null,
+      matched_kb_name: null,
+      score: 0.7,
+      match_reasons: [],
+      suggested_action: "ask_later",
+      candidate_meeting_ids: [current.id]
+    }));
+
+    const result = await runTopicClusteringAgent({
+      repos,
+      meeting: current,
+      extraction: productReviewExtractionWithKeywords(["OpenClaw", "onboarding"]),
+      llm
+    });
+
+    expect(result.suggested_action).toBe("no_action");
+    expect(result.score).toBe(0);
+    expect(result.match_reasons[0]).toContain("LLM unavailable: no topic judgment was made");
+    expect(llm.calls).toHaveLength(2);
   });
 
   it("observes the first drone meeting and creates a KB confirmation after the second related meeting", async () => {

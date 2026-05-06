@@ -1,4 +1,4 @@
-import { getCardCallbackReadiness, loadConfig } from "../src/config";
+import { getCardCallbackReadiness, getFeishuWebhookReadiness, loadConfig } from "../src/config";
 
 describe("loadConfig", () => {
   it("defaults to mock LLM without API credentials", () => {
@@ -12,6 +12,11 @@ describe("loadConfig", () => {
     expect(config.llmApiKey).toBeNull();
     expect(config.llmBaseUrl).toBeNull();
     expect(config.llmModel).toBeNull();
+  });
+
+  it("loads default host and allows an explicit override", () => {
+    expect(loadConfig().host).toBe("127.0.0.1");
+    expect(loadConfig({ host: "0.0.0.0" }).host).toBe("0.0.0.0");
   });
 
   it("parses optional LLM runtime controls", () => {
@@ -100,24 +105,28 @@ describe("loadConfig", () => {
       loadConfig({
         larkVerificationToken: null,
         larkCardCallbackUrlHint: null,
-        larkEncryptKey: null
+        larkEncryptKey: null,
+        feishuEventCardChatId: null
       })
     ).toMatchObject({
       larkVerificationToken: null,
       larkCardCallbackUrlHint: null,
-      larkEncryptKey: null
+      larkEncryptKey: null,
+      feishuEventCardChatId: null
     });
 
     expect(
       loadConfig({
         larkVerificationToken: "verification-token",
         larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action",
-        larkEncryptKey: "encrypt-key"
+        larkEncryptKey: "encrypt-key",
+        feishuEventCardChatId: "oc_team_room"
       })
     ).toMatchObject({
       larkVerificationToken: "verification-token",
       larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action",
-      larkEncryptKey: "encrypt-key"
+      larkEncryptKey: "encrypt-key",
+      feishuEventCardChatId: "oc_team_room"
     });
   });
 
@@ -127,6 +136,7 @@ describe("loadConfig", () => {
         loadConfig({
           feishuCardActionsEnabled: true,
           larkVerificationToken: "verification-token",
+          larkEncryptKey: "encrypt-key",
           larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
         })
       )
@@ -134,6 +144,7 @@ describe("loadConfig", () => {
       ready: true,
       actions_enabled: true,
       verification_token_configured: true,
+      encrypt_key_configured: true,
       callback_url_configured: true,
       callback_url_public: true,
       callback_url_path_ok: true,
@@ -145,15 +156,50 @@ describe("loadConfig", () => {
         loadConfig({
           feishuCardActionsEnabled: true,
           larkVerificationToken: "",
+          larkEncryptKey: "",
           larkCardCallbackUrlHint: "http://localhost:3000/webhooks/feishu/card-action"
         })
       )
     ).toMatchObject({
       ready: false,
       verification_token_configured: false,
+      encrypt_key_configured: false,
       callback_url_configured: true,
       callback_url_public: false,
       callback_url_path_ok: true
+    });
+  });
+
+  it("reports Feishu event webhook readiness without exposing secrets", () => {
+    expect(
+      getFeishuWebhookReadiness(
+        loadConfig({
+          larkVerificationToken: "verification-token",
+          larkEncryptKey: "encrypt-key",
+          feishuEventCardChatId: "oc_team_room"
+        })
+      )
+    ).toMatchObject({
+      ready: true,
+      verification_token_configured: true,
+      encrypt_key_configured: true,
+      event_card_chat_configured: true,
+      issues: []
+    });
+
+    expect(
+      getFeishuWebhookReadiness(
+        loadConfig({
+          larkVerificationToken: null,
+          larkEncryptKey: null,
+          feishuEventCardChatId: null
+        })
+      )
+    ).toMatchObject({
+      ready: false,
+      verification_token_configured: false,
+      encrypt_key_configured: false,
+      event_card_chat_configured: false
     });
   });
 

@@ -15,7 +15,7 @@ async function main() {
   });
 
   await server.listen({
-    host: "127.0.0.1",
+    host: config.host,
     port: config.port
   });
 }

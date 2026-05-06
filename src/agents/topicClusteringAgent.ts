@@ -1,9 +1,5 @@
-import {
-  MeetingExtractionResult,
-  TopicMatchResult,
-  TopicMatchResultSchema,
-  TopicSuggestedActionSchema
-} from "../schemas";
+import { ZodError } from "zod";
+import { MeetingExtractionResult, TopicMatchResult, TopicMatchResultSchema } from "../schemas";
 import { LlmClient } from "../services/llm/llmClient";
 import { KnowledgeBaseRow, MeetingRow, Repositories } from "../services/store/repositories";
 import { readPrompt } from "../utils/prompts";
@@ -50,43 +46,12 @@ function parseStringArray(value: string): string[] {
   }
 }
 
-function unique(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
 function compactText(value: string | null, maxLength: number): string | null {
   const text = (value ?? "").replace(/\s+/g, " ").trim();
   if (text.length === 0) {
     return null;
   }
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function firstString(values: unknown[]): string | null {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value.trim();
-    }
-  }
-  return null;
-}
-
-function safeStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? unique(value.filter((item): item is string => typeof item === "string"))
-    : [];
-}
-
-function clampScore(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(0, Math.min(1, value))
-    : fallback;
 }
 
 function meetingDigest(meeting: MeetingRow, transcriptLimit: number) {
@@ -248,34 +213,46 @@ function applyTopicSuppression(input: {
   });
 }
 
-function normalizeTopicMatch(
-  raw: unknown,
-  context: TopicClusteringContext,
-  currentMeetingId: string
-): TopicMatchResult {
-  const record = asRecord(raw);
-  const actionRaw = firstString([record.suggested_action]);
-  const action = TopicSuggestedActionSchema.safeParse(actionRaw).success
-    ? (actionRaw as TopicMatchResult["suggested_action"])
-    : "observe";
-  const matchedKbId = firstString([record.matched_kb_id]);
-  const matchedKnowledgeBase = matchedKbId
-    ? context.existing_knowledge_bases.find((knowledgeBase) => knowledgeBase.id === matchedKbId)
-    : undefined;
-  const candidateMeetingIds = unique(safeStringArray(record.candidate_meeting_ids));
-  const reasons = safeStringArray(record.match_reasons);
+function parseTopicMatch(raw: unknown): TopicMatchResult {
+  return TopicMatchResultSchema.parse(raw);
+}
 
-  return TopicMatchResultSchema.parse({
-    current_meeting_id: currentMeetingId,
-    matched_kb_id: matchedKbId,
-    matched_kb_name: firstString([record.matched_kb_name, matchedKnowledgeBase?.name]),
-    score: clampScore(record.score, action === "no_action" ? 0.4 : 0.6),
-    match_reasons:
-      reasons.length > 0 ? reasons : ["LLM returned a structural topic decision without reasons"],
-    suggested_action: action,
-    candidate_meeting_ids:
-      candidateMeetingIds.length > 0 ? candidateMeetingIds : [currentMeetingId]
+function briefSchemaError(error: unknown): string {
+  if (error instanceof ZodError) {
+    return error.issues
+      .slice(0, 6)
+      .map((issue) => `${issue.path.join(".") || "result"}: ${issue.message}`)
+      .join("; ");
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function repairTopicMatchWithLlm(input: {
+  llm: LlmClient;
+  systemPrompt: string;
+  userPrompt: string;
+  raw: unknown;
+  error: unknown;
+}): Promise<TopicMatchResult> {
+  const repaired = await input.llm.generateJson<unknown>({
+    systemPrompt: input.systemPrompt,
+    userPrompt: [
+      "上一次输出没有通过 TopicMatchResult schema 校验。",
+      "请重新阅读原始 topic_clustering_context，由你完成语义判断，并输出合法 TopicMatchResult JSON。",
+      "不要让代码默认 suggested_action；如果证据不足，明确输出 suggested_action = \"no_action\" 或 \"observe\" 并说明原因。",
+      "不要用关键词命中、标题重叠、参会人重叠或来源重叠替代语义判断。",
+      `schema_error: ${briefSchemaError(input.error)}`,
+      "invalid_output:",
+      JSON.stringify(input.raw),
+      "",
+      "original_topic_prompt:",
+      input.userPrompt
+    ].join("\n"),
+    schemaName: "TopicMatchResult"
   });
+
+  return parseTopicMatch(repaired);
 }
 
 function fallbackTopicMatch(
@@ -307,13 +284,23 @@ export async function runTopicClusteringAgent(input: {
   }
 
   try {
+    const systemPrompt = readPrompt("topicClustering.md");
+    const userPrompt = buildTopicClusteringUserPrompt(context);
     const raw = await input.llm.generateJson<unknown>({
-      systemPrompt: readPrompt("topicClustering.md"),
-      userPrompt: buildTopicClusteringUserPrompt(context),
+      systemPrompt,
+      userPrompt,
       schemaName: "TopicMatchResult"
     });
-
-    const match = normalizeTopicMatch(raw, context, input.meeting.id);
+    const parsed = TopicMatchResultSchema.safeParse(raw);
+    const match = parsed.success
+      ? parsed.data
+      : await repairTopicMatchWithLlm({
+          llm: input.llm,
+          systemPrompt,
+          userPrompt,
+          raw,
+          error: parsed.error
+        });
     return applyTopicSuppression({
       repos: input.repos,
       userId: input.meeting.organizer,

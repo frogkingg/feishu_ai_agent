@@ -293,9 +293,9 @@ describe("createKnowledgeBaseWorkflow", () => {
       expect.any(String),
       "--format",
       "json",
-      "--yes",
       "--as",
-      "user"
+      "user",
+      "--yes"
     ]);
     expect(JSON.parse(spaceCreateArgs[0][spaceCreateArgs[0].indexOf("--data") + 1])).toEqual({
       name: "无人机操作流程主题知识库",

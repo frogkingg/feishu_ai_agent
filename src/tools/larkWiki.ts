@@ -37,19 +37,21 @@ export async function createWikiSpace(input: {
   runner?: LarkCliRunner;
 }): Promise<CreateWikiResult> {
   const dryRun = input.config.feishuDryRun || input.config.feishuKnowledgeWriteDryRun;
+  const createArgs = [
+    "wiki",
+    "spaces",
+    "create",
+    "--data",
+    JSON.stringify({ name: input.name, description: input.description }),
+    "--format",
+    "json",
+    "--as",
+    "user",
+    "--yes"
+  ];
+
   const result = await runLarkCli(
-    [
-      "wiki",
-      "spaces",
-      "create",
-      "--data",
-      JSON.stringify({ name: input.name, description: input.description }),
-      "--format",
-      "json",
-      "--yes",
-      "--as",
-      "user"
-    ],
+    createArgs,
     {
       repos: input.repos,
       config: input.config,
@@ -90,23 +92,25 @@ export async function createWikiSpace(input: {
       continue;
     }
 
+    const memberArgs = [
+      "wiki",
+      "members",
+      "create",
+      "--params",
+      JSON.stringify({ space_id: spaceId }),
+      "--data",
+      JSON.stringify({
+        member_id: memberId,
+        member_type: "openid",
+        member_role: "member"
+      }),
+      "--as",
+      "user",
+      "--yes"
+    ];
+
     const memberResult = await runLarkCli(
-      [
-        "wiki",
-        "members",
-        "create",
-        "--params",
-        JSON.stringify({ space_id: spaceId }),
-        "--data",
-        JSON.stringify({
-          member_id: memberId,
-          member_type: "openid",
-          member_role: "member"
-        }),
-        "--yes",
-        "--as",
-        "user"
-      ],
+      memberArgs,
       {
         repos: input.repos,
         config: input.config,

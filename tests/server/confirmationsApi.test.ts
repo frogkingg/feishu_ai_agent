@@ -91,10 +91,7 @@ function topicMatchForPrompt(input: GenerateJsonInput): TopicMatchResult {
       score: 0.88,
       match_reasons: ["Mock LLM 判断当前会议应追加到已有知识库"],
       suggested_action: "ask_append",
-      candidate_meeting_ids: [
-        ...stringArray(matchedKb.created_from_meetings),
-        currentMeetingId
-      ]
+      candidate_meeting_ids: [...stringArray(matchedKb.created_from_meetings), currentMeetingId]
     };
   }
 
@@ -196,6 +193,7 @@ describe("confirmation dev APIs", () => {
   const validCardCallbackConfig = {
     feishuCardActionsEnabled: true,
     larkVerificationToken: "verification-token",
+    larkEncryptKey: "encrypt-key",
     larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
   };
 
@@ -459,13 +457,14 @@ describe("confirmation dev APIs", () => {
         actions: []
       }
     });
-    expect(JSON.parse(repos.getConfirmationRequest(action!.id)!.edited_payload_json ?? "{}"))
-      .toMatchObject({
-        card_action: "remind_later",
-        snooze: {
-          minutes: 30
-        }
-      });
+    expect(
+      JSON.parse(repos.getConfirmationRequest(action!.id)!.edited_payload_json ?? "{}")
+    ).toMatchObject({
+      card_action: "remind_later",
+      snooze: {
+        minutes: 30
+      }
+    });
     expect(repos.getConfirmationRequest(action!.id)?.snooze_until).toEqual(
       remindLaterResponse.json().snooze.snooze_until
     );
@@ -492,9 +491,11 @@ describe("confirmation dev APIs", () => {
         card_type: "action_confirmation"
       }
     });
-    const convertedActionConfirmationId = (convertToTaskResponse.json() as {
-      confirmation: { id: string };
-    }).confirmation.id;
+    const convertedActionConfirmationId = (
+      convertToTaskResponse.json() as {
+        confirmation: { id: string };
+      }
+    ).confirmation.id;
     const convertedAction = repos.getActionItem(
       (convertToTaskResponse.json() as { action_item_id: string }).action_item_id
     );
@@ -533,10 +534,12 @@ describe("confirmation dev APIs", () => {
         card_type: "append_meeting_confirmation"
       }
     });
-    const appendConfirmationId = (appendCurrentOnlyResponse.json() as {
-      confirmation: { id: string };
-      knowledge_base_id: string;
-    }).confirmation.id;
+    const appendConfirmationId = (
+      appendCurrentOnlyResponse.json() as {
+        confirmation: { id: string };
+        knowledge_base_id: string;
+      }
+    ).confirmation.id;
     expect(
       repos.getKnowledgeBase(
         (appendCurrentOnlyResponse.json() as { knowledge_base_id: string }).knowledge_base_id

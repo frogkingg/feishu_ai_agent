@@ -6,6 +6,7 @@ dotenv.config();
 export interface AppConfig {
   nodeEnv: string;
   port: number;
+  host: string;
   sqlitePath: string;
   feishuDryRun: boolean;
   feishuReadDryRun: boolean;
@@ -17,6 +18,7 @@ export interface AppConfig {
   larkVerificationToken: string | null;
   larkCardCallbackUrlHint: string | null;
   larkEncryptKey: string | null;
+  feishuEventCardChatId: string | null;
   devApiKey: string | null;
   larkCliBin: string;
   llmProvider: "mock" | "openai-compatible";
@@ -36,9 +38,18 @@ export interface CardCallbackReadiness {
   ready: boolean;
   actions_enabled: boolean;
   verification_token_configured: boolean;
+  encrypt_key_configured: boolean;
   callback_url_configured: boolean;
   callback_url_public: boolean;
   callback_url_path_ok: boolean;
+  issues: string[];
+}
+
+export interface FeishuWebhookReadiness {
+  ready: boolean;
+  verification_token_configured: boolean;
+  encrypt_key_configured: boolean;
+  event_card_chat_configured: boolean;
   issues: string[];
 }
 
@@ -94,24 +105,37 @@ function looksLikePublicHttpUrl(value: string | null): {
   };
 }
 
-export function getCardCallbackReadiness(config: Pick<
-  AppConfig,
-  "feishuCardActionsEnabled" | "larkVerificationToken" | "larkCardCallbackUrlHint"
->): CardCallbackReadiness {
+export function getCardCallbackReadiness(
+  config: Pick<
+    AppConfig,
+    | "feishuCardActionsEnabled"
+    | "larkVerificationToken"
+    | "larkCardCallbackUrlHint"
+    | "larkEncryptKey"
+  >
+): CardCallbackReadiness {
   const url = looksLikePublicHttpUrl(config.larkCardCallbackUrlHint);
   const verificationTokenConfigured = Boolean(config.larkVerificationToken);
+  const encryptKeyConfigured = Boolean(config.larkEncryptKey);
   const issues: string[] = [];
 
   if (!config.feishuCardActionsEnabled) {
     issues.push("FEISHU_CARD_ACTIONS_ENABLED must be true for real confirmation cards");
   }
   if (!verificationTokenConfigured) {
-    issues.push("LARK_VERIFICATION_TOKEN must be configured for card-action signature verification");
+    issues.push(
+      "LARK_VERIFICATION_TOKEN must be configured for card-action signature verification"
+    );
+  }
+  if (!encryptKeyConfigured) {
+    issues.push("LARK_ENCRYPT_KEY should be configured for Feishu SHA-256 webhook signatures");
   }
   if (!url.configured) {
     issues.push("LARK_CARD_CALLBACK_URL_HINT must be configured");
   } else if (!url.publicUrl) {
-    issues.push("LARK_CARD_CALLBACK_URL_HINT must be an http/https public URL, not localhost or 127.0.0.1");
+    issues.push(
+      "LARK_CARD_CALLBACK_URL_HINT must be an http/https public URL, not localhost or 127.0.0.1"
+    );
   }
   if (url.configured && !url.pathOk) {
     issues.push("LARK_CARD_CALLBACK_URL_HINT should end with /webhooks/feishu/card-action");
@@ -121,14 +145,45 @@ export function getCardCallbackReadiness(config: Pick<
     ready:
       config.feishuCardActionsEnabled &&
       verificationTokenConfigured &&
+      encryptKeyConfigured &&
       url.configured &&
       url.publicUrl &&
       url.pathOk,
     actions_enabled: config.feishuCardActionsEnabled,
     verification_token_configured: verificationTokenConfigured,
+    encrypt_key_configured: encryptKeyConfigured,
     callback_url_configured: url.configured,
     callback_url_public: url.publicUrl,
     callback_url_path_ok: url.pathOk,
+    issues
+  };
+}
+
+export function getFeishuWebhookReadiness(
+  config: Pick<AppConfig, "larkVerificationToken" | "larkEncryptKey" | "feishuEventCardChatId">
+): FeishuWebhookReadiness {
+  const verificationTokenConfigured = Boolean(config.larkVerificationToken);
+  const encryptKeyConfigured = Boolean(config.larkEncryptKey);
+  const eventCardChatConfigured = Boolean(config.feishuEventCardChatId);
+  const issues: string[] = [];
+
+  if (!verificationTokenConfigured) {
+    issues.push("LARK_VERIFICATION_TOKEN must be configured to validate Feishu event tokens");
+  }
+  if (!encryptKeyConfigured) {
+    issues.push("LARK_ENCRYPT_KEY must be configured for Feishu X-Lark-Signature validation");
+  }
+  if (!eventCardChatConfigured) {
+    issues.push(
+      "FEISHU_EVENT_CARD_CHAT_ID is optional, but recommended for visible group feedback"
+    );
+  }
+
+  return {
+    ready: verificationTokenConfigured && encryptKeyConfigured,
+    verification_token_configured: verificationTokenConfigured,
+    encrypt_key_configured: encryptKeyConfigured,
+    event_card_chat_configured: eventCardChatConfigured,
     issues
   };
 }
@@ -162,6 +217,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const config: AppConfig = {
     nodeEnv: process.env.NODE_ENV ?? "development",
     port: Number(process.env.PORT ?? 3000),
+    host: process.env.HOST ?? "127.0.0.1",
     sqlitePath: path.isAbsolute(sqlitePath) ? sqlitePath : path.join(process.cwd(), sqlitePath),
     feishuDryRun,
     feishuReadDryRun: parseBoolean(process.env.FEISHU_READ_DRY_RUN, feishuDryRun),
@@ -179,6 +235,7 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN || null,
     larkCardCallbackUrlHint: process.env.LARK_CARD_CALLBACK_URL_HINT || null,
     larkEncryptKey: process.env.LARK_ENCRYPT_KEY || null,
+    feishuEventCardChatId: process.env.FEISHU_EVENT_CARD_CHAT_ID || null,
     devApiKey: process.env.DEV_API_KEY || null,
     larkCliBin: process.env.LARK_CLI_BIN || "lark-cli",
     llmProvider: parseLlmProvider(process.env.LLM_PROVIDER),

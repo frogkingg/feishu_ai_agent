@@ -19,4 +19,10 @@ describe("meetingExtraction prompt", () => {
     expect(prompt).toContain("作为 key_decisions");
     expect(prompt).toContain("不要生成 action item");
   });
+
+  it("uses a structured kb_creation_intent field instead of routing through suggested_reason", () => {
+    expect(prompt).toContain('"kb_creation_intent": boolean');
+    expect(prompt).toContain("suggested_reason 只写人类可读理由");
+    expect(prompt).not.toContain('suggested_reason 必须包含精确片段 "kb_creation_intent: true"');
+  });
 });

@@ -42,6 +42,7 @@ describe("larkIm.sendCard", () => {
   const validCardCallbackConfig = {
     feishuCardActionsEnabled: true,
     larkVerificationToken: "verification-token",
+    larkEncryptKey: "encrypt-key",
     larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
   };
 
@@ -771,6 +772,7 @@ describe("larkIm.sendCard", () => {
         feishuCardSendDryRun: false,
         feishuCardActionsEnabled: false,
         larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key",
         larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action",
         larkCliBin: "definitely-not-real-lark"
       }),
@@ -797,6 +799,7 @@ describe("larkIm.sendCard", () => {
       {
         feishuCardActionsEnabled: true,
         larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key",
         larkCardCallbackUrlHint: null
       },
       "LARK_CARD_CALLBACK_URL_HINT must be configured"
@@ -806,6 +809,7 @@ describe("larkIm.sendCard", () => {
       {
         feishuCardActionsEnabled: true,
         larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key",
         larkCardCallbackUrlHint: "http://localhost:3000/webhooks/feishu/card-action"
       },
       "must be an http/https public URL"
@@ -815,6 +819,7 @@ describe("larkIm.sendCard", () => {
       {
         feishuCardActionsEnabled: true,
         larkVerificationToken: null,
+        larkEncryptKey: "encrypt-key",
         larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
       },
       "LARK_VERIFICATION_TOKEN must be configured"
@@ -824,42 +829,46 @@ describe("larkIm.sendCard", () => {
       {
         feishuCardActionsEnabled: true,
         larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key",
         larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card"
       },
       "should end with /webhooks/feishu/card-action"
     ]
-  ])("fails real send-state cards when callback readiness is invalid: %s", async (_name, configPatch, error) => {
-    const repos = createRepositories(createMemoryDatabase());
-    const calls: string[][] = [];
-    const runner: LarkCliRunner = async (_bin, args) => {
-      calls.push(args);
-      return { stdout: JSON.stringify({ message_id: "om_should_not_send" }), stderr: "" };
-    };
+  ])(
+    "fails real send-state cards when callback readiness is invalid: %s",
+    async (_name, configPatch, error) => {
+      const repos = createRepositories(createMemoryDatabase());
+      const calls: string[][] = [];
+      const runner: LarkCliRunner = async (_bin, args) => {
+        calls.push(args);
+        return { stdout: JSON.stringify({ message_id: "om_should_not_send" }), stderr: "" };
+      };
 
-    const result = await sendCard({
-      repos,
-      config: loadConfig({
-        feishuDryRun: true,
-        feishuCardSendDryRun: false,
-        ...configPatch,
-        larkCliBin: "fake-lark-cli"
-      }),
-      card,
-      chatId: "oc_test_chat",
-      runner
-    });
+      const result = await sendCard({
+        repos,
+        config: loadConfig({
+          feishuDryRun: true,
+          feishuCardSendDryRun: false,
+          ...configPatch,
+          larkCliBin: "fake-lark-cli"
+        }),
+        card,
+        chatId: "oc_test_chat",
+        runner
+      });
 
-    expect(result).toMatchObject({
-      ok: false,
-      status: "failed",
-      dry_run: false,
-      cli_run_id: null,
-      card_message_id: null
-    });
-    expect(result.error).toContain(error);
-    expect(calls).toHaveLength(0);
-    expect(repos.listCliRuns()).toHaveLength(0);
-  });
+      expect(result).toMatchObject({
+        ok: false,
+        status: "failed",
+        dry_run: false,
+        cli_run_id: null,
+        card_message_id: null
+      });
+      expect(result.error).toContain(error);
+      expect(calls).toHaveLength(0);
+      expect(repos.listCliRuns()).toHaveLength(0);
+    }
+  );
 
   it("keeps card sending dry-run by default even when other Feishu writes are real", async () => {
     const repos = createRepositories(createMemoryDatabase());

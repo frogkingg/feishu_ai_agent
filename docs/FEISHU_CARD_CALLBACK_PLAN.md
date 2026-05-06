@@ -103,12 +103,12 @@ POST /webhooks/feishu/card-action
 
 ## 7. 分阶段实现建议
 
-| Phase      | 目标                                                               |
-| ---------- | ------------------------------------------------------------------ |
-| Callback-0 | 只记录回调 payload，不执行。                                       |
-| Callback-1 | 解析 `request_id` / `action_key`，调用 dev confirmation endpoint。 |
-| Callback-2 | 支持 edited fields。                                               |
-| Callback-3 | 验签和幂等完善。                                                   |
-| Callback-4 | 再考虑真实任务 / 日程 / Wiki 写入。                                |
+| Phase      | 目标                                                                        |
+| ---------- | --------------------------------------------------------------------------- |
+| Callback-0 | 只记录回调 payload，不执行。                                                |
+| Callback-1 | 解析 `request_id` / `action_key`，调用 dev confirmation endpoint。          |
+| Callback-2 | 支持 edited fields。                                                        |
+| Callback-3 | `LARK_ENCRYPT_KEY` 验签、`LARK_VERIFICATION_TOKEN` payload 校验和幂等完善。 |
+| Callback-4 | 再考虑真实任务 / 日程 / Wiki 写入。                                         |
 
 当前推荐先完成 Callback-0 到 Callback-1，并保持 `FEISHU_DRY_RUN=true`。真实写入必须在卡片回调闭环、验签、幂等、错误处理都稳定后再单独验收。

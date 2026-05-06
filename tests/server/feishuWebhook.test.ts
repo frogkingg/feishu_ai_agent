@@ -18,6 +18,16 @@ function sign(input: {
     .digest("hex");
 }
 
+function signWithSecret(input: { timestamp: string; nonce: string; secret: string; body: string }) {
+  return createHash("sha256")
+    .update(input.timestamp + input.nonce + input.secret + input.body)
+    .digest("hex");
+}
+
+function currentLarkTimestamp() {
+  return Math.floor(Date.now() / 1000).toString();
+}
+
 function createApp(
   configOverrides: Partial<AppConfig> = {},
   larkCliRunner?: LarkCliRunner
@@ -114,7 +124,7 @@ describe("POST /webhooks/feishu/event", () => {
       url: "/webhooks/feishu/event",
       headers: {
         "content-type": "application/json",
-        "x-lark-request-timestamp": "1234567890",
+        "x-lark-request-timestamp": currentLarkTimestamp(),
         "x-lark-request-nonce": "nonce-test",
         "x-lark-signature": "bad-signature"
       },
@@ -122,6 +132,56 @@ describe("POST /webhooks/feishu/event", () => {
     });
 
     expect(response.statusCode).toBe(401);
+  });
+
+  it("rejects signed events with stale timestamps", async () => {
+    const body = JSON.stringify({
+      header: {
+        event_type: "unknown.event",
+        token: "verification-token"
+      },
+      event: { id: "evt_replayed" }
+    });
+    const signatureInput = {
+      timestamp: (Math.floor(Date.now() / 1000) - 301).toString(),
+      nonce: "nonce-test",
+      verificationToken: "verification-token",
+      body
+    };
+    const { app } = createApp({ larkVerificationToken: "verification-token" });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      headers: {
+        "content-type": "application/json",
+        "x-lark-request-timestamp": signatureInput.timestamp,
+        "x-lark-request-nonce": signatureInput.nonce,
+        "x-lark-signature": sign(signatureInput)
+      },
+      payload: body
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
+  it("rejects signed events with missing signature headers", async () => {
+    const { app } = createApp({ larkVerificationToken: "verification-token" });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      headers: {
+        "content-type": "application/json",
+        "x-lark-request-timestamp": currentLarkTimestamp(),
+        "x-lark-request-nonce": "nonce-test"
+      },
+      payload: JSON.stringify({ header: { event_type: "unknown.event" } })
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
   });
 
   it("accepts recording_ready events and triggers the meeting workflow in the background", async () => {
@@ -143,12 +203,15 @@ describe("POST /webhooks/feishu/event", () => {
       }
     });
     const signatureInput = {
-      timestamp: "1234567890",
+      timestamp: currentLarkTimestamp(),
       nonce: "nonce-test",
       verificationToken: "verification-token",
       body
     };
-    const { app, repos } = createApp({ larkVerificationToken: "verification-token" });
+    const { app, repos } = createApp({
+      larkVerificationToken: "verification-token",
+      larkEncryptKey: "encrypt-key"
+    });
 
     const response = await app.inject({
       method: "POST",
@@ -157,7 +220,7 @@ describe("POST /webhooks/feishu/event", () => {
         "content-type": "application/json",
         "x-lark-request-timestamp": signatureInput.timestamp,
         "x-lark-request-nonce": signatureInput.nonce,
-        "x-lark-signature": sign(signatureInput)
+        "x-lark-signature": signWithSecret({ ...signatureInput, secret: "encrypt-key" })
       },
       payload: body
     });
@@ -185,7 +248,8 @@ describe("POST /webhooks/feishu/event", () => {
   it("auto-sends generated cards after recording_ready when card sending is enabled", async () => {
     const body = JSON.stringify({
       header: {
-        event_type: "vc.meeting.recording_ready_v1"
+        event_type: "vc.meeting.recording_ready_v1",
+        token: "verification-token"
       },
       event: {
         meeting_id: "om_card_send",
@@ -194,7 +258,7 @@ describe("POST /webhooks/feishu/event", () => {
       }
     });
     const signatureInput = {
-      timestamp: "1234567890",
+      timestamp: currentLarkTimestamp(),
       nonce: "nonce-test",
       verificationToken: "verification-token",
       body
@@ -217,6 +281,7 @@ describe("POST /webhooks/feishu/event", () => {
         feishuCardSendDryRun: false,
         feishuCardActionsEnabled: true,
         larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key",
         larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
       },
       runner
@@ -229,7 +294,7 @@ describe("POST /webhooks/feishu/event", () => {
         "content-type": "application/json",
         "x-lark-request-timestamp": signatureInput.timestamp,
         "x-lark-request-nonce": signatureInput.nonce,
-        "x-lark-signature": sign(signatureInput)
+        "x-lark-signature": signWithSecret({ ...signatureInput, secret: "encrypt-key" })
       },
       payload: body
     });
@@ -254,10 +319,115 @@ describe("POST /webhooks/feishu/event", () => {
     );
   });
 
+  it("uses the configured event chat as the visible card destination for meeting events", async () => {
+    const body = JSON.stringify({
+      header: {
+        event_type: "vc.meeting.recording_ready_v1",
+        token: "verification-token"
+      },
+      event: {
+        meeting: {
+          meeting_id: "om_group_card_send",
+          title: "无人机操作方案初步访谈"
+        },
+        operator_id: { open_id: "ou_card_owner" }
+      }
+    });
+    const signatureInput = {
+      timestamp: currentLarkTimestamp(),
+      nonce: "nonce-test",
+      verificationToken: "verification-token",
+      body
+    };
+    const runner: LarkCliRunner = async (_bin, _args) => ({
+      stdout: JSON.stringify({
+        data: {
+          message_id: "om_group_card"
+        }
+      }),
+      stderr: ""
+    });
+    const { app, repos } = createApp(
+      {
+        feishuDryRun: true,
+        feishuCardSendDryRun: false,
+        feishuCardActionsEnabled: true,
+        larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key",
+        feishuEventCardChatId: "oc_visible_meeting_room",
+        larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
+      },
+      runner
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      headers: {
+        "content-type": "application/json",
+        "x-lark-request-timestamp": signatureInput.timestamp,
+        "x-lark-request-nonce": signatureInput.nonce,
+        "x-lark-signature": signWithSecret({ ...signatureInput, secret: "encrypt-key" })
+      },
+      payload: body
+    });
+
+    expect(response.statusCode).toBe(202);
+    await vi.waitFor(
+      () => {
+        const cardRuns = repos.listCliRuns().filter((run) => run.tool === "lark.im.send_card");
+        expect(cardRuns.length).toBeGreaterThan(0);
+        expect(
+          cardRuns.every((run) => {
+            const args = JSON.parse(run.args_json) as string[];
+            return args.includes("--chat-id") && args.includes("oc_visible_meeting_room");
+          })
+        ).toBe(true);
+      },
+      { timeout: 7000 }
+    );
+  });
+
+  it("rejects a signed Feishu event when the payload token does not match", async () => {
+    const body = JSON.stringify({
+      header: {
+        event_type: "unknown.event",
+        token: "wrong-token"
+      },
+      event: { id: "evt_wrong_token" }
+    });
+    const signatureInput = {
+      timestamp: currentLarkTimestamp(),
+      nonce: "nonce-test",
+      verificationToken: "verification-token",
+      body
+    };
+    const { app } = createApp({
+      larkVerificationToken: "verification-token",
+      larkEncryptKey: "encrypt-key"
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      headers: {
+        "content-type": "application/json",
+        "x-lark-request-timestamp": signatureInput.timestamp,
+        "x-lark-request-nonce": signatureInput.nonce,
+        "x-lark-signature": signWithSecret({ ...signatureInput, secret: "encrypt-key" })
+      },
+      payload: body
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark verification token" });
+  });
+
   it("uses fetched transcript text before triggering the workflow in read-only canary mode", async () => {
     const body = JSON.stringify({
       header: {
-        event_type: "vc.meeting.recording_ready_v1"
+        event_type: "vc.meeting.recording_ready_v1",
+        token: "verification-token"
       },
       event: {
         meeting_id: "om_real_transcript",
@@ -266,7 +436,7 @@ describe("POST /webhooks/feishu/event", () => {
       }
     });
     const signatureInput = {
-      timestamp: "1234567890",
+      timestamp: currentLarkTimestamp(),
       nonce: "nonce-test",
       verificationToken: "verification-token",
       body
@@ -289,7 +459,8 @@ describe("POST /webhooks/feishu/event", () => {
       {
         feishuDryRun: true,
         feishuReadDryRun: false,
-        larkVerificationToken: "verification-token"
+        larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key"
       },
       runner
     );
@@ -301,7 +472,7 @@ describe("POST /webhooks/feishu/event", () => {
         "content-type": "application/json",
         "x-lark-request-timestamp": signatureInput.timestamp,
         "x-lark-request-nonce": signatureInput.nonce,
-        "x-lark-signature": sign(signatureInput)
+        "x-lark-signature": signWithSecret({ ...signatureInput, secret: "encrypt-key" })
       },
       payload: body
     });
