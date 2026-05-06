@@ -116,24 +116,56 @@ function getHeaderString(request: FastifyRequest, name: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function getLarkSignatureTimestampFailureReason(timestamp: string | null): string | null {
+function getLarkTimestampCandidates(timestamp: string | null): string[] {
   if (timestamp === null) {
-    return "missing_timestamp";
+    return [];
   }
 
   const trimmed = timestamp.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+
+  const candidates = [trimmed];
+  const firstCommaToken = trimmed.split(",")[0]?.trim() ?? "";
+  if (/^\d+(?:\.\d+)?$/.test(firstCommaToken) && !candidates.includes(firstCommaToken)) {
+    candidates.push(firstCommaToken);
+  }
+
+  return candidates;
+}
+
+function getLarkTimestampFreshnessSeconds(timestamp: string): number | null {
+  const trimmed = timestamp.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
   if (!/^\d+(?:\.\d+)?$/.test(trimmed)) {
-    return "invalid_timestamp";
+    return null;
   }
 
   const timestampNumber = Number(trimmed);
   if (!Number.isFinite(timestampNumber)) {
-    return "invalid_timestamp";
+    return null;
   }
 
+  const integerDigits = trimmed.split(".")[0]?.length ?? 0;
   const timestampSeconds =
-    timestampNumber > 1_000_000_000_000 ? Math.floor(timestampNumber / 1000) : Math.floor(timestampNumber);
-  if (!Number.isSafeInteger(timestampSeconds)) {
+    integerDigits >= 19
+      ? Math.floor(timestampNumber / 1_000_000_000)
+      : integerDigits >= 16
+        ? Math.floor(timestampNumber / 1_000_000)
+        : integerDigits >= 13
+          ? Math.floor(timestampNumber / 1000)
+          : Math.floor(timestampNumber);
+
+  return Number.isSafeInteger(timestampSeconds) ? timestampSeconds : null;
+}
+
+function getLarkTimestampCandidateFailureReason(timestamp: string): string {
+  const timestampSeconds = getLarkTimestampFreshnessSeconds(timestamp);
+  if (timestampSeconds === null) {
     return "invalid_timestamp";
   }
 
@@ -144,6 +176,41 @@ function getLarkSignatureTimestampFailureReason(timestamp: string | null): strin
 
   if (timestampSeconds > nowSeconds + LarkSignatureFreshnessWindowSeconds) {
     return "future_timestamp";
+  }
+
+  return "fresh_timestamp";
+}
+
+function getFreshLarkTimestampCandidates(timestamp: string | null): string[] {
+  return getLarkTimestampCandidates(timestamp).filter(
+    (candidate) => getLarkTimestampCandidateFailureReason(candidate) === "fresh_timestamp"
+  );
+}
+
+function getLarkSignatureTimestampFailureReason(timestamp: string | null): string | null {
+  if (timestamp === null) {
+    return "missing_timestamp";
+  }
+
+  const candidateReasons = getLarkTimestampCandidates(timestamp).map(getLarkTimestampCandidateFailureReason);
+  if (candidateReasons.length === 0) {
+    return "invalid_timestamp";
+  }
+
+  if (candidateReasons.includes("fresh_timestamp")) {
+    return null;
+  }
+
+  if (candidateReasons.includes("stale_timestamp")) {
+    return "stale_timestamp";
+  }
+
+  if (candidateReasons.includes("future_timestamp")) {
+    return "future_timestamp";
+  }
+
+  if (candidateReasons.includes("invalid_timestamp")) {
+    return "invalid_timestamp";
   }
 
   return null;
@@ -163,32 +230,39 @@ function isLarkSignatureValid(input: {
     return false;
   }
 
-  if (getLarkSignatureTimestampFailureReason(timestamp) !== null) {
+  const timestampCandidates = getFreshLarkTimestampCandidates(timestamp);
+  if (timestampCandidates.length === 0) {
     return false;
   }
 
-  if (input.encryptKey) {
-    return verifyLarkWebhookSignature({
-      timestamp,
-      nonce,
-      body: input.body,
-      verificationToken: input.encryptKey,
-      signature
-    });
+  const encryptKey = input.encryptKey;
+  if (encryptKey) {
+    return timestampCandidates.some((timestampCandidate) =>
+      verifyLarkWebhookSignature({
+        timestamp: timestampCandidate,
+        nonce,
+        body: input.body,
+        verificationToken: encryptKey,
+        signature
+      })
+    );
   }
 
   if (input.verificationToken === null) {
     return false;
   }
+  const verificationToken = input.verificationToken;
 
   // Compatibility for old local fixtures. Production Feishu webhook signatures use Encrypt Key.
-  return verifyLarkWebhookSignature({
-    timestamp,
-    nonce,
-    body: input.body,
-    verificationToken: input.verificationToken,
-    signature
-  });
+  return timestampCandidates.some((timestampCandidate) =>
+    verifyLarkWebhookSignature({
+      timestamp: timestampCandidate,
+      nonce,
+      body: input.body,
+      verificationToken,
+      signature
+    })
+  );
 }
 
 function isLarkCardActionSignatureValid(input: {
@@ -206,18 +280,22 @@ function isLarkCardActionSignatureValid(input: {
     return false;
   }
 
-  if (getLarkSignatureTimestampFailureReason(timestamp) !== null) {
+  const timestampCandidates = getFreshLarkTimestampCandidates(timestamp);
+  if (timestampCandidates.length === 0) {
     return false;
   }
 
-  if (input.encryptKey) {
-    const encryptKeySignatureValid = verifyLarkWebhookSignature({
-      timestamp,
-      nonce,
-      body: input.rawBody,
-      verificationToken: input.encryptKey,
-      signature
-    });
+  const encryptKey = input.encryptKey;
+  if (encryptKey) {
+    const encryptKeySignatureValid = timestampCandidates.some((timestampCandidate) =>
+      verifyLarkWebhookSignature({
+        timestamp: timestampCandidate,
+        nonce,
+        body: input.rawBody,
+        verificationToken: encryptKey,
+        signature
+      })
+    );
     if (encryptKeySignatureValid) {
       return true;
     }
@@ -226,26 +304,31 @@ function isLarkCardActionSignatureValid(input: {
   if (input.verificationToken === null) {
     return false;
   }
+  const verificationToken = input.verificationToken;
 
   if (
-    verifyLarkWebhookSignature({
-      timestamp,
-      nonce,
-      body: input.rawBody,
-      verificationToken: input.verificationToken,
-      signature
-    })
+    timestampCandidates.some((timestampCandidate) =>
+      verifyLarkWebhookSignature({
+        timestamp: timestampCandidate,
+        nonce,
+        body: input.rawBody,
+        verificationToken,
+        signature
+      })
+    )
   ) {
     return true;
   }
 
-  return verifyLarkCardActionSignature({
-    timestamp,
-    nonce,
-    body: input.body,
-    verificationToken: input.verificationToken,
-    signature
-  });
+  return timestampCandidates.some((timestampCandidate) =>
+    verifyLarkCardActionSignature({
+      timestamp: timestampCandidate,
+      nonce,
+      body: input.body,
+      verificationToken,
+      signature
+    })
+  );
 }
 
 function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, unknown> {
