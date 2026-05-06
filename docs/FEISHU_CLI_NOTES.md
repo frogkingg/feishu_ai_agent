@@ -57,6 +57,12 @@ The real card-send smoke configuration is:
 ```env
 FEISHU_DRY_RUN=true
 FEISHU_CARD_SEND_DRY_RUN=false
+FEISHU_CARD_ACTIONS_ENABLED=true
+LARK_VERIFICATION_TOKEN=<configured in Feishu app>
+LARK_ENCRYPT_KEY=<configured in Feishu app>
+LARK_CARD_CALLBACK_URL_HINT=https://your-domain/webhooks/feishu/card-action
+# Optional but recommended for visible meeting-room feedback.
+FEISHU_EVENT_CARD_CHAT_ID=oc_xxx
 LARK_CLI_BIN=lark-cli
 LLM_PROVIDER=mock
 ```
@@ -115,18 +121,21 @@ The default `LARK_CLI_BIN` is `lark-cli`.
 
 ## Webhook Boundary
 
-`POST /webhooks/feishu/event` supports Feishu challenge response, signature
-verification when `LARK_VERIFICATION_TOKEN` is configured, and accepted handling
-for unrecognized events.
+`POST /webhooks/feishu/event` supports Feishu challenge response, `X-Lark-Signature`
+verification with `LARK_ENCRYPT_KEY`, payload token validation with
+`LARK_VERIFICATION_TOKEN`, and accepted handling for unrecognized events.
 
-`vc.meeting.recording_ready_v1` events are mapped into MeetingAtlas meeting
-processing in the background.
+`vc.meeting.recording_ready_v1` and `vc.meeting.all_meeting_ended_v1` events are mapped
+into MeetingAtlas meeting processing in the background. When
+`FEISHU_EVENT_CARD_CHAT_ID` is configured, generated confirmation cards are sent to that
+chat so a live meeting has visible feedback even when the event host/open_id is missing
+or not a valid card recipient.
 
 `POST /webhooks/feishu/card-action` maps button payloads back to confirmation
 actions, executes accepted operations through the confirmation layer, and syncs
 the final card status.
 
-In `development` and `test`, missing `LARK_VERIFICATION_TOKEN` is allowed with a
+In `development` and `test`, missing Feishu webhook credentials are allowed with a
 warning for local testing. In all other environments, missing verification token
-returns 503 for Feishu webhooks. `/dev/*` follows the same fail-closed rule for
-`DEV_API_KEY`.
+returns 503 for Feishu webhooks, and missing `LARK_ENCRYPT_KEY` leaves webhook readiness
+false. `/dev/*` follows the same fail-closed rule for `DEV_API_KEY`.

@@ -12,7 +12,11 @@ describe("GET /health", () => {
       feishuTaskCreateDryRun: true,
       feishuCalendarCreateDryRun: true,
       feishuKnowledgeWriteDryRun: true,
-      feishuCardSendDryRun: true
+      feishuCardSendDryRun: true,
+      larkVerificationToken: null,
+      larkEncryptKey: null,
+      feishuEventCardChatId: null,
+      larkCardCallbackUrlHint: null
     });
     const app = buildServer({
       config,
@@ -36,6 +40,10 @@ describe("GET /health", () => {
       card_actions_enabled: true,
       card_callback_ready: false,
       card_callback_url_configured: false,
+      feishu_webhook_ready: false,
+      feishu_webhook_encrypt_key_configured: false,
+      feishu_webhook_verification_token_configured: false,
+      feishu_event_card_chat_configured: false,
       task_create_dry_run: true,
       calendar_create_dry_run: true,
       knowledge_write_dry_run: true,
@@ -48,6 +56,8 @@ describe("GET /health", () => {
       sqlitePath: ":memory:",
       feishuCardActionsEnabled: true,
       larkVerificationToken: "verification-token",
+      larkEncryptKey: "encrypt-key",
+      feishuEventCardChatId: "oc_team_room",
       larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action"
     });
     const app = buildServer({
@@ -64,9 +74,14 @@ describe("GET /health", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       card_callback_ready: true,
-      card_callback_url_configured: true
+      card_callback_url_configured: true,
+      feishu_webhook_ready: true,
+      feishu_webhook_encrypt_key_configured: true,
+      feishu_webhook_verification_token_configured: true,
+      feishu_event_card_chat_configured: true
     });
     expect(JSON.stringify(response.json())).not.toContain("verification-token");
+    expect(JSON.stringify(response.json())).not.toContain("encrypt-key");
     expect(JSON.stringify(response.json())).not.toContain("meetingatlas.example.com");
   });
 });

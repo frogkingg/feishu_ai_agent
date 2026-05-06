@@ -65,6 +65,7 @@ NODE_ENV=development
 PORT=3000
 FEISHU_DRY_RUN=true
 FEISHU_CARD_SEND_DRY_RUN=true
+FEISHU_EVENT_CARD_CHAT_ID=
 LARK_CLI_BIN=lark-cli
 LLM_PROVIDER=mock
 LLM_BASE_URL=
@@ -78,6 +79,7 @@ LLM_DEBUG_RAW=false
 SQLITE_PATH=./data/meeting-atlas.db
 DEV_API_KEY=
 LARK_VERIFICATION_TOKEN=
+LARK_ENCRYPT_KEY=
 LARK_CARD_CALLBACK_URL_HINT=
 ```
 
@@ -101,7 +103,8 @@ Mode C 的定位是隔离 canary/readiness：可以证明 per-workflow 或 full 
 
 - `DEV_API_KEY` 未配置时，所有 `/dev/*` 请求返回 503。
 - `LARK_VERIFICATION_TOKEN` 未配置时，飞书 event webhook 和 card-action webhook 返回 503。
-- 配置了 verification token 后，webhook 必须通过飞书签名校验。
+- `LARK_ENCRYPT_KEY` 用于校验飞书请求头 `X-Lark-Signature`；`LARK_VERIFICATION_TOKEN` 用于校验飞书事件 payload 里的 token。两者都配置后才算真实 webhook ready。
+- `FEISHU_EVENT_CARD_CHAT_ID` 可选；配置后，视频会议事件生成的确认卡会直接发到该群，避免只尝试 DM 主持人导致现场“没反应”。
 
 ## 真实闭环配置检查清单
 
@@ -118,6 +121,7 @@ Mode C 的定位是隔离 canary/readiness：可以证明 per-workflow 或 full 
    - 事件订阅 → 勾选 `vc.meeting.recording_ready_v1`
    - 消息卡片 → 请求地址：`https://your-domain/webhooks/feishu/card-action`
    - 记录 Verification Token → 填入 `LARK_VERIFICATION_TOKEN`
+   - 记录 Encrypt Key → 填入 `LARK_ENCRYPT_KEY`
 
 2. **环境变量**（最小真实发卡配置）
 
@@ -125,7 +129,9 @@ Mode C 的定位是隔离 canary/readiness：可以证明 per-workflow 或 full 
    FEISHU_DRY_RUN=true
    FEISHU_CARD_SEND_DRY_RUN=false
    FEISHU_CARD_ACTIONS_ENABLED=true
+   FEISHU_EVENT_CARD_CHAT_ID=<oc_xxx 可选但推荐>
    LARK_VERIFICATION_TOKEN=<your-token>
+   LARK_ENCRYPT_KEY=<your-encrypt-key>
    LARK_CARD_CALLBACK_URL_HINT=https://your-domain/webhooks/feishu/card-action
    LARK_CLI_BIN=lark-cli
    LLM_PROVIDER=openai-compatible
@@ -150,7 +156,7 @@ Mode C 的定位是隔离 canary/readiness：可以证明 per-workflow 或 full 
    # 2. LARK_CARD_CALLBACK_URL_HINT
    ```
 
-真实发送未完成 confirmation card 前，系统会检查 `FEISHU_CARD_ACTIONS_ENABLED=true`、`LARK_VERIFICATION_TOKEN` 非空、`LARK_CARD_CALLBACK_URL_HINT` 是公网 http/https URL 且以 `/webhooks/feishu/card-action` 结尾。任一条件不满足会 fail fast，不调用 lark-cli 发送可点击但会 200671 的卡片。
+真实发送未完成 confirmation card 前，系统会检查 `FEISHU_CARD_ACTIONS_ENABLED=true`、`LARK_VERIFICATION_TOKEN` / `LARK_ENCRYPT_KEY` 非空、`LARK_CARD_CALLBACK_URL_HINT` 是公网 http/https URL 且以 `/webhooks/feishu/card-action` 结尾。任一条件不满足会 fail fast，不调用 lark-cli 发送可点击但会 200671 的卡片。
 
 真实 LLM 实验时保持 `FEISHU_DRY_RUN=true`，只切换模型提供方：
 

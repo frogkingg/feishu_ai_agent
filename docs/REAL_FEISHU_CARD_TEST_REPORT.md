@@ -13,6 +13,10 @@
 ```env
 FEISHU_DRY_RUN=true
 FEISHU_CARD_SEND_DRY_RUN=false
+FEISHU_CARD_ACTIONS_ENABLED=true
+LARK_VERIFICATION_TOKEN=<configured in Feishu app>
+LARK_ENCRYPT_KEY=<configured in Feishu app>
+LARK_CARD_CALLBACK_URL_HINT=https://your-domain/webhooks/feishu/card-action
 LARK_CLI_BIN=lark-cli
 LLM_PROVIDER=mock
 ```
@@ -21,6 +25,7 @@ LLM_PROVIDER=mock
 
 - `FEISHU_DRY_RUN=true` 保护任务、日程、Wiki / Doc 不真实写入。
 - `FEISHU_CARD_SEND_DRY_RUN=false` 只允许卡片真实发送。
+- `LARK_ENCRYPT_KEY` 用于飞书 `X-Lark-Signature` 验签，`LARK_VERIFICATION_TOKEN` 用于校验 payload token。
 - `LARK_CLI_BIN=lark-cli` 是本地实际 CLI 命令名。
 - `LLM_PROVIDER=mock` 是为了避免真实 LLM 波动影响飞书链路测试。
 
@@ -33,6 +38,7 @@ PORT=3000 \
 SQLITE_PATH=/tmp/meeting-atlas-real-card-test-$(date +%s).db \
 FEISHU_DRY_RUN=true \
 FEISHU_CARD_SEND_DRY_RUN=false \
+FEISHU_CARD_ACTIONS_ENABLED=true \
 LARK_CLI_BIN=lark-cli \
 LLM_PROVIDER=mock \
 npm run dev
@@ -89,10 +95,8 @@ docs/assets/real-feishu-card-test/
 
 ## 当前限制
 
-- 卡片按钮回调尚未完整接入。
-- 点击飞书卡片按钮目前不会自动调用本地 `/dev/confirmations/:id/confirm`。
 - 真实飞书任务 / 日程 / Wiki / Doc 创建仍未打开。
-- 下一阶段是飞书卡片回调，不是直接真实创建任务。
+- 飞书卡片按钮回调已经接入 `/webhooks/feishu/card-action`，但公网回调必须同时配置 `LARK_ENCRYPT_KEY`、`LARK_VERIFICATION_TOKEN` 和 `LARK_CARD_CALLBACK_URL_HINT`。
 - 如真实发卡失败，可查看 `/dev/state` 的 `cli_runs`，或只读辅助接口 `/dev/card-send-runs`，定位 `lark.im.send_card` 的 `stderr` / `error`。
 
 查看 `/dev/state`：
@@ -110,6 +114,6 @@ curl -s http://127.0.0.1:3000/dev/state \
 
 ## 下一步计划
 
-- 接入飞书卡片交互回调。
+- 用真实飞书会议事件验证 `/webhooks/feishu/event` 是否通过验签并生成卡片。
 - 回调后仍先在 `FEISHU_DRY_RUN=true` 下执行 `confirm` / `reject`。
 - 继续保持真实任务、日程、Wiki / Doc 写入关闭，直到下一阶段单独放开。

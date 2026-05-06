@@ -145,6 +145,17 @@ CREATE TABLE IF NOT EXISTS topic_suppressions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_topic_suppressions_user_topic
   ON topic_suppressions(user_id, topic_key);
 
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  event_type TEXT,
+  external_ref TEXT,
+  status TEXT NOT NULL CHECK (status IN ('processing', 'processed', 'failed')),
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS cli_runs (
   id TEXT PRIMARY KEY,
   tool TEXT NOT NULL,

@@ -147,6 +147,17 @@ export interface TopicSuppressionRow {
   created_at: string;
 }
 
+export interface WebhookEventRow {
+  id: string;
+  event_id: string;
+  event_type: string | null;
+  external_ref: string | null;
+  status: "processing" | "processed" | "failed";
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CliRunRow {
   id: string;
   tool: string;
@@ -183,6 +194,11 @@ function asRow<T>(value: unknown): T | null {
 
 function allRows<T>(value: unknown[]): T[] {
   return value as T[];
+}
+
+function sqliteChanges(db: MeetingAtlasDb): number {
+  const row = asRow<{ changes: number }>(db.prepare("SELECT changes() AS changes").get());
+  return row?.changes ?? 0;
 }
 
 export function createRepositories(db: MeetingAtlasDb) {
@@ -659,6 +675,58 @@ export function createRepositories(db: MeetingAtlasDb) {
           .prepare("SELECT 1 FROM topic_suppressions WHERE user_id = ? AND topic_key = ?")
           .get(input.user_id, input.topic_key) !== undefined
       );
+    },
+
+    registerWebhookEvent(input: {
+      id: string;
+      event_id: string;
+      event_type: string | null;
+      external_ref: string | null;
+    }): { accepted: boolean; event: WebhookEventRow } {
+      const now = nowIso();
+      const row: WebhookEventRow = {
+        ...input,
+        status: "processing",
+        error: null,
+        created_at: now,
+        updated_at: now
+      };
+      db.prepare(
+        `INSERT OR IGNORE INTO webhook_events (
+          id, event_id, event_type, external_ref, status, error, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        row.id,
+        row.event_id,
+        row.event_type,
+        row.external_ref,
+        row.status,
+        row.error,
+        row.created_at,
+        row.updated_at
+      );
+
+      const inserted = sqliteChanges(db) > 0;
+      const event = asRow<WebhookEventRow>(
+        db.prepare("SELECT * FROM webhook_events WHERE event_id = ?").get(row.event_id)
+      );
+      if (event === null) {
+        throw new Error("Failed to register webhook event");
+      }
+
+      return { accepted: inserted, event };
+    },
+
+    updateWebhookEventStatus(input: {
+      event_id: string;
+      status: WebhookEventRow["status"];
+      error?: string | null;
+    }): void {
+      db.prepare(
+        `UPDATE webhook_events
+        SET status = ?, error = ?, updated_at = ?
+        WHERE event_id = ?`
+      ).run(input.status, input.error ?? null, nowIso(), input.event_id);
     },
 
     createKnowledgeUpdate(input: NewKnowledgeUpdateRow): KnowledgeUpdateRow {

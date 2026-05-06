@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
-import { AppConfig, getCardCallbackReadiness } from "./config";
+import { AppConfig, getCardCallbackReadiness, getFeishuWebhookReadiness } from "./config";
 import { ManualMeetingInputSchema, ProcessMeetingTextInputSchema } from "./schemas";
 import { buildConfirmationCardFromRequest } from "./agents/cardInteractionAgent";
 import { runMeetingExtractionAgent } from "./agents/meetingExtractionAgent";
@@ -20,7 +20,11 @@ import { type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
 import { createId } from "./utils/id";
-import { decryptLarkPayload, verifyLarkCardActionSignature, verifyLarkWebhookSignature } from "./utils/larkSignature";
+import {
+  decryptLarkPayload,
+  verifyLarkCardActionSignature,
+  verifyLarkWebhookSignature
+} from "./utils/larkSignature";
 import {
   processMeetingTextToConfirmationsWorkflow,
   processMeetingWorkflow
@@ -46,10 +50,11 @@ const SendCardBodySchema = z
 const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
 const FeishuMeetingEndedEventType = "vc.meeting.all_meeting_ended_v1";
 const TranscriptPendingText = "【transcript pending - to be fetched via lark-cli vc +notes】";
-const CardActionAcceptedMessage = "已收到请求，正在添加到飞书…";
+const CardActionConfirmedMessage = "已确认，处理完成";
 const CardActionSnoozedMessage = "好的，30 分钟后再提醒你";
 const RemindLaterDelayMinutes = 30;
 const TranscriptFetchTimeoutMs = 3000;
+const LarkSignatureFreshnessWindowSeconds = 5 * 60;
 
 const FeishuRecordingReadyEventSchema = z
   .object({
@@ -76,7 +81,9 @@ type FeishuEventWebhookPayload = {
   event_type?: unknown;
   header?: {
     event_type?: unknown;
+    event_id?: unknown;
   };
+  event_id?: unknown;
   event?: unknown;
 };
 
@@ -109,6 +116,32 @@ function getHeaderString(request: FastifyRequest, name: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function getLarkSignatureTimestampFailureReason(timestamp: string | null): string | null {
+  if (timestamp === null) {
+    return "missing_timestamp";
+  }
+
+  if (!/^\d+$/.test(timestamp)) {
+    return "invalid_timestamp";
+  }
+
+  const timestampSeconds = Number(timestamp);
+  if (!Number.isSafeInteger(timestampSeconds)) {
+    return "invalid_timestamp";
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (timestampSeconds < nowSeconds - LarkSignatureFreshnessWindowSeconds) {
+    return "stale_timestamp";
+  }
+
+  if (timestampSeconds > nowSeconds + LarkSignatureFreshnessWindowSeconds) {
+    return "future_timestamp";
+  }
+
+  return null;
+}
+
 function isLarkSignatureValid(input: {
   request: FastifyRequest;
   body: string;
@@ -123,7 +156,10 @@ function isLarkSignatureValid(input: {
     return false;
   }
 
-  // When Encrypt Key is configured, Feishu signs with Encrypt Key on the raw body
+  if (getLarkSignatureTimestampFailureReason(timestamp) !== null) {
+    return false;
+  }
+
   if (input.encryptKey) {
     return verifyLarkWebhookSignature({
       timestamp,
@@ -135,9 +171,10 @@ function isLarkSignatureValid(input: {
   }
 
   if (input.verificationToken === null) {
-    return true;
+    return false;
   }
 
+  // Compatibility for old local fixtures. Production Feishu webhook signatures use Encrypt Key.
   return verifyLarkWebhookSignature({
     timestamp,
     nonce,
@@ -162,19 +199,25 @@ function isLarkCardActionSignatureValid(input: {
     return false;
   }
 
-  // When Encrypt Key is configured, encrypted card events use SHA-256 with Encrypt Key
+  if (getLarkSignatureTimestampFailureReason(timestamp) !== null) {
+    return false;
+  }
+
   if (input.encryptKey) {
-    return verifyLarkWebhookSignature({
+    const encryptKeySignatureValid = verifyLarkWebhookSignature({
       timestamp,
       nonce,
       body: input.rawBody,
       verificationToken: input.encryptKey,
       signature
     });
+    if (encryptKeySignatureValid) {
+      return true;
+    }
   }
 
   if (input.verificationToken === null) {
-    return true;
+    return false;
   }
 
   if (
@@ -202,29 +245,69 @@ function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, un
   const timestamp = getHeaderString(request, "x-lark-request-timestamp");
   const nonce = getHeaderString(request, "x-lark-request-nonce");
   const signature = getHeaderString(request, "x-lark-signature");
+  const timestampFailureReason = getLarkSignatureTimestampFailureReason(timestamp);
 
   return {
     has_timestamp: timestamp !== null,
     has_nonce: nonce !== null,
     has_signature: signature !== null,
-    signature_length: signature?.length ?? 0
+    reason:
+      timestampFailureReason ??
+      (nonce === null
+        ? "missing_nonce"
+        : signature === null
+          ? "missing_signature"
+          : "signature_mismatch")
   };
+}
+
+function verificationTokenInPayload(payload: Record<string, unknown> | null): string | null {
+  if (payload === null) {
+    return null;
+  }
+
+  return firstString([
+    payload.token,
+    valueAtPath(payload, ["header", "token"]),
+    valueAtPath(payload, ["event", "token"])
+  ]);
+}
+
+function hasValidVerificationToken(input: {
+  payload: Record<string, unknown> | null;
+  verificationToken: string | null;
+}): boolean {
+  if (input.verificationToken === null) {
+    return true;
+  }
+
+  return verificationTokenInPayload(input.payload) === input.verificationToken;
 }
 
 function allowsLocalSecurityBypass(config: Pick<AppConfig, "nodeEnv">): boolean {
   return config.nodeEnv === "development" || config.nodeEnv === "test";
 }
 
+function allowsUnsignedLocalWebhook(
+  config: Pick<AppConfig, "nodeEnv" | "larkVerificationToken" | "larkEncryptKey">
+): boolean {
+  return (
+    allowsLocalSecurityBypass(config) &&
+    config.larkVerificationToken === null &&
+    config.larkEncryptKey === null
+  );
+}
+
 function decryptFeishuPayloadIfEncrypted(
   body: Record<string, unknown>,
   encryptKey: string | null
-): { decrypted: boolean; payload: Record<string, unknown>; rawForSignature: string } {
+): { decrypted: boolean; payload: Record<string, unknown> } {
   if (typeof body.encrypt === "string" && encryptKey) {
     const decryptedJson = decryptLarkPayload(body.encrypt, encryptKey);
     const payload = JSON.parse(decryptedJson) as Record<string, unknown>;
-    return { decrypted: true, payload, rawForSignature: decryptedJson };
+    return { decrypted: true, payload };
   }
-  return { decrypted: false, payload: body, rawForSignature: JSON.stringify(body) };
+  return { decrypted: false, payload: body };
 }
 
 function requiresDevApiKey(url: string): boolean {
@@ -254,7 +337,8 @@ function getSecurityMode(config: AppConfig): "dry-run" | "card-real" | "fully-re
 function logSecurityMode(app: FastifyInstance, config: AppConfig) {
   const missingConfig = [
     config.devApiKey ? null : "DEV_API_KEY",
-    config.larkVerificationToken ? null : "LARK_VERIFICATION_TOKEN"
+    config.larkVerificationToken ? null : "LARK_VERIFICATION_TOKEN",
+    config.larkEncryptKey ? null : "LARK_ENCRYPT_KEY"
   ].filter((name): name is string => name !== null);
 
   app.log.info(
@@ -265,7 +349,8 @@ function logSecurityMode(app: FastifyInstance, config: AppConfig) {
       card_send_dry_run: config.feishuCardSendDryRun,
       task_create_dry_run: config.feishuTaskCreateDryRun,
       calendar_create_dry_run: config.feishuCalendarCreateDryRun,
-      knowledge_write_dry_run: config.feishuKnowledgeWriteDryRun
+      knowledge_write_dry_run: config.feishuKnowledgeWriteDryRun,
+      event_card_chat_configured: Boolean(config.feishuEventCardChatId)
     },
     "meetingatlas security mode"
   );
@@ -288,6 +373,14 @@ function getFeishuEventType(payload: FeishuEventWebhookPayload): string | null {
   }
 
   return typeof payload.header?.event_type === "string" ? payload.header.event_type : null;
+}
+
+function getFeishuEventId(payload: FeishuEventWebhookPayload): string | null {
+  return firstString([
+    valueAtPath(payload, ["header", "event_id"]),
+    valueAtPath(payload, ["event", "event_id"]),
+    payload.event_id
+  ]);
 }
 
 type ToastType = "info" | "success" | "error";
@@ -775,7 +868,16 @@ function sendCardStatusCode(result: { ok: boolean; error: string | null }): numb
 function automaticCardDestination(input: {
   confirmation: ConfirmationRequestRow;
   sendToChatId?: string | null;
+  forceChatDestination?: boolean;
 }): { recipient: string | null; chatId: string | null } {
+  const chatId = stringValue(input.sendToChatId);
+  if (input.forceChatDestination && chatId !== null) {
+    return {
+      recipient: null,
+      chatId
+    };
+  }
+
   if (PERSONAL_KNOWLEDGE_REQUEST_TYPES.has(input.confirmation.request_type)) {
     return {
       recipient: input.confirmation.recipient,
@@ -783,7 +885,6 @@ function automaticCardDestination(input: {
     };
   }
 
-  const chatId = stringValue(input.sendToChatId);
   return {
     recipient: chatId === null ? input.confirmation.recipient : null,
     chatId
@@ -815,6 +916,7 @@ async function sendGeneratedConfirmationCards(input: {
   config: AppConfig;
   confirmationIds: string[];
   sendToChatId?: string | null;
+  forceChatDestination?: boolean;
   runner?: LarkCliRunner;
 }) {
   if (input.config.feishuCardSendDryRun || input.confirmationIds.length === 0) {
@@ -830,7 +932,8 @@ async function sendGeneratedConfirmationCards(input: {
 
     const destination = automaticCardDestination({
       confirmation,
-      sendToChatId: input.sendToChatId
+      sendToChatId: input.sendToChatId,
+      forceChatDestination: input.forceChatDestination
     });
     if (destination.chatId === null && destination.recipient === null) {
       continue;
@@ -951,6 +1054,7 @@ export function buildServer(input: {
 
   app.get("/health", async () => {
     const cardCallbackReadiness = getCardCallbackReadiness(input.config);
+    const feishuWebhookReadiness = getFeishuWebhookReadiness(input.config);
     return {
       ok: true,
       service: "meeting-atlas",
@@ -961,6 +1065,11 @@ export function buildServer(input: {
       card_actions_enabled: input.config.feishuCardActionsEnabled,
       card_callback_ready: cardCallbackReadiness.ready,
       card_callback_url_configured: cardCallbackReadiness.callback_url_configured,
+      feishu_webhook_ready: feishuWebhookReadiness.ready,
+      feishu_webhook_encrypt_key_configured: feishuWebhookReadiness.encrypt_key_configured,
+      feishu_webhook_verification_token_configured:
+        feishuWebhookReadiness.verification_token_configured,
+      feishu_event_card_chat_configured: feishuWebhookReadiness.event_card_chat_configured,
       task_create_dry_run: input.config.feishuTaskCreateDryRun,
       calendar_create_dry_run: input.config.feishuCalendarCreateDryRun,
       knowledge_write_dry_run: input.config.feishuKnowledgeWriteDryRun,
@@ -991,7 +1100,7 @@ export function buildServer(input: {
     }
 
     // Handle encrypted payload (Encrypt Key configured in Feishu Open Platform)
-    const { decrypted, payload: payloadData, rawForSignature } = decryptFeishuPayloadIfEncrypted(
+    const { decrypted, payload: payloadData } = decryptFeishuPayloadIfEncrypted(
       rawPayload,
       input.config.larkEncryptKey
     );
@@ -1013,6 +1122,7 @@ export function buildServer(input: {
     }
 
     if (
+      !allowsUnsignedLocalWebhook(input.config) &&
       !isLarkSignatureValid({
         request,
         body: rawBody,
@@ -1023,12 +1133,27 @@ export function buildServer(input: {
       request.log.warn(
         {
           ...getLarkSignatureDiagnostics(request),
-          decrypted,
-          raw_body_preview: rawBody.slice(0, 120)
+          decrypted
         },
         "rejected feishu event webhook with invalid signature"
       );
       return reply.code(401).send({ error: "Invalid Lark webhook signature" });
+    }
+
+    if (
+      !hasValidVerificationToken({
+        payload: payloadData,
+        verificationToken: input.config.larkVerificationToken
+      })
+    ) {
+      request.log.warn(
+        {
+          event_type: getFeishuEventType(payload),
+          has_token: verificationTokenInPayload(payloadData) !== null
+        },
+        "rejected feishu event webhook with invalid verification token"
+      );
+      return reply.code(401).send({ error: "Invalid Lark verification token" });
     }
 
     const eventType = getFeishuEventType(payload);
@@ -1036,9 +1161,92 @@ export function buildServer(input: {
 
     if (eventType === FeishuRecordingReadyEventType || eventType === FeishuMeetingEndedEventType) {
       const event = FeishuRecordingReadyEventSchema.parse(payload.event ?? {});
-      const organizer = event.operator_id?.open_id ?? event.host_user_id?.open_id ?? null;
-      const externalMeetingId = event.meeting_id ?? event.minute_token ?? "unknown";
-      const title = event.topic?.trim() || externalMeetingId;
+      const eventRecord = asRecord(event) ?? {};
+      const meetingRecord = firstRecord([
+        asRecord(eventRecord.meeting),
+        asRecord(eventRecord.video_meeting),
+        asRecord(eventRecord.video_conference),
+        asRecord(eventRecord.recording)
+      ]);
+      const organizer =
+        firstString([
+          valueAtPath(event, ["operator_id", "open_id"]),
+          valueAtPath(event, ["host_user_id", "open_id"]),
+          valueAtPath(event, ["host", "open_id"]),
+          valueAtPath(event, ["owner", "open_id"]),
+          valueAtPath(meetingRecord, ["host_user_id", "open_id"]),
+          valueAtPath(meetingRecord, ["owner", "open_id"])
+        ]) ?? null;
+      const minuteToken =
+        firstString([
+          event.minute_token,
+          eventRecord.minute_token,
+          meetingRecord.minute_token,
+          meetingRecord.minutes_token,
+          valueAtPath(event, ["recording", "minute_token"])
+        ]) ?? null;
+      const externalMeetingRef = firstString([
+        event.meeting_id,
+        eventRecord.meeting_id,
+        meetingRecord.meeting_id,
+        meetingRecord.id,
+        minuteToken
+      ]);
+      const externalMeetingId = externalMeetingRef ?? "unknown";
+      const title =
+        firstString([
+          event.topic,
+          eventRecord.topic,
+          eventRecord.title,
+          eventRecord.name,
+          meetingRecord.topic,
+          meetingRecord.title,
+          meetingRecord.name
+        ]) ?? externalMeetingId;
+      const minutesUrl =
+        firstString([
+          eventRecord.minutes_url,
+          eventRecord.minute_url,
+          eventRecord.meeting_url,
+          meetingRecord.minutes_url,
+          meetingRecord.minute_url,
+          meetingRecord.url,
+          valueAtPath(event, ["recording", "url"])
+        ]) ?? null;
+      const webhookEventId =
+        getFeishuEventId(payload) ??
+        (eventType !== null && externalMeetingRef !== null
+          ? `${eventType}:${externalMeetingRef}`
+          : null);
+
+      if (webhookEventId === null) {
+        request.log.warn(
+          { event_type: eventType, external_meeting_id: externalMeetingRef },
+          "accepted feishu event webhook without durable idempotency key"
+        );
+        return reply
+          .code(202)
+          .send({ accepted: true, ignored: true, reason: "missing_event_id" });
+      }
+
+      const webhookEvent = input.repos.registerWebhookEvent({
+        id: createId("webhook_event"),
+        event_id: webhookEventId,
+        event_type: eventType,
+        external_ref: externalMeetingRef
+      });
+      if (!webhookEvent.accepted) {
+        request.log.info(
+          {
+            event_type: eventType,
+            event_id: webhookEventId,
+            external_meeting_id: externalMeetingRef,
+            status: webhookEvent.event.status
+          },
+          "accepted duplicate feishu event webhook"
+        );
+        return reply.code(202).send({ accepted: true, duplicate: true });
+      }
 
       // 会议结束后需要更长时间等待妙记生成
       const waitMs = eventType === FeishuMeetingEndedEventType ? 15000 : 5000;
@@ -1051,7 +1259,7 @@ export function buildServer(input: {
             config: input.config,
             meetingId: externalMeetingId,
             title,
-            minuteToken: event.minute_token ?? null,
+            minuteToken,
             runner: input.larkCliRunner
           }).catch((error) => {
             request.log.warn(
@@ -1075,6 +1283,7 @@ export function buildServer(input: {
             organizer,
             started_at: null,
             ended_at: null,
+            minutes_url: minutesUrl,
             transcript_text: transcript
           }
         });
@@ -1082,24 +1291,60 @@ export function buildServer(input: {
           repos: input.repos,
           config: input.config,
           confirmationIds: result.confirmation_requests,
+          sendToChatId: input.config.feishuEventCardChatId,
+          forceChatDestination: Boolean(input.config.feishuEventCardChatId),
           runner: input.larkCliRunner
         });
+        const skippedCardSends = result.confirmation_requests.length - cardSendResults.length;
 
         request.log.info(
           {
             event_type: eventType,
+            event_id: webhookEventId,
             external_meeting_id: externalMeetingId,
             meeting_id: result.meeting_id,
             confirmation_requests: result.confirmation_requests.length,
             card_send_results: cardSendResults.length,
+            card_send_skipped: skippedCardSends,
+            card_send_failed: cardSendResults.filter((item) => !item.ok).length,
+            card_send_dry_run: input.config.feishuCardSendDryRun,
+            event_card_chat_configured: Boolean(input.config.feishuEventCardChatId),
             transcript_preview: transcript.slice(0, 80)
           },
           "triggered meeting workflow from feishu event"
         );
+        if (skippedCardSends > 0 || cardSendResults.some((item) => !item.ok)) {
+          request.log.warn(
+            {
+              event_type: eventType,
+              external_meeting_id: externalMeetingId,
+              skipped_card_sends: skippedCardSends,
+              failed_card_sends: cardSendResults
+                .filter((item) => !item.ok)
+                .map((item) => ({
+                  recipient: item.recipient,
+                  chat_id: item.chat_id,
+                  error: item.error
+                }))
+            },
+            "some generated confirmation cards were not delivered"
+          );
+        }
+        input.repos.updateWebhookEventStatus({
+          event_id: webhookEventId,
+          status: "processed",
+          error: null
+        });
       })().catch((error) => {
+        input.repos.updateWebhookEventStatus({
+          event_id: webhookEventId,
+          status: "failed",
+          error: briefError(error).slice(0, 500)
+        });
         request.log.error(
           {
             event_type: eventType,
+            event_id: webhookEventId,
             external_meeting_id: externalMeetingId,
             err: error
           },
@@ -1124,7 +1369,7 @@ export function buildServer(input: {
     }
 
     // Handle encrypted payload (Encrypt Key configured in Feishu Open Platform)
-    const { decrypted, payload: decryptedPayload, rawForSignature } = decryptFeishuPayloadIfEncrypted(
+    const { decrypted, payload: decryptedPayload } = decryptFeishuPayloadIfEncrypted(
       rawBodyRecord ?? {},
       input.config.larkEncryptKey
     );
@@ -1146,6 +1391,7 @@ export function buildServer(input: {
     }
 
     if (
+      !allowsUnsignedLocalWebhook(input.config) &&
       !isLarkCardActionSignatureValid({
         request,
         rawBody: rawBody,
@@ -1225,17 +1471,7 @@ export function buildServer(input: {
       }
 
       if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        input.repos.updateConfirmationRequest({
-          id: requestId,
-          status: "confirmed",
-          edited_payload_json:
-            parsed.editedPayload === undefined ? null : JSON.stringify(parsed.editedPayload),
-          confirmed_at: nowIso(),
-          error: null
-        });
-        const acceptedConfirmation = input.repos.getConfirmationRequest(requestId) ?? confirmation;
-
-        void (async () => {
+        try {
           const execution = await confirmRequest({
             repos: input.repos,
             config: input.config,
@@ -1245,57 +1481,86 @@ export function buildServer(input: {
             allowPreconfirmed: true,
             runner: input.larkCliRunner
           });
-          const finalUpdate = await syncCardStatusForRequest({
-            repos: input.repos,
-            config: input.config,
-            request: execution.confirmation,
-            updateToken: parsed.updateToken,
-            messageId: parsed.messageId,
-            chatId: parsed.chatId,
-            runner: input.larkCliRunner
-          });
-          if (!finalUpdate.ok) {
+
+          try {
+            const finalUpdate = await syncCardStatusForRequest({
+              repos: input.repos,
+              config: input.config,
+              request: execution.confirmation,
+              updateToken: parsed.updateToken,
+              messageId: parsed.messageId,
+              chatId: parsed.chatId,
+              runner: input.larkCliRunner
+            });
+            if (!finalUpdate.ok) {
+              request.log.warn(
+                cardStatusLogContext({
+                  confirmationId: requestId,
+                  phase: "final",
+                  result: finalUpdate
+                }),
+                "card status update fell back or failed after execution"
+              );
+            }
+          } catch (error) {
             request.log.warn(
-              cardStatusLogContext({
-                confirmationId: requestId,
-                phase: "final",
-                result: finalUpdate
-              }),
-              "card status update fell back or failed after execution"
+              { err: error, confirmation_id: requestId },
+              "card status update failed after execution"
             );
           }
-        })().catch(async (error) => {
+
+          if (execution.confirmation.status === "failed") {
+            return cardCallbackResponse({
+              type: "error",
+              content: `确认执行失败：${execution.confirmation.error ?? "unknown error"}`,
+              confirmation: execution.confirmation
+            });
+          }
+
+          return cardCallbackResponse({
+            type: "success",
+            content: CardActionConfirmedMessage,
+            confirmation: execution.confirmation
+          });
+        } catch (error) {
           input.repos.updateConfirmationRequest({
             id: requestId,
             status: "failed",
             error: briefError(error)
           });
           const failed = input.repos.getConfirmationRequest(requestId) ?? confirmation;
-          const finalUpdate = await syncCardStatusForRequest({
-            repos: input.repos,
-            config: input.config,
-            request: failed,
-            updateToken: parsed.updateToken,
-            messageId: parsed.messageId,
-            chatId: parsed.chatId,
-            runner: input.larkCliRunner
-          });
+          let finalUpdate: Awaited<ReturnType<typeof syncCardStatusForRequest>> | null = null;
+          try {
+            finalUpdate = await syncCardStatusForRequest({
+              repos: input.repos,
+              config: input.config,
+              request: failed,
+              updateToken: parsed.updateToken,
+              messageId: parsed.messageId,
+              chatId: parsed.chatId,
+              runner: input.larkCliRunner
+            });
+          } catch (syncError) {
+            request.log.warn(
+              { err: syncError, confirmation_id: requestId },
+              "card status update failed after confirm failure"
+            );
+          }
           request.log.error(
             {
               err: error,
               confirmation_id: requestId,
-              card_status_method: finalUpdate.method,
-              card_status_ok: finalUpdate.ok
+              card_status_method: finalUpdate?.method ?? null,
+              card_status_ok: finalUpdate?.ok ?? false
             },
-            "async confirm failed"
+            "confirm failed"
           );
-        });
-
-        return cardCallbackResponse({
-          type: "info",
-          content: CardActionAcceptedMessage,
-          confirmation: acceptedConfirmation
-        });
+          return cardCallbackResponse({
+            type: "error",
+            content: `确认执行失败：${failed.error ?? briefError(error)}`,
+            confirmation: failed
+          });
+        }
       }
 
       if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
