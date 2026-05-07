@@ -15,6 +15,10 @@ export interface AppConfig {
   feishuTaskCreateDryRun: boolean;
   feishuCalendarCreateDryRun: boolean;
   feishuKnowledgeWriteDryRun: boolean;
+  feishuMinutesWatcherEnabled: boolean;
+  feishuMinutesWatcherIntervalMs: number;
+  feishuMinutesWatcherLookbackMinutes: number;
+  feishuMinutesWatcherPageSize: number;
   larkVerificationToken: string | null;
   larkCardCallbackUrlHint: string | null;
   larkEncryptKey: string | null;
@@ -231,6 +235,22 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     feishuKnowledgeWriteDryRun: parseBoolean(
       process.env.FEISHU_KNOWLEDGE_WRITE_DRY_RUN,
       feishuDryRun
+    ),
+    feishuMinutesWatcherEnabled: parseBoolean(
+      process.env.FEISHU_MINUTES_WATCHER_ENABLED,
+      false
+    ),
+    feishuMinutesWatcherIntervalMs: parseNumber(
+      process.env.FEISHU_MINUTES_WATCHER_INTERVAL_MS,
+      120000
+    ),
+    feishuMinutesWatcherLookbackMinutes: parseNumber(
+      process.env.FEISHU_MINUTES_WATCHER_LOOKBACK_MINUTES,
+      60
+    ),
+    feishuMinutesWatcherPageSize: parseNumber(
+      process.env.FEISHU_MINUTES_WATCHER_PAGE_SIZE,
+      30
     ),
     larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN || null,
     larkCardCallbackUrlHint: process.env.LARK_CARD_CALLBACK_URL_HINT || null,

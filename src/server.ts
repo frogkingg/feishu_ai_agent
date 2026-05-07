@@ -16,7 +16,7 @@ import { LlmClient } from "./services/llm/llmClient";
 import { createDatabase } from "./services/store/db";
 import { ConfirmationRequestRow, MeetingRow, Repositories } from "./services/store/repositories";
 import { buildFeishuInteractiveCard, sendCard, syncConfirmationCardStatus } from "./tools/larkIm";
-import { type LarkCliRunner } from "./tools/larkCli";
+import { runLarkCli, type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
 import { createId } from "./utils/id";
@@ -61,6 +61,7 @@ const MeetingEndedTranscriptRetryDelaysMs = [60000, 240000, 300000, 120000] as c
 const TestMeetingEndedTranscriptRetryDelaysMs = [0, 0, 0, 0] as const;
 const MeetingEndedTranscriptFetchTimeoutMs = 15000;
 const LarkSignatureFreshnessWindowSeconds = 5 * 60;
+const MinutesWatcherEventType = "minutes_watcher";
 
 const FeishuRecordingReadyEventSchema = z
   .object({
@@ -809,6 +810,12 @@ function firstRecord(values: Array<Record<string, unknown> | null>): Record<stri
   return values.find((value): value is Record<string, unknown> => value !== null) ?? {};
 }
 
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => asRecord(item) !== null)
+    : [];
+}
+
 function isTemplatePlaceholder(value: unknown): boolean {
   return typeof value === "string" && value.trim().startsWith("$");
 }
@@ -1105,6 +1112,243 @@ async function fetchTranscriptForMeetingEvent(input: {
     pending: true,
     error: lastError
   };
+}
+
+type MinutesWatcherItem = {
+  minuteToken: string;
+  title: string;
+  minutesUrl: string | null;
+  owner: string | null;
+  createdAt: string | null;
+};
+
+function minutesWatcherEventId(minuteToken: string): string {
+  return `${MinutesWatcherEventType}:${minuteToken}`;
+}
+
+function minutesSearchRecords(parsed: unknown): Record<string, unknown>[] {
+  const root = asRecord(parsed);
+  const data = asRecord(root?.data);
+  const candidates = [
+    root?.items,
+    data?.items,
+    root?.minutes,
+    data?.minutes,
+    root?.results,
+    data?.results
+  ];
+
+  for (const candidate of candidates) {
+    const records = recordArray(candidate);
+    if (records.length > 0) {
+      return records;
+    }
+  }
+
+  return [];
+}
+
+function minutesWatcherItemFromRecord(record: Record<string, unknown>): MinutesWatcherItem | null {
+  const ownerRecord = firstRecord([asRecord(record.owner), asRecord(record.owner_id)]);
+  const minuteToken = firstString([
+    record.token,
+    record.minute_token,
+    record.minuteToken,
+    record.id
+  ]);
+  if (minuteToken === null) {
+    return null;
+  }
+
+  return {
+    minuteToken,
+    title:
+      firstString([record.title, record.topic, record.name]) ?? `Feishu minutes ${minuteToken}`,
+    minutesUrl: firstString([record.url, record.minutes_url, record.minute_url]),
+    owner:
+      firstString([
+        record.owner_id,
+        record.owner_user_id,
+        valueAtPath(ownerRecord, ["open_id"]),
+        valueAtPath(ownerRecord, ["user_id"])
+      ]) ?? null,
+    createdAt:
+      firstString([record.create_time, record.created_at, record.start_time, record.end_time]) ??
+      null
+  };
+}
+
+async function searchRecentMinutes(input: {
+  repos: Repositories;
+  config: AppConfig;
+  runner?: LarkCliRunner;
+}): Promise<MinutesWatcherItem[]> {
+  const end = new Date();
+  const start = new Date(
+    end.getTime() - input.config.feishuMinutesWatcherLookbackMinutes * 60 * 1000
+  );
+  const result = await runLarkCli(
+    [
+      "minutes",
+      "+search",
+      "--start",
+      start.toISOString(),
+      "--end",
+      end.toISOString(),
+      "--page-size",
+      String(input.config.feishuMinutesWatcherPageSize),
+      "--format",
+      "json",
+      "--as",
+      "user"
+    ],
+    {
+      repos: input.repos,
+      config: input.config,
+      toolName: "lark.minutes.search",
+      dryRun: input.config.feishuReadDryRun,
+      expectJson: true,
+      runner: input.runner
+    }
+  );
+
+  if (result.status === "failed") {
+    throw new Error(`lark.minutes.search failed: ${result.error ?? "unknown error"}`);
+  }
+
+  return minutesSearchRecords(result.parsed)
+    .map(minutesWatcherItemFromRecord)
+    .filter((item): item is MinutesWatcherItem => item !== null);
+}
+
+async function processMinutesWatcherItem(input: {
+  repos: Repositories;
+  config: AppConfig;
+  llm: LlmClient;
+  item: MinutesWatcherItem;
+  runner?: LarkCliRunner;
+  log: FastifyInstance["log"];
+}): Promise<void> {
+  const eventId = minutesWatcherEventId(input.item.minuteToken);
+  const registered = input.repos.registerWebhookEvent({
+    id: createId("webhook_event"),
+    event_id: eventId,
+    event_type: MinutesWatcherEventType,
+    external_ref: input.item.minuteToken
+  });
+
+  if (!registered.accepted) {
+    if (registered.event.status === "processed" || registered.event.status === "processing") {
+      input.log.info(
+        {
+          event_id: eventId,
+          minute_token: input.item.minuteToken,
+          status: registered.event.status
+        },
+        "skipped minutes watcher item"
+      );
+      return;
+    }
+
+    input.repos.updateWebhookEventStatus({
+      event_id: eventId,
+      status: "processing",
+      error: null
+    });
+  }
+
+  try {
+    const transcript = await fetchTranscript({
+      repos: input.repos,
+      config: input.config,
+      meetingId: input.item.minuteToken,
+      title: input.item.title,
+      minuteToken: input.item.minuteToken,
+      runner: input.runner
+    });
+    const result = await processMeetingWorkflow({
+      repos: input.repos,
+      llm: input.llm,
+      sourceRetrievalEnabled: input.config.llmProvider !== "mock",
+      meeting: {
+        external_meeting_id: `minute:${input.item.minuteToken}`,
+        title: input.item.title,
+        participants: input.item.owner === null ? [] : [input.item.owner],
+        organizer: input.item.owner,
+        started_at: input.item.createdAt,
+        ended_at: null,
+        minutes_url: input.item.minutesUrl,
+        transcript_text: transcript
+      }
+    });
+    const cardSendResults = await sendGeneratedConfirmationCards({
+      repos: input.repos,
+      config: input.config,
+      confirmationIds: result.confirmation_requests,
+      sendToChatId: input.config.feishuEventCardChatId,
+      forceChatDestination: Boolean(input.config.feishuEventCardChatId),
+      runner: input.runner
+    });
+    const skippedCardSends = result.confirmation_requests.length - cardSendResults.length;
+    const failedCardSends = cardSendResults.filter((item) => !item.ok).length;
+    if (result.confirmation_requests.length > 0 && (skippedCardSends > 0 || failedCardSends > 0)) {
+      throw new Error(
+        `minutes_watcher_card_send_failed: skipped=${skippedCardSends} failed=${failedCardSends}`
+      );
+    }
+
+    input.repos.updateWebhookEventStatus({
+      event_id: eventId,
+      status: "processed",
+      error: null
+    });
+    input.log.info(
+      {
+        event_id: eventId,
+        minute_token: input.item.minuteToken,
+        meeting_id: result.meeting_id,
+        confirmation_requests: result.confirmation_requests.length,
+        card_send_results: cardSendResults.length,
+        card_send_failed: failedCardSends
+      },
+      "processed minutes watcher item"
+    );
+  } catch (error) {
+    const message = briefError(error).slice(0, 500);
+    input.repos.updateWebhookEventStatus({
+      event_id: eventId,
+      status: "failed",
+      error: message
+    });
+    input.log.warn(
+      {
+        event_id: eventId,
+        minute_token: input.item.minuteToken,
+        err: error
+      },
+      "failed minutes watcher item"
+    );
+  }
+}
+
+async function runMinutesWatcherOnce(input: {
+  repos: Repositories;
+  config: AppConfig;
+  llm: LlmClient;
+  runner?: LarkCliRunner;
+  log: FastifyInstance["log"];
+}): Promise<void> {
+  const items = await searchRecentMinutes(input);
+  for (const item of items) {
+    await processMinutesWatcherItem({
+      repos: input.repos,
+      config: input.config,
+      llm: input.llm,
+      item,
+      runner: input.runner,
+      log: input.log
+    });
+  }
 }
 
 function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest"]>) {
@@ -1422,6 +1666,44 @@ export function buildServer(input: {
   });
   configureJsonBodyParser(app);
   logSecurityMode(app, input.config);
+  let minutesWatcherRunning = false;
+  let minutesWatcherInterval: NodeJS.Timeout | null = null;
+
+  const runConfiguredMinutesWatcher = () => {
+    if (minutesWatcherRunning) {
+      return;
+    }
+    minutesWatcherRunning = true;
+    void runMinutesWatcherOnce({
+      repos: input.repos,
+      config: input.config,
+      llm: input.llm,
+      runner: input.larkCliRunner,
+      log: app.log
+    })
+      .catch((error) => {
+        app.log.warn({ err: error }, "minutes watcher run failed");
+      })
+      .finally(() => {
+        minutesWatcherRunning = false;
+      });
+  };
+
+  if (input.config.feishuMinutesWatcherEnabled) {
+    minutesWatcherInterval = setInterval(
+      runConfiguredMinutesWatcher,
+      input.config.feishuMinutesWatcherIntervalMs
+    );
+    minutesWatcherInterval.unref();
+    setImmediate(runConfiguredMinutesWatcher);
+  }
+
+  app.addHook("onClose", async () => {
+    if (minutesWatcherInterval !== null) {
+      clearInterval(minutesWatcherInterval);
+      minutesWatcherInterval = null;
+    }
+  });
 
   app.addHook("onRequest", async (request, reply) => {
     if (!requiresDevApiKey(request.url)) {
@@ -1467,6 +1749,10 @@ export function buildServer(input: {
       task_create_dry_run: input.config.feishuTaskCreateDryRun,
       calendar_create_dry_run: input.config.feishuCalendarCreateDryRun,
       knowledge_write_dry_run: input.config.feishuKnowledgeWriteDryRun,
+      minutes_watcher_enabled: input.config.feishuMinutesWatcherEnabled,
+      minutes_watcher_interval_ms: input.config.feishuMinutesWatcherIntervalMs,
+      minutes_watcher_lookback_minutes: input.config.feishuMinutesWatcherLookbackMinutes,
+      minutes_watcher_page_size: input.config.feishuMinutesWatcherPageSize,
       llm_provider: input.config.llmProvider,
       sqlite_path: input.config.sqlitePath
     };

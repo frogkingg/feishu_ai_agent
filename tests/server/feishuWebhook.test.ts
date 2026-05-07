@@ -50,6 +50,24 @@ function createApp(
   return { app, repos };
 }
 
+function createMinutesWatcherConfig(overrides: Partial<AppConfig> = {}): Partial<AppConfig> {
+  return {
+    feishuDryRun: true,
+    feishuReadDryRun: false,
+    feishuCardSendDryRun: false,
+    feishuCardActionsEnabled: true,
+    feishuMinutesWatcherEnabled: true,
+    feishuMinutesWatcherIntervalMs: 60000,
+    feishuMinutesWatcherLookbackMinutes: 60,
+    feishuMinutesWatcherPageSize: 30,
+    feishuEventCardChatId: "oc_minutes_watcher",
+    larkVerificationToken: "verification-token",
+    larkEncryptKey: "encrypt-key",
+    larkCardCallbackUrlHint: "https://meetingatlas.example.com/webhooks/feishu/card-action",
+    ...overrides
+  };
+}
+
 describe("POST /webhooks/feishu/event", () => {
   it("returns the Feishu challenge value", async () => {
     const { app } = createApp();
@@ -682,5 +700,288 @@ describe("POST /webhooks/feishu/event", () => {
     await vi.waitFor(() => {
       expect(runnerCalls).toHaveLength(2);
     });
+  });
+
+  it("polls new minutes and sends generated confirmation cards without creating Feishu objects", async () => {
+    const runnerCalls: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      runnerCalls.push(args);
+      if (args[0] === "minutes" && args[1] === "+search") {
+        return {
+          stdout: JSON.stringify({
+            items: [
+              {
+                token: "min_watch_new",
+                title: "无人机操作方案初步访谈",
+                url: "https://example.feishu.cn/minutes/min_watch_new",
+                owner_id: "ou_minutes_owner",
+                create_time: "2026-05-07T09:00:00+08:00"
+              }
+            ]
+          }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "vc" && args[1] === "+notes") {
+        return {
+          stdout: JSON.stringify({ minutes: [{ content: "这是真实拉取到的逐字稿文本。" }] }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "im" && args.includes("+messages-send")) {
+        return {
+          stdout: JSON.stringify({ data: { message_id: `om_watch_${runnerCalls.length}` } }),
+          stderr: ""
+        };
+      }
+      throw new Error(`unexpected lark-cli args: ${args.join(" ")}`);
+    };
+    const { repos } = createApp(createMinutesWatcherConfig(), runner);
+
+    await vi.waitFor(
+      () => {
+        expect(repos.listMeetings()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              external_meeting_id: "minute:min_watch_new",
+              title: "无人机操作方案初步访谈",
+              organizer: "ou_minutes_owner",
+              minutes_url: "https://example.feishu.cn/minutes/min_watch_new",
+              transcript_text: expect.stringContaining("这是真实拉取到的逐字稿文本。")
+            })
+          ])
+        );
+        expect(repos.listConfirmationRequests().length).toBeGreaterThan(0);
+        expect(
+          repos.listCliRuns().filter((run) => run.tool === "lark.im.send_card").length
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 7000 }
+    );
+    expect(repos.listCliRuns().some((run) => run.tool === "lark.task.create")).toBe(false);
+    expect(repos.listCliRuns().some((run) => run.tool === "lark.calendar.create")).toBe(false);
+    expect(repos.listCliRuns().some((run) => run.tool.startsWith("lark.wiki"))).toBe(false);
+    expect(repos.listCliRuns().some((run) => run.tool.startsWith("lark.doc"))).toBe(false);
+  });
+
+  it("skips minutes watcher tokens that are already processed", async () => {
+    const runnerCalls: string[][] = [];
+    const repos = createRepositories(createMemoryDatabase());
+    repos.registerWebhookEvent({
+      id: "webhook_event_processed",
+      event_id: "minutes_watcher:min_watch_processed",
+      event_type: "minutes_watcher",
+      external_ref: "min_watch_processed"
+    });
+    repos.updateWebhookEventStatus({
+      event_id: "minutes_watcher:min_watch_processed",
+      status: "processed",
+      error: null
+    });
+    const runner: LarkCliRunner = async (_bin, args) => {
+      runnerCalls.push(args);
+      if (args[0] === "minutes" && args[1] === "+search") {
+        return {
+          stdout: JSON.stringify({
+            items: [{ token: "min_watch_processed", title: "已处理妙记" }]
+          }),
+          stderr: ""
+        };
+      }
+      throw new Error(`unexpected lark-cli args: ${args.join(" ")}`);
+    };
+    buildServer({
+      config: loadConfig({
+        sqlitePath: ":memory:",
+        larkVerificationToken: null,
+        ...createMinutesWatcherConfig()
+      }),
+      repos,
+      llm: new MockLlmClient(),
+      larkCliRunner: runner
+    });
+
+    await vi.waitFor(() => {
+      expect(runnerCalls.filter((args) => args[0] === "minutes")).toHaveLength(1);
+    });
+    expect(runnerCalls.filter((args) => args[0] === "vc")).toHaveLength(0);
+    expect(repos.listMeetings()).toHaveLength(0);
+    expect(repos.listConfirmationRequests()).toHaveLength(0);
+    expect(repos.listCliRuns().filter((run) => run.tool === "lark.im.send_card")).toHaveLength(0);
+  });
+
+  it("retries failed minutes watcher tokens and can process them successfully", async () => {
+    const runnerCalls: string[][] = [];
+    const repos = createRepositories(createMemoryDatabase());
+    repos.registerWebhookEvent({
+      id: "webhook_event_failed",
+      event_id: "minutes_watcher:min_watch_retry",
+      event_type: "minutes_watcher",
+      external_ref: "min_watch_retry"
+    });
+    repos.updateWebhookEventStatus({
+      event_id: "minutes_watcher:min_watch_retry",
+      status: "failed",
+      error: "previous notes failure"
+    });
+    const runner: LarkCliRunner = async (_bin, args) => {
+      runnerCalls.push(args);
+      if (args[0] === "minutes" && args[1] === "+search") {
+        return {
+          stdout: JSON.stringify({
+            items: [
+              {
+                token: "min_watch_retry",
+                title: "无人机操作方案初步访谈",
+                owner_id: "ou_retry_owner"
+              }
+            ]
+          }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "vc" && args[1] === "+notes") {
+        return {
+          stdout: JSON.stringify({ minutes: [{ content: "重试后拉取到妙记内容。" }] }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "im" && args.includes("+messages-send")) {
+        return {
+          stdout: JSON.stringify({ data: { message_id: "om_retry_card" } }),
+          stderr: ""
+        };
+      }
+      throw new Error(`unexpected lark-cli args: ${args.join(" ")}`);
+    };
+    buildServer({
+      config: loadConfig({
+        sqlitePath: ":memory:",
+        larkVerificationToken: null,
+        ...createMinutesWatcherConfig()
+      }),
+      repos,
+      llm: new MockLlmClient(),
+      larkCliRunner: runner
+    });
+
+    await vi.waitFor(
+      () => {
+        expect(repos.listMeetings()).toHaveLength(1);
+        expect(repos.listConfirmationRequests().length).toBeGreaterThan(0);
+        expect(
+          repos.listCliRuns().filter((run) => run.tool === "lark.im.send_card").length
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 7000 }
+    );
+    const event = repos.registerWebhookEvent({
+      id: "webhook_event_retry_check",
+      event_id: "minutes_watcher:min_watch_retry",
+      event_type: "minutes_watcher",
+      external_ref: "min_watch_retry"
+    });
+    expect(event.accepted).toBe(false);
+    expect(event.event).toMatchObject({ status: "processed", error: null });
+  });
+
+  it("marks minutes watcher item failed when generated cards cannot be sent", async () => {
+    const runner: LarkCliRunner = async (_bin, args) => {
+      if (args[0] === "minutes" && args[1] === "+search") {
+        return {
+          stdout: JSON.stringify({
+            items: [
+              {
+                token: "min_watch_card_fail",
+                title: "无人机操作方案初步访谈",
+                owner_id: "ou_card_fail_owner"
+              }
+            ]
+          }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "vc" && args[1] === "+notes") {
+        return {
+          stdout: JSON.stringify({ minutes: [{ content: "发卡失败场景的妙记内容。" }] }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "im" && args.includes("+messages-send")) {
+        throw new Error("temporary card send failure");
+      }
+      throw new Error(`unexpected lark-cli args: ${args.join(" ")}`);
+    };
+    const { repos } = createApp(createMinutesWatcherConfig(), runner);
+
+    await vi.waitFor(() => {
+      expect(repos.listCliRuns()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tool: "lark.im.send_card",
+            status: "failed"
+          })
+        ])
+      );
+    });
+    const event = repos.registerWebhookEvent({
+      id: "webhook_event_card_failed_check",
+      event_id: "minutes_watcher:min_watch_card_fail",
+      event_type: "minutes_watcher",
+      external_ref: "min_watch_card_fail"
+    });
+    expect(event.accepted).toBe(false);
+    expect(event.event.status).toBe("failed");
+    expect(event.event.error).toContain("minutes_watcher_card_send_failed");
+    expect(event.event.error).toContain("failed=");
+  });
+
+  it("marks minutes watcher item failed and does not send cards when notes fetch fails", async () => {
+    const runner: LarkCliRunner = async (_bin, args) => {
+      if (args[0] === "minutes" && args[1] === "+search") {
+        return {
+          stdout: JSON.stringify({
+            items: [
+              {
+                token: "min_watch_notes_fail",
+                title: "妙记读取失败会议",
+                owner_id: "ou_fail_owner"
+              }
+            ]
+          }),
+          stderr: ""
+        };
+      }
+      if (args[0] === "vc" && args[1] === "+notes") {
+        throw new Error("notes not ready");
+      }
+      throw new Error(`unexpected lark-cli args: ${args.join(" ")}`);
+    };
+    const { repos } = createApp(createMinutesWatcherConfig(), runner);
+
+    await vi.waitFor(() => {
+      expect(repos.listCliRuns()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tool: "lark.vc.notes",
+            status: "failed"
+          })
+        ])
+      );
+    });
+    const event = repos.registerWebhookEvent({
+      id: "webhook_event_failed_check",
+      event_id: "minutes_watcher:min_watch_notes_fail",
+      event_type: "minutes_watcher",
+      external_ref: "min_watch_notes_fail"
+    });
+    expect(event.accepted).toBe(false);
+    expect(event.event).toMatchObject({
+      status: "failed",
+      external_ref: "min_watch_notes_fail"
+    });
+    expect(repos.listMeetings()).toHaveLength(0);
+    expect(repos.listConfirmationRequests()).toHaveLength(0);
+    expect(repos.listCliRuns().filter((run) => run.tool === "lark.im.send_card")).toHaveLength(0);
   });
 });
