@@ -27,6 +27,23 @@ function currentLarkTimestamp() {
   return Math.floor(Date.now() / 1000).toString();
 }
 
+function goTimeString(date: Date, options: { offsetMinutes?: number; zone?: string } = {}) {
+  const offsetMinutes = options.offsetMinutes ?? 0;
+  const datePart = new Date(date.getTime() + offsetMinutes * 60 * 1000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+  const nanoseconds = date.getUTCMilliseconds().toString().padStart(3, "0").padEnd(9, "0");
+  const offsetSign = offsetMinutes < 0 ? "-" : "+";
+  const offsetAbsoluteMinutes = Math.abs(offsetMinutes);
+  const offsetHours = Math.floor(offsetAbsoluteMinutes / 60)
+    .toString()
+    .padStart(2, "0");
+  const offsetRemainderMinutes = (offsetAbsoluteMinutes % 60).toString().padStart(2, "0");
+  const zone = options.zone ?? "UTC";
+  return `${datePart}.${nanoseconds} ${offsetSign}${offsetHours}${offsetRemainderMinutes} ${zone} m=+1234.5678`;
+}
+
 function contentArg(args: string[]) {
   const contentIndex = args.indexOf("--content");
   expect(contentIndex).toBeGreaterThanOrEqual(0);
@@ -414,6 +431,518 @@ describe("POST /webhooks/feishu/card-action", () => {
     });
   });
 
+  it("accepts Feishu card-action callbacks with millisecond timestamps", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = Date.now().toString();
+    const nonce = "legacy-card-ms-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      toast: {
+        type: "error",
+        content: "确认请求不存在"
+      }
+    });
+  });
+
+  it("accepts Feishu card-action callbacks with Go time string timestamps signed as the raw header", async () => {
+    const verificationToken = "verification-token";
+    const { app, action } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: action.id,
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = goTimeString(new Date());
+    const nonce = "legacy-card-go-time-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "正在添加到飞书..."
+      },
+      card: expect.any(Object)
+    });
+  });
+
+  it("accepts Feishu card-action callbacks with Go time string CST timestamps signed as the raw header", async () => {
+    const verificationToken = "verification-token";
+    const { app, action } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: action.id,
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = goTimeString(new Date(), { offsetMinutes: 480, zone: "CST" });
+    const nonce = "legacy-card-go-time-cst-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "正在添加到飞书..."
+      },
+      card: expect.any(Object)
+    });
+  });
+
+  it("accepts Feishu card-action callbacks with ISO timestamps signed as the raw header", async () => {
+    const verificationToken = "verification-token";
+    const { app, action } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: action.id,
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = new Date().toISOString();
+    const nonce = "legacy-card-iso-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "正在添加到飞书..."
+      },
+      card: expect.any(Object)
+    });
+  });
+
+  it("accepts Feishu card-action callbacks with comma-joined duplicate timestamp headers", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const signedTimestamp = currentLarkTimestamp();
+    const timestamp = `${signedTimestamp}, ${signedTimestamp}`;
+    const nonce = "legacy-card-comma-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp: signedTimestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      toast: {
+        type: "error",
+        content: "确认请求不存在"
+      }
+    });
+  });
+
+  it("accepts Feishu card-action callbacks with ts-prefixed timestamp headers", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const signedTimestamp = currentLarkTimestamp();
+    const nonce = "legacy-card-ts-prefixed-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": `ts=${signedTimestamp}`,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp: signedTimestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      toast: {
+        type: "error",
+        content: "确认请求不存在"
+      }
+    });
+  });
+
+  it("accepts Feishu card-action callbacks with quoted and bracketed timestamp headers", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+
+    for (const [timestampHeader, nonce] of [
+      [`"${currentLarkTimestamp()}"`, "legacy-card-quoted-timestamp-nonce"],
+      [`[${currentLarkTimestamp()}]`, "legacy-card-bracketed-timestamp-nonce"]
+    ]) {
+      const signedTimestamp = timestampHeader.replace(/\D/g, "");
+      const response = await app.inject({
+        method: "POST",
+        url: "/webhooks/feishu/card-action",
+        headers: {
+          "x-lark-request-timestamp": timestampHeader,
+          "x-lark-request-nonce": nonce,
+          "x-lark-signature": signLegacyCardAction({
+            timestamp: signedTimestamp,
+            nonce,
+            body: payload,
+            verificationToken
+          })
+        },
+        payload
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        toast: {
+          type: "error",
+          content: "确认请求不存在"
+        }
+      });
+    }
+  });
+
+  it("accepts Feishu card-action callbacks with microsecond and nanosecond timestamps", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+
+    for (const [timestamp, nonce] of [
+      [(Date.now() * 1000).toString(), "legacy-card-microsecond-timestamp-nonce"],
+      [(Date.now() * 1_000_000).toString(), "legacy-card-nanosecond-timestamp-nonce"]
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/webhooks/feishu/card-action",
+        headers: {
+          "x-lark-request-timestamp": timestamp,
+          "x-lark-request-nonce": nonce,
+          "x-lark-signature": signLegacyCardAction({
+            timestamp,
+            nonce,
+            body: payload,
+            verificationToken
+          })
+        },
+        payload
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        toast: {
+          type: "error",
+          content: "确认请求不存在"
+        }
+      });
+    }
+  });
+
+  it("rejects wrapped Feishu card-action timestamps when no fresh epoch-like token is present", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const signedTimestamp = currentLarkTimestamp();
+    const timestamp = "ts=12345; version=2; port=443";
+    const nonce = "legacy-card-no-epoch-like-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp: signedTimestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
+  it("rejects fresh ISO Feishu card-action timestamps when the signature was not made with the raw header", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const signedTimestamp = currentLarkTimestamp();
+    const timestamp = new Date().toISOString();
+    const nonce = "legacy-card-iso-ish-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp: signedTimestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
+  it("rejects stale Go time string Feishu card-action timestamps", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = goTimeString(new Date(Date.now() - 301_000));
+    const nonce = "legacy-card-stale-go-time-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
+  it("rejects stale CST Go time string Feishu card-action timestamps", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const timestamp = goTimeString(new Date(Date.now() - 301_000), {
+      offsetMinutes: 480,
+      zone: "CST"
+    });
+    const nonce = "legacy-card-stale-cst-go-time-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
+  it("rejects comma-joined Feishu card-action timestamps when all candidates are stale", async () => {
+    const verificationToken = "verification-token";
+    const { app } = await createAppWithConfirmations(verificationToken);
+    const payload = {
+      open_id: "ou_test",
+      action: {
+        value: {
+          confirmation_id: "nonexistent",
+          action: "confirm"
+        }
+      }
+    };
+    const signedTimestamp = (Math.floor(Date.now() / 1000) - 301).toString();
+    const timestamp = `${signedTimestamp}, ${signedTimestamp}`;
+    const nonce = "legacy-card-stale-comma-timestamp-nonce";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      headers: {
+        "x-lark-request-timestamp": timestamp,
+        "x-lark-request-nonce": nonce,
+        "x-lark-signature": signLegacyCardAction({
+          timestamp: signedTimestamp,
+          nonce,
+          body: payload,
+          verificationToken
+        })
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "Invalid Lark webhook signature" });
+  });
+
   it("rejects invalid legacy Feishu card-action signatures", async () => {
     const { app } = await createAppWithConfirmations("verification-token");
 
@@ -546,12 +1075,15 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(confirmResponse.json()).toMatchObject({
       toast: {
         type: "success",
-        content: "已确认，处理完成"
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(confirmResponse.json().card)).toContain("已添加待办");
-    expect(repos.getConfirmationRequest(action.id)?.status).toBe("executed");
+    expect(JSON.stringify(confirmResponse.json().card)).toContain("正在添加到飞书");
+    expect(repos.getConfirmationRequest(action.id)?.status).toBe("confirmed");
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(action.id)?.status).toBe("executed");
+    });
 
     const rejectResponse = await app.inject({
       method: "POST",
@@ -649,12 +1181,15 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json()).toMatchObject({
       toast: {
         type: "success",
-        content: "已确认，处理完成"
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(response.json().card)).toContain("已添加待办");
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书");
 
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(action.id)?.status).toBe("executed");
+    });
     const updatedAction = repos.getActionItem(action.target_id);
     expect(updatedAction).toMatchObject({
       owner: "王五",
@@ -669,6 +1204,81 @@ describe("POST /webhooks/feishu/card-action", () => {
       due_date: "2026-05-02",
       priority: "P0"
     });
+  });
+
+  it("preserves existing edited payload when plain confirm has no edited fields", async () => {
+    const { app, repos, action } = await createAppWithConfirmations();
+    repos.updateConfirmationRequest({
+      id: action.id,
+      status: "edited",
+      edited_payload_json: JSON.stringify({
+        owner: "王五",
+        due_date: "2026-05-02",
+        priority: "P0"
+      }),
+      error: null
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/card-action",
+      payload: {
+        schema: "2.0",
+        header: {
+          event_type: "card.action.trigger"
+        },
+        event: {
+          operator: {
+            user_id: {
+              open_id: "ou_editor"
+            }
+          },
+          action: {
+            tag: "button",
+            value: {
+              confirmation_id: action.id,
+              action_key: "confirm"
+            }
+          }
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      toast: {
+        type: "success",
+        content: "正在添加到飞书..."
+      },
+      card: expect.any(Object)
+    });
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书");
+
+    expect(repos.getConfirmationRequest(action.id)).toMatchObject({
+      status: "confirmed",
+      edited_payload_json: JSON.stringify({
+        owner: "王五",
+        due_date: "2026-05-02",
+        priority: "P0"
+      })
+    });
+
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(action.id)?.status).toBe("executed");
+    });
+    expect(repos.getActionItem(action.target_id)).toMatchObject({
+      owner: "王五",
+      due_date: "2026-05-02",
+      priority: "P0",
+      confirmation_status: "created"
+    });
+    expect(JSON.parse(repos.getConfirmationRequest(action.id)?.edited_payload_json ?? "{}")).toEqual(
+      {
+        owner: "王五",
+        due_date: "2026-05-02",
+        priority: "P0"
+      }
+    );
   });
 
   it("adds missing-owner actions to the card recipient's personal todo", async () => {
@@ -693,14 +1303,17 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json()).toMatchObject({
       toast: {
         type: "success",
-        content: "已确认，处理完成"
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(response.json().card)).toContain("已添加待办");
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书");
     expect(JSON.stringify(response.json().card)).not.toContain("补全负责人");
     expect(JSON.stringify(response.json().card)).not.toContain('"tag":"select_person"');
 
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(confirmation.id)?.status).toBe("executed");
+    });
     expect(repos.getActionItem(confirmation.target_id)).toMatchObject({
       owner: "ou_organizer",
       confirmation_status: "created",
@@ -756,13 +1369,16 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json()).toMatchObject({
       toast: {
         type: "success",
-        content: "已确认，处理完成"
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(response.json().card)).toContain("已添加待办");
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书");
     expect(response.json().toast.type).not.toBe("error");
 
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(confirmation.id)?.status).toBe("executed");
+    });
     expect(repos.getActionItem(confirmation.target_id)).toMatchObject({
       owner: "ou_callback_user",
       confirmation_status: "created",
@@ -812,17 +1428,19 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       toast: {
-        type: "error",
-        content: expect.stringContaining("确认执行失败")
+        type: "success",
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(response.json().card)).toContain("添加失败");
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书");
 
-    expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
-      status: "failed",
-      error:
-        "Cannot create personal Feishu task: missing confirmation recipient open_id or card callback open_id"
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
+        status: "failed",
+        error:
+          "Cannot create personal Feishu task: missing confirmation recipient open_id or card callback open_id"
+      });
     });
     expect(repos.getActionItem(confirmation.target_id)).toMatchObject({
       owner: null,
@@ -883,15 +1501,17 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       toast: {
-        type: "error",
-        content: expect.stringContaining("确认执行失败")
+        type: "success",
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(response.json().card)).toContain("添加失败");
-    expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
-      status: "failed",
-      error: "Request type is not executable in current phase: archive_source"
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书");
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
+        status: "failed",
+        error: "Request type is not executable in current phase: archive_source"
+      });
     });
   });
 
@@ -919,8 +1539,10 @@ describe("POST /webhooks/feishu/card-action", () => {
 
     expect(JSON.stringify(response.json().card)).not.toContain("补全负责人");
     expect(JSON.stringify(response.json().card)).not.toContain('"tag":"select_person"');
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(confirmation.id)?.status).toBe("executed");
+    });
     expect(repos.getActionItem(confirmation.target_id)?.owner).toBe("ou_organizer");
-    expect(repos.getConfirmationRequest(confirmation.id)?.status).toBe("executed");
     const taskRuns = repos.listCliRuns().filter((run) => run.tool === "lark.task.create");
     expect(taskRuns).toHaveLength(1);
     expect(JSON.parse(taskRuns[0].args_json) as string[]).toEqual(
@@ -988,17 +1610,25 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(responseBody).toMatchObject({
       toast: {
         type: "success",
-        content: "已确认，处理完成"
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(responseBody.card)).toContain("已添加待办");
-    expect(JSON.stringify(responseBody.card)).not.toContain("正在添加到飞书");
+    expect(JSON.stringify(responseBody.card)).toContain("正在添加到飞书");
+    expect(JSON.stringify(responseBody.card)).not.toContain("已添加待办");
     expect(JSON.stringify(responseBody.card)).not.toContain("disabled");
     expect(
       responseBody.card.elements.find((element: { tag: string }) => element.tag === "action")
     ).toBeUndefined();
 
+    expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
+      status: "confirmed",
+      card_message_id: "om_original_card"
+    });
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(confirmation.id)?.status).toBe("executed");
+      expect(updateCalls).toHaveLength(1);
+    });
     expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
       status: "executed",
       card_message_id: "om_original_card"
@@ -1006,23 +1636,24 @@ describe("POST /webhooks/feishu/card-action", () => {
     const cardUpdateRuns = repos.listCliRuns().filter((run) => run.tool === "lark.im.update_card");
     expect(cardUpdateRuns).toHaveLength(1);
     expect(cardUpdateRuns.every((run) => run.status === "success")).toBe(true);
-    expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0]).toEqual(
-      expect.arrayContaining(["api", "POST", "/open-apis/interactive/v1/card/update", "--data"])
+      expect.arrayContaining(["api", "PATCH", "/open-apis/im/v1/messages/om_original_card", "--data"])
     );
     const updateData = JSON.parse(dataArg(updateCalls[0])) as {
-      token: string;
-      card: { config: unknown; elements: Array<{ tag: string }> };
+      content: string;
     };
-    expect(updateData.token).toBe("card_action_update_token");
-    expect(updateData.card.config).toMatchObject({ update_multi: true });
-    expect(JSON.stringify(updateData.card)).toContain("已添加待办");
-    expect(JSON.stringify(updateData.card)).toContain("飞书任务");
-    expect(JSON.stringify(updateData.card)).toContain(
+    const updatedCard = JSON.parse(updateData.content) as {
+      config: unknown;
+      elements: Array<{ tag: string }>;
+    };
+    expect(updatedCard.config).toMatchObject({ update_multi: true });
+    expect(JSON.stringify(updatedCard)).toContain("已添加待办");
+    expect(JSON.stringify(updatedCard)).toContain("飞书任务");
+    expect(JSON.stringify(updatedCard)).toContain(
       `mock://feishu/task/${confirmation.target_id}`
     );
-    expect(JSON.stringify(updateData.card)).not.toContain("disabled");
-    expect(updateData.card.elements.some((element) => element.tag === "action")).toBe(false);
+    expect(JSON.stringify(updatedCard)).not.toContain("disabled");
+    expect(updatedCard.elements.some((element) => element.tag === "action")).toBe(false);
     expect(updateCalls[0]).not.toContain("--params");
     expect(
       repos.listCliRuns().some((run) => run.tool === "lark.im.send_card_status_fallback")
@@ -1088,11 +1719,15 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.json()).toMatchObject({
       toast: {
         type: "success",
-        content: "已确认，处理完成"
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
 
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(confirmation.id)?.status).toBe("executed");
+      expect(updateCalls).toHaveLength(1);
+    });
     const executed = repos.getConfirmationRequest(confirmation.id);
     expect(executed).toMatchObject({
       status: "executed",
@@ -1104,18 +1739,19 @@ describe("POST /webhooks/feishu/card-action", () => {
         homepage_url: expect.stringContaining("mock://feishu/wiki/")
       }
     });
-    expect(updateCalls).toHaveLength(1);
     const updateData = JSON.parse(dataArg(updateCalls[0])) as {
-      token: string;
-      card: { config: unknown; elements: Array<{ tag: string }> };
+      content: string;
     };
-    const updatedCardJson = JSON.stringify(updateData.card);
-    expect(updateData.token).toBe("card_action_update_token");
+    const updatedCard = JSON.parse(updateData.content) as {
+      config: unknown;
+      elements: Array<{ tag: string }>;
+    };
+    const updatedCardJson = JSON.stringify(updatedCard);
     expect(updatedCardJson).toContain("已创建知识库");
     expect(updatedCardJson).toContain("知识库");
     expect(updatedCardJson).toContain("首页");
     expect(updatedCardJson).toContain("mock://feishu/wiki/");
-    expect(updateData.card.elements.some((element) => element.tag === "action")).toBe(false);
+    expect(updatedCard.elements.some((element) => element.tag === "action")).toBe(false);
   });
 
   it("falls back to a valid result card when final card update fails after execution failure", async () => {
@@ -1189,16 +1825,18 @@ describe("POST /webhooks/feishu/card-action", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       toast: {
-        type: "error",
-        content: expect.stringContaining("确认执行失败")
+        type: "success",
+        content: "正在添加到飞书..."
       },
       card: expect.any(Object)
     });
-    expect(JSON.stringify(response.json().card)).toContain("添加失败");
+    expect(JSON.stringify(response.json().card)).toContain("正在添加到飞书");
 
-    expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
-      status: "failed",
-      error: expect.stringContaining("lark.task.create failed")
+    await vi.waitFor(() => {
+      expect(repos.getConfirmationRequest(confirmation.id)).toMatchObject({
+        status: "failed",
+        error: expect.stringContaining("lark.task.create failed")
+      });
     });
     const runs = repos.listCliRuns();
     expect(runs.map((run) => run.tool)).toEqual([

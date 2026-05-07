@@ -84,9 +84,7 @@ describe("CardInteractionAgent", () => {
     expect(card.actions.map((action) => action.key)).toEqual([
       "confirm",
       "confirm_with_edits",
-      "reject",
-      "not_mine",
-      "remind_later"
+      "reject"
     ]);
     expect(card.actions.find((action) => action.key === "confirm")?.payload_template).toEqual({});
     expect(
@@ -144,9 +142,7 @@ describe("CardInteractionAgent", () => {
     expect(card.actions.map((action) => action.key)).toEqual([
       "confirm",
       "confirm_with_edits",
-      "reject",
-      "not_mine",
-      "remind_later"
+      "reject"
     ]);
     expect(card.status_text).toBe("负责人待补充，可在飞书任务中补齐后添加");
   });
@@ -188,9 +184,7 @@ describe("CardInteractionAgent", () => {
     expect(card.actions.map((action) => action.key)).toEqual([
       "confirm",
       "confirm_with_edits",
-      "reject",
-      "not_mine",
-      "remind_later"
+      "reject"
     ]);
     expect(JSON.stringify(card)).not.toContain("@确认待办");
     expect(JSON.stringify(card)).not.toContain("Henry");
@@ -235,8 +229,7 @@ describe("CardInteractionAgent", () => {
       "confirm",
       "confirm_with_edits",
       "reject",
-      "convert_to_task",
-      "remind_later"
+      "convert_to_task"
     ]);
     expect(card.actions.find((action) => action.key === "confirm")?.payload_template).toEqual({});
     expect(

@@ -134,9 +134,7 @@ describe("processMeetingWorkflow", () => {
     expect(actionPayload.card_preview?.actions.map((action) => action.key)).toEqual([
       "confirm",
       "confirm_with_edits",
-      "reject",
-      "not_mine",
-      "remind_later"
+      "reject"
     ]);
     expect(calendarPayload.draft).toBeTruthy();
     expect(calendarPayload.meeting_id).toBe(result.meeting_id);

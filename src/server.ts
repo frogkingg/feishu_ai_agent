@@ -16,7 +16,7 @@ import { LlmClient } from "./services/llm/llmClient";
 import { createDatabase } from "./services/store/db";
 import { ConfirmationRequestRow, MeetingRow, Repositories } from "./services/store/repositories";
 import { buildFeishuInteractiveCard, sendCard, syncConfirmationCardStatus } from "./tools/larkIm";
-import { type LarkCliRunner } from "./tools/larkCli";
+import { runLarkCli, type LarkCliRunner } from "./tools/larkCli";
 import { fetchTranscript } from "./tools/larkVc";
 import { nowIso } from "./utils/dates";
 import { createId } from "./utils/id";
@@ -49,12 +49,19 @@ const SendCardBodySchema = z
 
 const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
 const FeishuMeetingEndedEventType = "vc.meeting.all_meeting_ended_v1";
+const FeishuMeetingEndedAliasEventType = "vc.meeting.meeting_ended_v1";
+const FeishuRecordingEndedEventType = "vc.meeting.recording_ended_v1";
 const TranscriptPendingText = "【transcript pending - to be fetched via lark-cli vc +notes】";
 const CardActionConfirmedMessage = "已确认，处理完成";
 const CardActionSnoozedMessage = "好的，30 分钟后再提醒你";
 const RemindLaterDelayMinutes = 30;
-const TranscriptFetchTimeoutMs = 3000;
+const RecordingReadyTranscriptWaitMs = 0;
+const RecordingReadyTranscriptFetchTimeoutMs = 15000;
+const MeetingEndedTranscriptRetryDelaysMs = [60000, 240000, 300000, 120000] as const;
+const TestMeetingEndedTranscriptRetryDelaysMs = [0, 0, 0, 0] as const;
+const MeetingEndedTranscriptFetchTimeoutMs = 15000;
 const LarkSignatureFreshnessWindowSeconds = 5 * 60;
+const MinutesWatcherEventType = "minutes_watcher";
 
 const FeishuRecordingReadyEventSchema = z
   .object({
@@ -116,17 +123,117 @@ function getHeaderString(request: FastifyRequest, name: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function getLarkSignatureTimestampFailureReason(timestamp: string | null): string | null {
+function getLarkTimestampCandidates(timestamp: string | null): string[] {
   if (timestamp === null) {
-    return "missing_timestamp";
+    return [];
   }
 
-  if (!/^\d+$/.test(timestamp)) {
-    return "invalid_timestamp";
+  const trimmed = timestamp.trim();
+  if (trimmed.length === 0) {
+    return [];
   }
 
-  const timestampSeconds = Number(timestamp);
-  if (!Number.isSafeInteger(timestampSeconds)) {
+  const candidates = [trimmed];
+  const firstCommaToken = trimmed.split(",")[0]?.trim() ?? "";
+  if (/^\d+(?:\.\d+)?$/.test(firstCommaToken) && !candidates.includes(firstCommaToken)) {
+    candidates.push(firstCommaToken);
+  }
+
+  for (const match of trimmed.matchAll(/(?:^|[^\d])(\d{10,19}(?:\.\d+)?)(?!\d)/g)) {
+    const epochLikeToken = match[1];
+    if (epochLikeToken !== undefined && !candidates.includes(epochLikeToken)) {
+      candidates.push(epochLikeToken);
+    }
+  }
+
+  return candidates;
+}
+
+function parseStrictLarkDateTimeTimestampSeconds(timestamp: string): number | null {
+  const match = timestamp.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|\s*([+-])(\d{2})(?::?(\d{2})))(?:\s+[A-Z]{2,5})?(?:\s+m=[+-]?\d+(?:\.\d+)?)?$/
+  );
+  if (match === null) {
+    return null;
+  }
+
+  const [, yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue, fractionValue, offsetSign, offsetHourValue, offsetMinuteValue] =
+    match;
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+  const day = Number(dayValue);
+  const hour = Number(hourValue);
+  const minute = Number(minuteValue);
+  const second = Number(secondValue);
+  const millisecond = Number((fractionValue ?? "").padEnd(3, "0").slice(0, 3));
+  const offsetHour = offsetHourValue === undefined ? 0 : Number(offsetHourValue);
+  const offsetMinute = offsetMinuteValue === undefined ? 0 : Number(offsetMinuteValue);
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    return null;
+  }
+
+  const offsetDirection = offsetSign === "-" ? -1 : 1;
+  const offsetMilliseconds = offsetDirection * (offsetHour * 60 + offsetMinute) * 60 * 1000;
+  const timestampMilliseconds =
+    Date.UTC(year, month - 1, day, hour, minute, second, millisecond) - offsetMilliseconds;
+  const parsedDate = new Date(timestampMilliseconds + offsetMilliseconds);
+  if (
+    parsedDate.getUTCFullYear() !== year ||
+    parsedDate.getUTCMonth() !== month - 1 ||
+    parsedDate.getUTCDate() !== day ||
+    parsedDate.getUTCHours() !== hour ||
+    parsedDate.getUTCMinutes() !== minute ||
+    parsedDate.getUTCSeconds() !== second
+  ) {
+    return null;
+  }
+
+  const timestampSeconds = Math.floor(timestampMilliseconds / 1000);
+  return Number.isSafeInteger(timestampSeconds) ? timestampSeconds : null;
+}
+
+function getLarkTimestampFreshnessSeconds(timestamp: string): number | null {
+  const trimmed = timestamp.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    return parseStrictLarkDateTimeTimestampSeconds(trimmed);
+  }
+
+  const timestampNumber = Number(trimmed);
+  if (!Number.isFinite(timestampNumber)) {
+    return null;
+  }
+
+  const integerDigits = trimmed.split(".")[0]?.length ?? 0;
+  const timestampSeconds =
+    integerDigits >= 19
+      ? Math.floor(timestampNumber / 1_000_000_000)
+      : integerDigits >= 16
+        ? Math.floor(timestampNumber / 1_000_000)
+        : integerDigits >= 13
+          ? Math.floor(timestampNumber / 1000)
+          : Math.floor(timestampNumber);
+
+  return Number.isSafeInteger(timestampSeconds) ? timestampSeconds : null;
+}
+
+function getLarkTimestampCandidateFailureReason(timestamp: string): string {
+  const timestampSeconds = getLarkTimestampFreshnessSeconds(timestamp);
+  if (timestampSeconds === null) {
     return "invalid_timestamp";
   }
 
@@ -139,7 +246,88 @@ function getLarkSignatureTimestampFailureReason(timestamp: string | null): strin
     return "future_timestamp";
   }
 
+  return "fresh_timestamp";
+}
+
+function getFreshLarkTimestampCandidates(timestamp: string | null): string[] {
+  return getLarkTimestampCandidates(timestamp).filter(
+    (candidate) => getLarkTimestampCandidateFailureReason(candidate) === "fresh_timestamp"
+  );
+}
+
+function getLarkSignatureTimestampFailureReason(timestamp: string | null): string | null {
+  if (timestamp === null) {
+    return "missing_timestamp";
+  }
+
+  const candidateReasons = getLarkTimestampCandidates(timestamp).map(getLarkTimestampCandidateFailureReason);
+  if (candidateReasons.length === 0) {
+    return "invalid_timestamp";
+  }
+
+  if (candidateReasons.includes("fresh_timestamp")) {
+    return null;
+  }
+
+  if (candidateReasons.includes("stale_timestamp")) {
+    return "stale_timestamp";
+  }
+
+  if (candidateReasons.includes("future_timestamp")) {
+    return "future_timestamp";
+  }
+
+  if (candidateReasons.includes("invalid_timestamp")) {
+    return "invalid_timestamp";
+  }
+
   return null;
+}
+
+function describeLarkTimestampShape(timestamp: string | null): Record<string, unknown> {
+  const prefixClass = (() => {
+    if (timestamp === null || timestamp.length === 0) {
+      return "missing";
+    }
+
+    const firstCharacter = timestamp.trimStart()[0];
+    if (firstCharacter === undefined) {
+      return "missing";
+    }
+    if (/\d/.test(firstCharacter)) {
+      return "digit";
+    }
+    if (/[A-Za-z]/.test(firstCharacter)) {
+      return "alpha";
+    }
+    if (firstCharacter === '"' || firstCharacter === "'") {
+      return "quote";
+    }
+    if ("[]{}()".includes(firstCharacter)) {
+      return "bracket";
+    }
+    return "other";
+  })();
+
+  return {
+    timestamp_length: timestamp?.length ?? 0,
+    timestamp_digit_run_lengths:
+      timestamp === null
+        ? []
+        : Array.from(timestamp.matchAll(/\d+/g), (match) => match[0].length).slice(0, 8),
+    timestamp_has_alpha: timestamp === null ? false : /[A-Za-z]/.test(timestamp),
+    timestamp_has_colon: timestamp?.includes(":") ?? false,
+    timestamp_has_dash: timestamp?.includes("-") ?? false,
+    timestamp_has_t: timestamp === null ? false : /t/i.test(timestamp),
+    timestamp_has_z: timestamp === null ? false : /z/i.test(timestamp),
+    timestamp_has_dot: timestamp?.includes(".") ?? false,
+    timestamp_has_comma: timestamp?.includes(",") ?? false,
+    timestamp_has_equals: timestamp?.includes("=") ?? false,
+    timestamp_has_quote: timestamp === null ? false : /["']/.test(timestamp),
+    timestamp_has_bracket: timestamp === null ? false : /[\[\]{}()]/.test(timestamp),
+    timestamp_has_space: timestamp === null ? false : /\s/.test(timestamp),
+    timestamp_prefix_class: prefixClass
+  };
 }
 
 function isLarkSignatureValid(input: {
@@ -156,32 +344,39 @@ function isLarkSignatureValid(input: {
     return false;
   }
 
-  if (getLarkSignatureTimestampFailureReason(timestamp) !== null) {
+  const timestampCandidates = getFreshLarkTimestampCandidates(timestamp);
+  if (timestampCandidates.length === 0) {
     return false;
   }
 
-  if (input.encryptKey) {
-    return verifyLarkWebhookSignature({
-      timestamp,
-      nonce,
-      body: input.body,
-      verificationToken: input.encryptKey,
-      signature
-    });
+  const encryptKey = input.encryptKey;
+  if (encryptKey) {
+    return timestampCandidates.some((timestampCandidate) =>
+      verifyLarkWebhookSignature({
+        timestamp: timestampCandidate,
+        nonce,
+        body: input.body,
+        verificationToken: encryptKey,
+        signature
+      })
+    );
   }
 
   if (input.verificationToken === null) {
     return false;
   }
+  const verificationToken = input.verificationToken;
 
   // Compatibility for old local fixtures. Production Feishu webhook signatures use Encrypt Key.
-  return verifyLarkWebhookSignature({
-    timestamp,
-    nonce,
-    body: input.body,
-    verificationToken: input.verificationToken,
-    signature
-  });
+  return timestampCandidates.some((timestampCandidate) =>
+    verifyLarkWebhookSignature({
+      timestamp: timestampCandidate,
+      nonce,
+      body: input.body,
+      verificationToken,
+      signature
+    })
+  );
 }
 
 function isLarkCardActionSignatureValid(input: {
@@ -199,18 +394,22 @@ function isLarkCardActionSignatureValid(input: {
     return false;
   }
 
-  if (getLarkSignatureTimestampFailureReason(timestamp) !== null) {
+  const timestampCandidates = getFreshLarkTimestampCandidates(timestamp);
+  if (timestampCandidates.length === 0) {
     return false;
   }
 
-  if (input.encryptKey) {
-    const encryptKeySignatureValid = verifyLarkWebhookSignature({
-      timestamp,
-      nonce,
-      body: input.rawBody,
-      verificationToken: input.encryptKey,
-      signature
-    });
+  const encryptKey = input.encryptKey;
+  if (encryptKey) {
+    const encryptKeySignatureValid = timestampCandidates.some((timestampCandidate) =>
+      verifyLarkWebhookSignature({
+        timestamp: timestampCandidate,
+        nonce,
+        body: input.rawBody,
+        verificationToken: encryptKey,
+        signature
+      })
+    );
     if (encryptKeySignatureValid) {
       return true;
     }
@@ -219,26 +418,31 @@ function isLarkCardActionSignatureValid(input: {
   if (input.verificationToken === null) {
     return false;
   }
+  const verificationToken = input.verificationToken;
 
   if (
-    verifyLarkWebhookSignature({
-      timestamp,
-      nonce,
-      body: input.rawBody,
-      verificationToken: input.verificationToken,
-      signature
-    })
+    timestampCandidates.some((timestampCandidate) =>
+      verifyLarkWebhookSignature({
+        timestamp: timestampCandidate,
+        nonce,
+        body: input.rawBody,
+        verificationToken,
+        signature
+      })
+    )
   ) {
     return true;
   }
 
-  return verifyLarkCardActionSignature({
-    timestamp,
-    nonce,
-    body: input.body,
-    verificationToken: input.verificationToken,
-    signature
-  });
+  return timestampCandidates.some((timestampCandidate) =>
+    verifyLarkCardActionSignature({
+      timestamp: timestampCandidate,
+      nonce,
+      body: input.body,
+      verificationToken,
+      signature
+    })
+  );
 }
 
 function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, unknown> {
@@ -246,11 +450,15 @@ function getLarkSignatureDiagnostics(request: FastifyRequest): Record<string, un
   const nonce = getHeaderString(request, "x-lark-request-nonce");
   const signature = getHeaderString(request, "x-lark-signature");
   const timestampFailureReason = getLarkSignatureTimestampFailureReason(timestamp);
+  const timestampCandidates = getLarkTimestampCandidates(timestamp);
 
   return {
     has_timestamp: timestamp !== null,
     has_nonce: nonce !== null,
     has_signature: signature !== null,
+    ...describeLarkTimestampShape(timestamp),
+    timestamp_candidate_count: timestampCandidates.length,
+    timestamp_failure_reason: timestampFailureReason,
     reason:
       timestampFailureReason ??
       (nonce === null
@@ -381,6 +589,18 @@ function getFeishuEventId(payload: FeishuEventWebhookPayload): string | null {
     valueAtPath(payload, ["event", "event_id"]),
     payload.event_id
   ]);
+}
+
+function isFeishuMeetingEndedEvent(eventType: string | null): eventType is string {
+  return (
+    eventType === FeishuMeetingEndedEventType ||
+    eventType === FeishuMeetingEndedAliasEventType ||
+    eventType === FeishuRecordingEndedEventType
+  );
+}
+
+function isFeishuMeetingWorkflowEvent(eventType: string | null): eventType is string {
+  return eventType === FeishuRecordingReadyEventType || isFeishuMeetingEndedEvent(eventType);
 }
 
 type ToastType = "info" | "success" | "error";
@@ -590,6 +810,12 @@ function firstRecord(values: Array<Record<string, unknown> | null>): Record<stri
   return values.find((value): value is Record<string, unknown> => value !== null) ?? {};
 }
 
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => asRecord(item) !== null)
+    : [];
+}
+
 function isTemplatePlaceholder(value: unknown): boolean {
   return typeof value === "string" && value.trim().startsWith("$");
 }
@@ -788,6 +1014,343 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
   }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchTranscriptForMeetingEvent(input: {
+  repos: Repositories;
+  config: AppConfig;
+  eventType: string;
+  externalMeetingId: string;
+  title: string;
+  minuteToken: string | null;
+  runner?: LarkCliRunner;
+  log: FastifyRequest["log"];
+}): Promise<{
+  transcript: string;
+  attempts: number;
+  pending: boolean;
+  error: string | null;
+}> {
+  const isMeetingEnded = isFeishuMeetingEndedEvent(input.eventType);
+  const retryDelays = isMeetingEnded
+    ? input.config.nodeEnv === "test"
+      ? TestMeetingEndedTranscriptRetryDelaysMs
+      : MeetingEndedTranscriptRetryDelaysMs
+    : ([RecordingReadyTranscriptWaitMs] as const);
+  const timeoutMs = isMeetingEnded
+    ? MeetingEndedTranscriptFetchTimeoutMs
+    : RecordingReadyTranscriptFetchTimeoutMs;
+  let lastError: string | null = null;
+
+  for (let index = 0; index < retryDelays.length; index += 1) {
+    const waitMs = retryDelays[index] ?? 0;
+    await delay(waitMs);
+
+    try {
+      const transcript = await withTimeout(
+        fetchTranscript({
+          repos: input.repos,
+          config: input.config,
+          meetingId: input.externalMeetingId,
+          title: input.title,
+          minuteToken: input.minuteToken,
+          runner: input.runner
+        }),
+        timeoutMs,
+        TranscriptPendingText
+      );
+
+      if (transcript !== TranscriptPendingText) {
+        return {
+          transcript,
+          attempts: index + 1,
+          pending: false,
+          error: null
+        };
+      }
+
+      lastError = "transcript_fetch_timeout";
+      input.log.warn(
+        {
+          event_type: input.eventType,
+          external_meeting_id: input.externalMeetingId,
+          attempt: index + 1,
+          attempts: retryDelays.length,
+          timeout_ms: timeoutMs
+        },
+        "transcript fetch timed out for feishu meeting event"
+      );
+    } catch (error) {
+      lastError = briefError(error);
+      input.log.warn(
+        {
+          err: error,
+          event_type: input.eventType,
+          external_meeting_id: input.externalMeetingId,
+          attempt: index + 1,
+          attempts: retryDelays.length
+        },
+        "failed to fetch transcript for feishu meeting event"
+      );
+    }
+
+    if (!isMeetingEnded) {
+      return {
+        transcript: TranscriptPendingText,
+        attempts: index + 1,
+        pending: true,
+        error: lastError
+      };
+    }
+  }
+
+  return {
+    transcript: TranscriptPendingText,
+    attempts: retryDelays.length,
+    pending: true,
+    error: lastError
+  };
+}
+
+type MinutesWatcherItem = {
+  minuteToken: string;
+  title: string;
+  minutesUrl: string | null;
+  owner: string | null;
+  createdAt: string | null;
+};
+
+function minutesWatcherEventId(minuteToken: string): string {
+  return `${MinutesWatcherEventType}:${minuteToken}`;
+}
+
+function minutesSearchRecords(parsed: unknown): Record<string, unknown>[] {
+  const root = asRecord(parsed);
+  const data = asRecord(root?.data);
+  const candidates = [
+    root?.items,
+    data?.items,
+    root?.minutes,
+    data?.minutes,
+    root?.results,
+    data?.results
+  ];
+
+  for (const candidate of candidates) {
+    const records = recordArray(candidate);
+    if (records.length > 0) {
+      return records;
+    }
+  }
+
+  return [];
+}
+
+function minutesWatcherItemFromRecord(record: Record<string, unknown>): MinutesWatcherItem | null {
+  const ownerRecord = firstRecord([asRecord(record.owner), asRecord(record.owner_id)]);
+  const minuteToken = firstString([
+    record.token,
+    record.minute_token,
+    record.minuteToken,
+    record.id
+  ]);
+  if (minuteToken === null) {
+    return null;
+  }
+
+  return {
+    minuteToken,
+    title:
+      firstString([record.title, record.topic, record.name]) ?? `Feishu minutes ${minuteToken}`,
+    minutesUrl: firstString([record.url, record.minutes_url, record.minute_url]),
+    owner:
+      firstString([
+        record.owner_id,
+        record.owner_user_id,
+        valueAtPath(ownerRecord, ["open_id"]),
+        valueAtPath(ownerRecord, ["user_id"])
+      ]) ?? null,
+    createdAt:
+      firstString([record.create_time, record.created_at, record.start_time, record.end_time]) ??
+      null
+  };
+}
+
+async function searchRecentMinutes(input: {
+  repos: Repositories;
+  config: AppConfig;
+  runner?: LarkCliRunner;
+}): Promise<MinutesWatcherItem[]> {
+  const end = new Date();
+  const start = new Date(
+    end.getTime() - input.config.feishuMinutesWatcherLookbackMinutes * 60 * 1000
+  );
+  const result = await runLarkCli(
+    [
+      "minutes",
+      "+search",
+      "--start",
+      start.toISOString(),
+      "--end",
+      end.toISOString(),
+      "--page-size",
+      String(input.config.feishuMinutesWatcherPageSize),
+      "--format",
+      "json",
+      "--as",
+      "user"
+    ],
+    {
+      repos: input.repos,
+      config: input.config,
+      toolName: "lark.minutes.search",
+      dryRun: input.config.feishuReadDryRun,
+      expectJson: true,
+      runner: input.runner
+    }
+  );
+
+  if (result.status === "failed") {
+    throw new Error(`lark.minutes.search failed: ${result.error ?? "unknown error"}`);
+  }
+
+  return minutesSearchRecords(result.parsed)
+    .map(minutesWatcherItemFromRecord)
+    .filter((item): item is MinutesWatcherItem => item !== null);
+}
+
+async function processMinutesWatcherItem(input: {
+  repos: Repositories;
+  config: AppConfig;
+  llm: LlmClient;
+  item: MinutesWatcherItem;
+  runner?: LarkCliRunner;
+  log: FastifyInstance["log"];
+}): Promise<void> {
+  const eventId = minutesWatcherEventId(input.item.minuteToken);
+  const registered = input.repos.registerWebhookEvent({
+    id: createId("webhook_event"),
+    event_id: eventId,
+    event_type: MinutesWatcherEventType,
+    external_ref: input.item.minuteToken
+  });
+
+  if (!registered.accepted) {
+    if (registered.event.status === "processed" || registered.event.status === "processing") {
+      input.log.info(
+        {
+          event_id: eventId,
+          minute_token: input.item.minuteToken,
+          status: registered.event.status
+        },
+        "skipped minutes watcher item"
+      );
+      return;
+    }
+
+    input.repos.updateWebhookEventStatus({
+      event_id: eventId,
+      status: "processing",
+      error: null
+    });
+  }
+
+  try {
+    const transcript = await fetchTranscript({
+      repos: input.repos,
+      config: input.config,
+      meetingId: input.item.minuteToken,
+      title: input.item.title,
+      minuteToken: input.item.minuteToken,
+      runner: input.runner
+    });
+    const result = await processMeetingWorkflow({
+      repos: input.repos,
+      llm: input.llm,
+      sourceRetrievalEnabled: input.config.llmProvider !== "mock",
+      meeting: {
+        external_meeting_id: `minute:${input.item.minuteToken}`,
+        title: input.item.title,
+        participants: input.item.owner === null ? [] : [input.item.owner],
+        organizer: input.item.owner,
+        started_at: input.item.createdAt,
+        ended_at: null,
+        minutes_url: input.item.minutesUrl,
+        transcript_text: transcript
+      }
+    });
+    const cardSendResults = await sendGeneratedConfirmationCards({
+      repos: input.repos,
+      config: input.config,
+      confirmationIds: result.confirmation_requests,
+      sendToChatId: input.config.feishuEventCardChatId,
+      forceChatDestination: Boolean(input.config.feishuEventCardChatId),
+      runner: input.runner
+    });
+    const skippedCardSends = result.confirmation_requests.length - cardSendResults.length;
+    const failedCardSends = cardSendResults.filter((item) => !item.ok).length;
+    if (result.confirmation_requests.length > 0 && (skippedCardSends > 0 || failedCardSends > 0)) {
+      throw new Error(
+        `minutes_watcher_card_send_failed: skipped=${skippedCardSends} failed=${failedCardSends}`
+      );
+    }
+
+    input.repos.updateWebhookEventStatus({
+      event_id: eventId,
+      status: "processed",
+      error: null
+    });
+    input.log.info(
+      {
+        event_id: eventId,
+        minute_token: input.item.minuteToken,
+        meeting_id: result.meeting_id,
+        confirmation_requests: result.confirmation_requests.length,
+        card_send_results: cardSendResults.length,
+        card_send_failed: failedCardSends
+      },
+      "processed minutes watcher item"
+    );
+  } catch (error) {
+    const message = briefError(error).slice(0, 500);
+    input.repos.updateWebhookEventStatus({
+      event_id: eventId,
+      status: "failed",
+      error: message
+    });
+    input.log.warn(
+      {
+        event_id: eventId,
+        minute_token: input.item.minuteToken,
+        err: error
+      },
+      "failed minutes watcher item"
+    );
+  }
+}
+
+async function runMinutesWatcherOnce(input: {
+  repos: Repositories;
+  config: AppConfig;
+  llm: LlmClient;
+  runner?: LarkCliRunner;
+  log: FastifyInstance["log"];
+}): Promise<void> {
+  const items = await searchRecentMinutes(input);
+  for (const item of items) {
+    await processMinutesWatcherItem({
+      repos: input.repos,
+      config: input.config,
+      llm: input.llm,
+      item,
+      runner: input.runner,
+      log: input.log
+    });
+  }
+}
+
 function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest"]>) {
   if (request === null) {
     return null;
@@ -842,19 +1405,94 @@ async function syncCardStatusForRequest(input: {
   updateToken?: string | null;
   messageId?: string | null;
   chatId?: string | null;
+  statusText?: string;
   runner?: LarkCliRunner;
 }) {
   const latest = input.repos.getConfirmationRequest(input.request.id) ?? input.request;
+  const card = buildConfirmationCardFromRequest(latest, { repos: input.repos });
+  if (input.statusText !== undefined) {
+    card.status_text = input.statusText;
+  }
+
   return syncConfirmationCardStatus({
     repos: input.repos,
     config: input.config,
     confirmation: latest,
-    card: buildConfirmationCardFromRequest(latest, { repos: input.repos }),
+    card,
     updateToken: input.updateToken,
     messageId: input.messageId,
     chatId: input.chatId,
     runner: input.runner
   });
+}
+
+async function syncDevTerminalCardStatus(input: {
+  log: FastifyRequest["log"];
+  repos: Repositories;
+  config: AppConfig;
+  request: ConfirmationRequestRow;
+  runner?: LarkCliRunner;
+}) {
+  if (!input.request.card_message_id) {
+    return {
+      ok: true,
+      skipped: true,
+      method: "skipped",
+      status: "skipped",
+      dry_run: input.config.feishuCardSendDryRun,
+      update_cli_run_id: null,
+      fallback_cli_run_id: null,
+      card_message_id: null,
+      recipient: input.request.recipient,
+      chat_id: null,
+      error: null
+    };
+  }
+
+  try {
+    const result = await syncCardStatusForRequest({
+      repos: input.repos,
+      config: input.config,
+      request: input.request,
+      messageId: input.request.card_message_id,
+      statusText: input.request.status === "rejected" ? "已拒绝" : undefined,
+      runner: input.runner
+    });
+
+    if (!result.ok) {
+      input.log.warn(
+        cardStatusLogContext({
+          confirmationId: input.request.id,
+          phase: "dev_terminal",
+          result
+        }),
+        "dev confirmation card status update failed"
+      );
+    }
+
+    return {
+      ...result,
+      skipped: false
+    };
+  } catch (error) {
+    input.log.warn(
+      { err: error, confirmation_id: input.request.id },
+      "dev confirmation card status update threw after terminal transition"
+    );
+    return {
+      ok: false,
+      skipped: false,
+      method: "error",
+      status: "failed",
+      dry_run: input.config.feishuCardSendDryRun,
+      update_cli_run_id: null,
+      fallback_cli_run_id: null,
+      card_message_id: input.request.card_message_id,
+      recipient: input.request.recipient,
+      chat_id: null,
+      error: briefError(error)
+    };
+  }
 }
 
 function sendCardStatusCode(result: { ok: boolean; error: string | null }): number {
@@ -1028,6 +1666,44 @@ export function buildServer(input: {
   });
   configureJsonBodyParser(app);
   logSecurityMode(app, input.config);
+  let minutesWatcherRunning = false;
+  let minutesWatcherInterval: NodeJS.Timeout | null = null;
+
+  const runConfiguredMinutesWatcher = () => {
+    if (minutesWatcherRunning) {
+      return;
+    }
+    minutesWatcherRunning = true;
+    void runMinutesWatcherOnce({
+      repos: input.repos,
+      config: input.config,
+      llm: input.llm,
+      runner: input.larkCliRunner,
+      log: app.log
+    })
+      .catch((error) => {
+        app.log.warn({ err: error }, "minutes watcher run failed");
+      })
+      .finally(() => {
+        minutesWatcherRunning = false;
+      });
+  };
+
+  if (input.config.feishuMinutesWatcherEnabled) {
+    minutesWatcherInterval = setInterval(
+      runConfiguredMinutesWatcher,
+      input.config.feishuMinutesWatcherIntervalMs
+    );
+    minutesWatcherInterval.unref();
+    setImmediate(runConfiguredMinutesWatcher);
+  }
+
+  app.addHook("onClose", async () => {
+    if (minutesWatcherInterval !== null) {
+      clearInterval(minutesWatcherInterval);
+      minutesWatcherInterval = null;
+    }
+  });
 
   app.addHook("onRequest", async (request, reply) => {
     if (!requiresDevApiKey(request.url)) {
@@ -1073,6 +1749,10 @@ export function buildServer(input: {
       task_create_dry_run: input.config.feishuTaskCreateDryRun,
       calendar_create_dry_run: input.config.feishuCalendarCreateDryRun,
       knowledge_write_dry_run: input.config.feishuKnowledgeWriteDryRun,
+      minutes_watcher_enabled: input.config.feishuMinutesWatcherEnabled,
+      minutes_watcher_interval_ms: input.config.feishuMinutesWatcherIntervalMs,
+      minutes_watcher_lookback_minutes: input.config.feishuMinutesWatcherLookbackMinutes,
+      minutes_watcher_page_size: input.config.feishuMinutesWatcherPageSize,
       llm_provider: input.config.llmProvider,
       sqlite_path: input.config.sqlitePath
     };
@@ -1159,7 +1839,8 @@ export function buildServer(input: {
     const eventType = getFeishuEventType(payload);
     request.log.info({ event_type: eventType }, "received feishu event webhook");
 
-    if (eventType === FeishuRecordingReadyEventType || eventType === FeishuMeetingEndedEventType) {
+    if (isFeishuMeetingWorkflowEvent(eventType)) {
+      const meetingEventType = eventType;
       const event = FeishuRecordingReadyEventSchema.parse(payload.event ?? {});
       const eventRecord = asRecord(event) ?? {};
       const meetingRecord = firstRecord([
@@ -1208,15 +1889,29 @@ export function buildServer(input: {
           eventRecord.minutes_url,
           eventRecord.minute_url,
           eventRecord.meeting_url,
+          eventRecord.url,
           meetingRecord.minutes_url,
           meetingRecord.minute_url,
           meetingRecord.url,
           valueAtPath(event, ["recording", "url"])
         ]) ?? null;
+      const fallbackTimeRef =
+        firstString([
+          valueAtPath(payload, ["header", "create_time"]),
+          valueAtPath(payload, ["event", "create_time"]),
+          valueAtPath(payload, ["event", "start_time"]),
+          valueAtPath(payload, ["event", "end_time"]),
+          eventRecord.create_time,
+          eventRecord.start_time,
+          eventRecord.end_time,
+          meetingRecord.create_time,
+          meetingRecord.start_time,
+          meetingRecord.end_time
+        ]) ?? "no_time";
       const webhookEventId =
         getFeishuEventId(payload) ??
-        (eventType !== null && externalMeetingRef !== null
-          ? `${eventType}:${externalMeetingRef}`
+        (externalMeetingRef !== null
+          ? `${meetingEventType}:${externalMeetingRef}:${fallbackTimeRef}`
           : null);
 
       if (webhookEventId === null) {
@@ -1248,29 +1943,52 @@ export function buildServer(input: {
         return reply.code(202).send({ accepted: true, duplicate: true });
       }
 
-      // 会议结束后需要更长时间等待妙记生成
-      const waitMs = eventType === FeishuMeetingEndedEventType ? 15000 : 5000;
-
       void (async () => {
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        const transcript = await withTimeout(
-          fetchTranscript({
-            repos: input.repos,
-            config: input.config,
-            meetingId: externalMeetingId,
-            title,
-            minuteToken,
-            runner: input.larkCliRunner
-          }).catch((error) => {
-            request.log.warn(
-              { err: error, external_meeting_id: externalMeetingId },
-              "failed to fetch transcript for feishu event; using fallback text"
-            );
-            return TranscriptPendingText;
-          }),
-          TranscriptFetchTimeoutMs,
-          TranscriptPendingText
-        );
+        const transcriptResult = await fetchTranscriptForMeetingEvent({
+          repos: input.repos,
+          config: input.config,
+          eventType: meetingEventType,
+          externalMeetingId,
+          title,
+          minuteToken,
+          runner: input.larkCliRunner,
+          log: request.log
+        });
+
+        if (isFeishuMeetingEndedEvent(meetingEventType) && transcriptResult.pending) {
+          input.repos.updateWebhookEventStatus({
+            event_id: webhookEventId,
+            status: "failed",
+            error: `pending_transcript_after_retries: ${
+              transcriptResult.error ?? "transcript unavailable"
+            }`.slice(0, 500)
+          });
+          request.log.warn(
+            {
+              event_type: eventType,
+              event_id: webhookEventId,
+              external_meeting_id: externalMeetingId,
+              attempts: transcriptResult.attempts,
+              error: transcriptResult.error
+            },
+            "deferred meeting-ended event until transcript is ready"
+          );
+          return;
+        }
+
+        const transcript = transcriptResult.transcript;
+        if (transcriptResult.pending) {
+          request.log.warn(
+            {
+              event_type: eventType,
+              event_id: webhookEventId,
+              external_meeting_id: externalMeetingId,
+              attempts: transcriptResult.attempts,
+              error: transcriptResult.error
+            },
+            "using fallback transcript for recording-ready event"
+          );
+        }
 
         const result = await processMeetingWorkflow({
           repos: input.repos,
@@ -1471,96 +2189,114 @@ export function buildServer(input: {
       }
 
       if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        try {
-          const execution = await confirmRequest({
-            repos: input.repos,
-            config: input.config,
-            id: requestId,
-            editedPayload: parsed.editedPayload,
-            actorOpenId: parsed.actorOpenId,
-            allowPreconfirmed: true,
-            runner: input.larkCliRunner
-          });
+        const editedPayloadJson =
+          parsed.editedPayload === undefined
+            ? confirmation.edited_payload_json
+            : JSON.stringify(parsed.editedPayload);
+        input.repos.updateConfirmationRequest({
+          id: requestId,
+          status: "confirmed",
+          edited_payload_json: editedPayloadJson,
+          confirmed_at: nowIso(),
+          error: null
+        });
+        const confirmed = input.repos.getConfirmationRequest(requestId) ?? {
+          ...confirmation,
+          status: "confirmed",
+          edited_payload_json: editedPayloadJson,
+          confirmed_at: nowIso(),
+          error: null
+        };
 
-          try {
-            const finalUpdate = await syncCardStatusForRequest({
-              repos: input.repos,
-              config: input.config,
-              request: execution.confirmation,
-              updateToken: parsed.updateToken,
-              messageId: parsed.messageId,
-              chatId: parsed.chatId,
-              runner: input.larkCliRunner
-            });
-            if (!finalUpdate.ok) {
-              request.log.warn(
-                cardStatusLogContext({
-                  confirmationId: requestId,
-                  phase: "final",
-                  result: finalUpdate
-                }),
-                "card status update fell back or failed after execution"
+        setImmediate(() => {
+          void (async () => {
+            try {
+              const execution = await confirmRequest({
+                repos: input.repos,
+                config: input.config,
+                id: requestId,
+                editedPayload: parsed.editedPayload,
+                actorOpenId: parsed.actorOpenId,
+                allowPreconfirmed: true,
+                runner: input.larkCliRunner
+              });
+
+              try {
+                const finalUpdate = await syncCardStatusForRequest({
+                  repos: input.repos,
+                  config: input.config,
+                  request: execution.confirmation,
+                  messageId: parsed.messageId,
+                  chatId: parsed.chatId,
+                  runner: input.larkCliRunner
+                });
+                if (!finalUpdate.ok) {
+                  request.log.warn(
+                    cardStatusLogContext({
+                      confirmationId: requestId,
+                      phase: "final",
+                      result: finalUpdate
+                    }),
+                    "card status update fell back or failed after execution"
+                  );
+                }
+              } catch (error) {
+                request.log.warn(
+                  { err: error, confirmation_id: requestId },
+                  "card status update failed after execution"
+                );
+              }
+
+              if (execution.confirmation.status === "failed") {
+                request.log.error(
+                  {
+                    confirmation_id: requestId,
+                    error: execution.confirmation.error
+                  },
+                  "confirm failed asynchronously"
+                );
+              }
+            } catch (error) {
+              input.repos.updateConfirmationRequest({
+                id: requestId,
+                status: "failed",
+                error: briefError(error)
+              });
+              const failed = input.repos.getConfirmationRequest(requestId) ?? confirmed;
+              let finalUpdate: Awaited<ReturnType<typeof syncCardStatusForRequest>> | null = null;
+              try {
+                finalUpdate = await syncCardStatusForRequest({
+                  repos: input.repos,
+                  config: input.config,
+                  request: failed,
+                  messageId: parsed.messageId,
+                  chatId: parsed.chatId,
+                  runner: input.larkCliRunner
+                });
+              } catch (syncError) {
+                request.log.warn(
+                  { err: syncError, confirmation_id: requestId },
+                  "card status update failed after confirm failure"
+                );
+              }
+              request.log.error(
+                {
+                  err: error,
+                  confirmation_id: requestId,
+                  card_status_method: finalUpdate?.method ?? null,
+                  card_status_ok: finalUpdate?.ok ?? false
+                },
+                "confirm failed asynchronously"
               );
             }
-          } catch (error) {
-            request.log.warn(
-              { err: error, confirmation_id: requestId },
-              "card status update failed after execution"
-            );
-          }
+          })();
+        });
 
-          if (execution.confirmation.status === "failed") {
-            return cardCallbackResponse({
-              type: "error",
-              content: `确认执行失败：${execution.confirmation.error ?? "unknown error"}`,
-              confirmation: execution.confirmation
-            });
-          }
-
-          return cardCallbackResponse({
-            type: "success",
-            content: CardActionConfirmedMessage,
-            confirmation: execution.confirmation
-          });
-        } catch (error) {
-          input.repos.updateConfirmationRequest({
-            id: requestId,
-            status: "failed",
-            error: briefError(error)
-          });
-          const failed = input.repos.getConfirmationRequest(requestId) ?? confirmation;
-          let finalUpdate: Awaited<ReturnType<typeof syncCardStatusForRequest>> | null = null;
-          try {
-            finalUpdate = await syncCardStatusForRequest({
-              repos: input.repos,
-              config: input.config,
-              request: failed,
-              updateToken: parsed.updateToken,
-              messageId: parsed.messageId,
-              chatId: parsed.chatId,
-              runner: input.larkCliRunner
-            });
-          } catch (syncError) {
-            request.log.warn(
-              { err: syncError, confirmation_id: requestId },
-              "card status update failed after confirm failure"
-            );
-          }
-          request.log.error(
-            {
-              err: error,
-              confirmation_id: requestId,
-              card_status_method: finalUpdate?.method ?? null,
-              card_status_ok: finalUpdate?.ok ?? false
-            },
-            "confirm failed"
-          );
-          return cardCallbackResponse({
-            type: "error",
-            content: `确认执行失败：${failed.error ?? briefError(error)}`,
-            confirmation: failed
-          });
-        }
+        return cardCallbackResponse({
+          type: "success",
+          content: "正在添加到飞书...",
+          confirmation: confirmed
+        });
       }
 
       if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
@@ -1902,24 +2638,46 @@ export function buildServer(input: {
   app.post("/dev/confirmations/:id/confirm", async (request) => {
     const params = request.params as { id: string };
     const body = (request.body ?? {}) as { edited_payload?: unknown };
-    return confirmRequest({
+    const result = await confirmRequest({
       repos: input.repos,
       config: input.config,
       id: params.id,
       editedPayload: body.edited_payload,
       runner: input.larkCliRunner
     });
+    const cardUpdate = await syncDevTerminalCardStatus({
+      log: request.log,
+      repos: input.repos,
+      config: input.config,
+      request: result.confirmation,
+      runner: input.larkCliRunner
+    });
+
+    return {
+      ...result,
+      card_update: cardUpdate
+    };
   });
 
   app.post("/dev/confirmations/:id/reject", async (request) => {
     const params = request.params as { id: string };
     const body = (request.body ?? {}) as { reason?: string | null };
+    const confirmation = rejectRequest({
+      repos: input.repos,
+      id: params.id,
+      reason: body.reason
+    });
+    const cardUpdate = await syncDevTerminalCardStatus({
+      log: request.log,
+      repos: input.repos,
+      config: input.config,
+      request: confirmation,
+      runner: input.larkCliRunner
+    });
+
     return {
-      confirmation: rejectRequest({
-        repos: input.repos,
-        id: params.id,
-        reason: body.reason
-      })
+      confirmation,
+      card_update: cardUpdate
     };
   });
 
