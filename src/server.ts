@@ -53,7 +53,11 @@ const TranscriptPendingText = "【transcript pending - to be fetched via lark-cl
 const CardActionConfirmedMessage = "已确认，处理完成";
 const CardActionSnoozedMessage = "好的，30 分钟后再提醒你";
 const RemindLaterDelayMinutes = 30;
-const TranscriptFetchTimeoutMs = 3000;
+const RecordingReadyTranscriptWaitMs = 0;
+const RecordingReadyTranscriptFetchTimeoutMs = 15000;
+const MeetingEndedTranscriptRetryDelaysMs = [60000, 240000, 300000, 120000] as const;
+const TestMeetingEndedTranscriptRetryDelaysMs = [0, 0, 0, 0] as const;
+const MeetingEndedTranscriptFetchTimeoutMs = 15000;
 const LarkSignatureFreshnessWindowSeconds = 5 * 60;
 
 const FeishuRecordingReadyEventSchema = z
@@ -989,6 +993,106 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
   }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchTranscriptForMeetingEvent(input: {
+  repos: Repositories;
+  config: AppConfig;
+  eventType: string;
+  externalMeetingId: string;
+  title: string;
+  minuteToken: string | null;
+  runner?: LarkCliRunner;
+  log: FastifyRequest["log"];
+}): Promise<{
+  transcript: string;
+  attempts: number;
+  pending: boolean;
+  error: string | null;
+}> {
+  const isMeetingEnded = input.eventType === FeishuMeetingEndedEventType;
+  const retryDelays = isMeetingEnded
+    ? input.config.nodeEnv === "test"
+      ? TestMeetingEndedTranscriptRetryDelaysMs
+      : MeetingEndedTranscriptRetryDelaysMs
+    : ([RecordingReadyTranscriptWaitMs] as const);
+  const timeoutMs = isMeetingEnded
+    ? MeetingEndedTranscriptFetchTimeoutMs
+    : RecordingReadyTranscriptFetchTimeoutMs;
+  let lastError: string | null = null;
+
+  for (let index = 0; index < retryDelays.length; index += 1) {
+    const waitMs = retryDelays[index] ?? 0;
+    await delay(waitMs);
+
+    try {
+      const transcript = await withTimeout(
+        fetchTranscript({
+          repos: input.repos,
+          config: input.config,
+          meetingId: input.externalMeetingId,
+          title: input.title,
+          minuteToken: input.minuteToken,
+          runner: input.runner
+        }),
+        timeoutMs,
+        TranscriptPendingText
+      );
+
+      if (transcript !== TranscriptPendingText) {
+        return {
+          transcript,
+          attempts: index + 1,
+          pending: false,
+          error: null
+        };
+      }
+
+      lastError = "transcript_fetch_timeout";
+      input.log.warn(
+        {
+          event_type: input.eventType,
+          external_meeting_id: input.externalMeetingId,
+          attempt: index + 1,
+          attempts: retryDelays.length,
+          timeout_ms: timeoutMs
+        },
+        "transcript fetch timed out for feishu meeting event"
+      );
+    } catch (error) {
+      lastError = briefError(error);
+      input.log.warn(
+        {
+          err: error,
+          event_type: input.eventType,
+          external_meeting_id: input.externalMeetingId,
+          attempt: index + 1,
+          attempts: retryDelays.length
+        },
+        "failed to fetch transcript for feishu meeting event"
+      );
+    }
+
+    if (!isMeetingEnded) {
+      return {
+        transcript: TranscriptPendingText,
+        attempts: index + 1,
+        pending: true,
+        error: lastError
+      };
+    }
+  }
+
+  return {
+    transcript: TranscriptPendingText,
+    attempts: retryDelays.length,
+    pending: true,
+    error: lastError
+  };
+}
+
 function withDryRunCard(request: ReturnType<Repositories["getConfirmationRequest"]>) {
   if (request === null) {
     return null;
@@ -1484,6 +1588,7 @@ export function buildServer(input: {
           eventRecord.minutes_url,
           eventRecord.minute_url,
           eventRecord.meeting_url,
+          eventRecord.url,
           meetingRecord.minutes_url,
           meetingRecord.minute_url,
           meetingRecord.url,
@@ -1524,29 +1629,52 @@ export function buildServer(input: {
         return reply.code(202).send({ accepted: true, duplicate: true });
       }
 
-      // 会议结束后需要更长时间等待妙记生成
-      const waitMs = eventType === FeishuMeetingEndedEventType ? 15000 : 5000;
-
       void (async () => {
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        const transcript = await withTimeout(
-          fetchTranscript({
-            repos: input.repos,
-            config: input.config,
-            meetingId: externalMeetingId,
-            title,
-            minuteToken,
-            runner: input.larkCliRunner
-          }).catch((error) => {
-            request.log.warn(
-              { err: error, external_meeting_id: externalMeetingId },
-              "failed to fetch transcript for feishu event; using fallback text"
-            );
-            return TranscriptPendingText;
-          }),
-          TranscriptFetchTimeoutMs,
-          TranscriptPendingText
-        );
+        const transcriptResult = await fetchTranscriptForMeetingEvent({
+          repos: input.repos,
+          config: input.config,
+          eventType,
+          externalMeetingId,
+          title,
+          minuteToken,
+          runner: input.larkCliRunner,
+          log: request.log
+        });
+
+        if (eventType === FeishuMeetingEndedEventType && transcriptResult.pending) {
+          input.repos.updateWebhookEventStatus({
+            event_id: webhookEventId,
+            status: "failed",
+            error: `pending_transcript_after_retries: ${
+              transcriptResult.error ?? "transcript unavailable"
+            }`.slice(0, 500)
+          });
+          request.log.warn(
+            {
+              event_type: eventType,
+              event_id: webhookEventId,
+              external_meeting_id: externalMeetingId,
+              attempts: transcriptResult.attempts,
+              error: transcriptResult.error
+            },
+            "deferred meeting-ended event until transcript is ready"
+          );
+          return;
+        }
+
+        const transcript = transcriptResult.transcript;
+        if (transcriptResult.pending) {
+          request.log.warn(
+            {
+              event_type: eventType,
+              event_id: webhookEventId,
+              external_meeting_id: externalMeetingId,
+              attempts: transcriptResult.attempts,
+              error: transcriptResult.error
+            },
+            "using fallback transcript for recording-ready event"
+          );
+        }
 
         const result = await processMeetingWorkflow({
           repos: input.repos,

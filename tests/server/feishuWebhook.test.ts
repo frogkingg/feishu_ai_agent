@@ -199,7 +199,7 @@ describe("POST /webhooks/feishu/event", () => {
         meeting_id: "om_test",
         topic: "测试会议",
         host_user_id: { open_id: "ou_test" },
-        recording: { url: "https://example.test/recording" }
+        url: "https://example.test/recording"
       }
     });
     const signatureInput = {
@@ -236,6 +236,7 @@ describe("POST /webhooks/feishu/event", () => {
               external_meeting_id: "om_test",
               title: "测试会议",
               organizer: "ou_test",
+              minutes_url: "https://example.test/recording",
               transcript_text: "【transcript pending - dry-run mode】"
             })
           ])
@@ -243,6 +244,68 @@ describe("POST /webhooks/feishu/event", () => {
       },
       { timeout: 7000 }
     );
+  });
+
+  it("does not generate weak confirmations when meeting-ended transcript fetch keeps failing", async () => {
+    const body = JSON.stringify({
+      schema: "2.0",
+      header: {
+        event_id: "evt_ended_pending_transcript",
+        event_type: "vc.meeting.all_meeting_ended_v1",
+        create_time: "1234567890000",
+        token: "verification-token",
+        app_id: "cli_test",
+        tenant_key: "tenant_test"
+      },
+      event: {
+        meeting_id: "om_pending_transcript",
+        topic: "妙记未就绪会议",
+        host_user_id: { open_id: "ou_test" }
+      }
+    });
+    const signatureInput = {
+      timestamp: currentLarkTimestamp(),
+      nonce: "nonce-test",
+      verificationToken: "verification-token",
+      body
+    };
+    const runnerCalls: string[][] = [];
+    const runner: LarkCliRunner = async (_bin, args) => {
+      runnerCalls.push(args);
+      throw new Error("minutes not ready");
+    };
+    const { app, repos } = createApp(
+      {
+        feishuReadDryRun: false,
+        larkVerificationToken: "verification-token",
+        larkEncryptKey: "encrypt-key"
+      },
+      runner
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/feishu/event",
+      headers: {
+        "content-type": "application/json",
+        "x-lark-request-timestamp": signatureInput.timestamp,
+        "x-lark-request-nonce": signatureInput.nonce,
+        "x-lark-signature": signWithSecret({ ...signatureInput, secret: "encrypt-key" })
+      },
+      payload: body
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ accepted: true });
+
+    await vi.waitFor(() => {
+      expect(runnerCalls).toHaveLength(4);
+      expect(repos.listMeetings()).toHaveLength(0);
+      expect(repos.listConfirmationRequests()).toHaveLength(0);
+      expect(repos.listCliRuns().filter((run) => run.tool === "lark.im.send_card")).toHaveLength(
+        0
+      );
+    });
   });
 
   it("auto-sends generated cards after recording_ready when card sending is enabled", async () => {
