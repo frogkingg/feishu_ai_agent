@@ -49,6 +49,8 @@ const SendCardBodySchema = z
 
 const FeishuRecordingReadyEventType = "vc.meeting.recording_ready_v1";
 const FeishuMeetingEndedEventType = "vc.meeting.all_meeting_ended_v1";
+const FeishuMeetingEndedAliasEventType = "vc.meeting.meeting_ended_v1";
+const FeishuRecordingEndedEventType = "vc.meeting.recording_ended_v1";
 const TranscriptPendingText = "【transcript pending - to be fetched via lark-cli vc +notes】";
 const CardActionConfirmedMessage = "已确认，处理完成";
 const CardActionSnoozedMessage = "好的，30 分钟后再提醒你";
@@ -588,6 +590,18 @@ function getFeishuEventId(payload: FeishuEventWebhookPayload): string | null {
   ]);
 }
 
+function isFeishuMeetingEndedEvent(eventType: string | null): eventType is string {
+  return (
+    eventType === FeishuMeetingEndedEventType ||
+    eventType === FeishuMeetingEndedAliasEventType ||
+    eventType === FeishuRecordingEndedEventType
+  );
+}
+
+function isFeishuMeetingWorkflowEvent(eventType: string | null): eventType is string {
+  return eventType === FeishuRecordingReadyEventType || isFeishuMeetingEndedEvent(eventType);
+}
+
 type ToastType = "info" | "success" | "error";
 
 function toast(type: ToastType, content: string) {
@@ -1012,7 +1026,7 @@ async function fetchTranscriptForMeetingEvent(input: {
   pending: boolean;
   error: string | null;
 }> {
-  const isMeetingEnded = input.eventType === FeishuMeetingEndedEventType;
+  const isMeetingEnded = isFeishuMeetingEndedEvent(input.eventType);
   const retryDelays = isMeetingEnded
     ? input.config.nodeEnv === "test"
       ? TestMeetingEndedTranscriptRetryDelaysMs
@@ -1539,7 +1553,8 @@ export function buildServer(input: {
     const eventType = getFeishuEventType(payload);
     request.log.info({ event_type: eventType }, "received feishu event webhook");
 
-    if (eventType === FeishuRecordingReadyEventType || eventType === FeishuMeetingEndedEventType) {
+    if (isFeishuMeetingWorkflowEvent(eventType)) {
+      const meetingEventType = eventType;
       const event = FeishuRecordingReadyEventSchema.parse(payload.event ?? {});
       const eventRecord = asRecord(event) ?? {};
       const meetingRecord = firstRecord([
@@ -1594,10 +1609,23 @@ export function buildServer(input: {
           meetingRecord.url,
           valueAtPath(event, ["recording", "url"])
         ]) ?? null;
+      const fallbackTimeRef =
+        firstString([
+          valueAtPath(payload, ["header", "create_time"]),
+          valueAtPath(payload, ["event", "create_time"]),
+          valueAtPath(payload, ["event", "start_time"]),
+          valueAtPath(payload, ["event", "end_time"]),
+          eventRecord.create_time,
+          eventRecord.start_time,
+          eventRecord.end_time,
+          meetingRecord.create_time,
+          meetingRecord.start_time,
+          meetingRecord.end_time
+        ]) ?? "no_time";
       const webhookEventId =
         getFeishuEventId(payload) ??
-        (eventType !== null && externalMeetingRef !== null
-          ? `${eventType}:${externalMeetingRef}`
+        (externalMeetingRef !== null
+          ? `${meetingEventType}:${externalMeetingRef}:${fallbackTimeRef}`
           : null);
 
       if (webhookEventId === null) {
@@ -1633,7 +1661,7 @@ export function buildServer(input: {
         const transcriptResult = await fetchTranscriptForMeetingEvent({
           repos: input.repos,
           config: input.config,
-          eventType,
+          eventType: meetingEventType,
           externalMeetingId,
           title,
           minuteToken,
@@ -1641,7 +1669,7 @@ export function buildServer(input: {
           log: request.log
         });
 
-        if (eventType === FeishuMeetingEndedEventType && transcriptResult.pending) {
+        if (isFeishuMeetingEndedEvent(meetingEventType) && transcriptResult.pending) {
           input.repos.updateWebhookEventStatus({
             event_id: webhookEventId,
             status: "failed",
