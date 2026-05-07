@@ -1903,96 +1903,114 @@ export function buildServer(input: {
       }
 
       if (CONFIRM_CARD_ACTION_KEYS.has(parsed.actionKey)) {
-        try {
-          const execution = await confirmRequest({
-            repos: input.repos,
-            config: input.config,
-            id: requestId,
-            editedPayload: parsed.editedPayload,
-            actorOpenId: parsed.actorOpenId,
-            allowPreconfirmed: true,
-            runner: input.larkCliRunner
-          });
+        const editedPayloadJson =
+          parsed.editedPayload === undefined
+            ? confirmation.edited_payload_json
+            : JSON.stringify(parsed.editedPayload);
+        input.repos.updateConfirmationRequest({
+          id: requestId,
+          status: "confirmed",
+          edited_payload_json: editedPayloadJson,
+          confirmed_at: nowIso(),
+          error: null
+        });
+        const confirmed = input.repos.getConfirmationRequest(requestId) ?? {
+          ...confirmation,
+          status: "confirmed",
+          edited_payload_json: editedPayloadJson,
+          confirmed_at: nowIso(),
+          error: null
+        };
 
-          try {
-            const finalUpdate = await syncCardStatusForRequest({
-              repos: input.repos,
-              config: input.config,
-              request: execution.confirmation,
-              updateToken: parsed.updateToken,
-              messageId: parsed.messageId,
-              chatId: parsed.chatId,
-              runner: input.larkCliRunner
-            });
-            if (!finalUpdate.ok) {
-              request.log.warn(
-                cardStatusLogContext({
-                  confirmationId: requestId,
-                  phase: "final",
-                  result: finalUpdate
-                }),
-                "card status update fell back or failed after execution"
+        setImmediate(() => {
+          void (async () => {
+            try {
+              const execution = await confirmRequest({
+                repos: input.repos,
+                config: input.config,
+                id: requestId,
+                editedPayload: parsed.editedPayload,
+                actorOpenId: parsed.actorOpenId,
+                allowPreconfirmed: true,
+                runner: input.larkCliRunner
+              });
+
+              try {
+                const finalUpdate = await syncCardStatusForRequest({
+                  repos: input.repos,
+                  config: input.config,
+                  request: execution.confirmation,
+                  messageId: parsed.messageId,
+                  chatId: parsed.chatId,
+                  runner: input.larkCliRunner
+                });
+                if (!finalUpdate.ok) {
+                  request.log.warn(
+                    cardStatusLogContext({
+                      confirmationId: requestId,
+                      phase: "final",
+                      result: finalUpdate
+                    }),
+                    "card status update fell back or failed after execution"
+                  );
+                }
+              } catch (error) {
+                request.log.warn(
+                  { err: error, confirmation_id: requestId },
+                  "card status update failed after execution"
+                );
+              }
+
+              if (execution.confirmation.status === "failed") {
+                request.log.error(
+                  {
+                    confirmation_id: requestId,
+                    error: execution.confirmation.error
+                  },
+                  "confirm failed asynchronously"
+                );
+              }
+            } catch (error) {
+              input.repos.updateConfirmationRequest({
+                id: requestId,
+                status: "failed",
+                error: briefError(error)
+              });
+              const failed = input.repos.getConfirmationRequest(requestId) ?? confirmed;
+              let finalUpdate: Awaited<ReturnType<typeof syncCardStatusForRequest>> | null = null;
+              try {
+                finalUpdate = await syncCardStatusForRequest({
+                  repos: input.repos,
+                  config: input.config,
+                  request: failed,
+                  messageId: parsed.messageId,
+                  chatId: parsed.chatId,
+                  runner: input.larkCliRunner
+                });
+              } catch (syncError) {
+                request.log.warn(
+                  { err: syncError, confirmation_id: requestId },
+                  "card status update failed after confirm failure"
+                );
+              }
+              request.log.error(
+                {
+                  err: error,
+                  confirmation_id: requestId,
+                  card_status_method: finalUpdate?.method ?? null,
+                  card_status_ok: finalUpdate?.ok ?? false
+                },
+                "confirm failed asynchronously"
               );
             }
-          } catch (error) {
-            request.log.warn(
-              { err: error, confirmation_id: requestId },
-              "card status update failed after execution"
-            );
-          }
+          })();
+        });
 
-          if (execution.confirmation.status === "failed") {
-            return cardCallbackResponse({
-              type: "error",
-              content: `确认执行失败：${execution.confirmation.error ?? "unknown error"}`,
-              confirmation: execution.confirmation
-            });
-          }
-
-          return cardCallbackResponse({
-            type: "success",
-            content: CardActionConfirmedMessage,
-            confirmation: execution.confirmation
-          });
-        } catch (error) {
-          input.repos.updateConfirmationRequest({
-            id: requestId,
-            status: "failed",
-            error: briefError(error)
-          });
-          const failed = input.repos.getConfirmationRequest(requestId) ?? confirmation;
-          let finalUpdate: Awaited<ReturnType<typeof syncCardStatusForRequest>> | null = null;
-          try {
-            finalUpdate = await syncCardStatusForRequest({
-              repos: input.repos,
-              config: input.config,
-              request: failed,
-              updateToken: parsed.updateToken,
-              messageId: parsed.messageId,
-              chatId: parsed.chatId,
-              runner: input.larkCliRunner
-            });
-          } catch (syncError) {
-            request.log.warn(
-              { err: syncError, confirmation_id: requestId },
-              "card status update failed after confirm failure"
-            );
-          }
-          request.log.error(
-            {
-              err: error,
-              confirmation_id: requestId,
-              card_status_method: finalUpdate?.method ?? null,
-              card_status_ok: finalUpdate?.ok ?? false
-            },
-            "confirm failed"
-          );
-          return cardCallbackResponse({
-            type: "error",
-            content: `确认执行失败：${failed.error ?? briefError(error)}`,
-            confirmation: failed
-          });
-        }
+        return cardCallbackResponse({
+          type: "success",
+          content: "正在添加到飞书...",
+          confirmation: confirmed
+        });
       }
 
       if (REJECT_CARD_ACTION_KEYS.has(parsed.actionKey)) {
